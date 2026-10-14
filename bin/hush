@@ -1,0 +1,5 @@
+#!/usr/bin/env bun
+import { BunRuntime } from "@effect/platform-bun"
+import { program } from "../src/cli/cli.js"
+
+BunRuntime.runMain(program)
