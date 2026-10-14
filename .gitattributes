@@ -1,0 +1,2 @@
+# oxfmt --check expects LF; a CRLF checkout would fail `bun run check`.
+* text=auto eol=lf

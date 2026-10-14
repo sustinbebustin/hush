@@ -1,0 +1,46 @@
+{
+  "name": "hush",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A self-hosted secret store that lets coding agents use secrets without seeing them.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sustinbebustin/hush.git"
+  },
+  "bin": {
+    "hush": "bin/hush"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "bun run --bun vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings",
+    "format": "oxfmt",
+    "check": "oxfmt --check && oxlint --deny-warnings && tsc --noEmit && bun run --bun vitest run",
+    "build": "sh scripts/build.sh",
+    "smoke": "sh scripts/smoke-binary.sh",
+    "smoke:docker": "sh scripts/smoke-docker.sh"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.3",
+    "@effect/sql-sqlite-bun": "4.0.3",
+    "effect": "4.0.3"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.3",
+    "@types/bun": "1.4.3",
+    "fast-check": "4.10.2",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  },
+  "overrides": {
+    "@effect/platform-node-shared": "4.0.3"
+  },
+  "engines": {
+    "bun": "1.4.3"
+  },
+  "packageManager": "bun@1.4.3"
+}
