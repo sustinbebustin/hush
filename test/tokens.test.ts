@@ -17,6 +17,7 @@ const value = valueSentinel.text
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, passphraseSentinel]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -28,9 +29,11 @@ const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => vo
 // `seed`, with its Token and the Init code it used registered as sentinels.
 const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void, spec?: Parameters<Sandbox["seed"]>[0]) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
   const result = await box.seed(spec)
   seen({ kind: "token", text: result.token })
+
   return result
 }
 
@@ -56,6 +59,7 @@ const issuePrinted = async (box: Sandbox, seen: (sentinel: Sentinel) => void, ar
   assert.strictEqual(result.code, 0, result.stderr)
   const receipt = Schema.decodeUnknownSync(PrintReceipt)(result.stdout)
   seen({ kind: "token", text: receipt.token })
+
   return { ...result, receipt }
 }
 
@@ -77,16 +81,19 @@ describe("hush token issue", () => {
       )
       assert.deepStrictEqual(issued.calls, [call("/v1/admin/tokens/issue", 200)])
       assert.strictEqual(await Bun.file(`${box.home}/.config/hush/tokens.json`).text(), tokenFile)
+
       const read = await box.run(["read", "hush://Personal/Key/credential"], {
         env: { HUSH_TOKEN: issued.receipt.token },
         secretStdout: true,
       })
+
       assert.strictEqual(read.code, 0, read.stderr)
       assert.strictEqual(read.stdout, value)
     }))
 })
 
 const rows = (box: Sandbox, query: string) => box.inspect((db) => db.query(query).all())
+
 const lastAudit = async (box: Sandbox) =>
   (
     await rows(
@@ -170,6 +177,7 @@ describe("hush token issue receipts and local checks", () => {
         await seeded(box, seen)
         await rm(tokenFilePath(box))
         await chmod(join(box.home, ".config", "hush"), 0o500)
+
         try {
           await assertRefused(
             box,
@@ -217,9 +225,11 @@ describe("hush token issue receipts and local checks", () => {
       await seeded(box, seen)
       const issued = await issuePrinted(box, seen, ["--label", "brief", "--read", "Personal", "--ttl", "1s"])
       const [row] = await rows(box, "SELECT created_at, expires_at FROM tokens WHERE label = 'brief'")
+
       const { created_at, expires_at } = Schema.decodeUnknownSync(
         Schema.Struct({ created_at: Schema.String, expires_at: Schema.String }),
       )(row)
+
       assert.strictEqual(issued.receipt.expiresAt, expires_at)
       assert.strictEqual(Date.parse(expires_at) - Date.parse(created_at), 1000)
     }))
@@ -239,9 +249,11 @@ describe("hush token issue --replace", () => {
   it("revokes the old Token in the same step, keeps its Grants, and leaves no old wrap in the files", () =>
     withSandbox(async (box, seen) => {
       const first = await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
+
       const oldWraps = Schema.decodeUnknownSync(Schema.Array(WrapRow))(
         await rows(box, "SELECT key_wrapped FROM token_vaults"),
       )
+
       const replaced = await admin(box, ["token", "issue", "--label", "agent on box", "--keep-grants", "--replace"])
       assert.strictEqual(replaced.code, 0, replaced.stderr)
       assert.deepStrictEqual(JSON.parse(replaced.stdout), {
@@ -265,11 +277,14 @@ describe("hush token issue --replace", () => {
       assert.strictEqual(fresh.stdout, value)
 
       const files = await databaseBytes(box)
+
       for (const { key_wrapped } of oldWraps) assert.strictEqual(files.indexOf(Buffer.from(key_wrapped)), -1)
+
       const [issueRow] = await rows(
         box,
         "SELECT actor, token_label, action, vaults, detail, outcome, error FROM audit WHERE action = 'token.issue'",
       )
+
       assert.deepStrictEqual(issueRow, {
         actor: "passphrase",
         token_label: null,
@@ -293,6 +308,7 @@ describe("hush token issue --replace", () => {
     withSandbox(async (box, seen) => {
       const first = await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
       assert.strictEqual((await admin(box, ["vault", "create", "Work"])).code, 0)
+
       const widened = await admin(box, [
         "token",
         "issue",
@@ -303,15 +319,18 @@ describe("hush token issue --replace", () => {
         "--keep-grants",
         "--replace",
       ])
+
       assert.strictEqual(widened.code, 0, widened.stderr)
       assert.deepStrictEqual(JSON.parse(widened.stdout).grants, [
         { vault: "Personal", access: "read+create" },
         { vault: "Work", access: "read+create" },
       ])
       seen({ kind: "token", text: JSON.parse(await readFile(tokenFilePath(box), "utf8")).tokens[0].token })
+
       const created = await box.run(["create", "api-credential", "--title", "Office", "--vault", "Work", "--stdin"], {
         input: "work value\n",
       })
+
       assert.strictEqual(created.code, 0, created.stderr)
       const read = await box.run(["read", first.references[0] ?? ""], { secretStdout: true })
       assert.strictEqual(read.stdout, value)
@@ -322,6 +341,7 @@ describe("hush token issue --replace", () => {
   it("overrides a kept Grant's Access with an explicit flag", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const issued = await issuePrinted(box, seen, [
         "--label",
         "agent on box",
@@ -330,6 +350,7 @@ describe("hush token issue --replace", () => {
         "--keep-grants",
         "--replace",
       ])
+
       assert.deepStrictEqual(issued.receipt.grants, [{ vault: "Personal", access: "read" }])
     }))
 })
@@ -394,6 +415,7 @@ describe("Grant enforcement", () => {
   it("refuses a Vault outside several Grants, suggesting only a granted name", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       for (const name of ["Shared", "Work"]) assert.strictEqual((await admin(box, ["vault", "create", name])).code, 0)
       const issued = await issuePrinted(box, seen, ["--label", "a", "--read", "Personal", "--create", "Shared"])
       const env = { HUSH_TOKEN: issued.receipt.token }
@@ -417,19 +439,25 @@ describe("Grant enforcement", () => {
       await seeded(box, seen, { items: [{ kind: "api-credential", title: "Home", value }] })
       assert.strictEqual((await admin(box, ["vault", "create", "Work"])).code, 0)
       const issued = await issuePrinted(box, seen, ["--label", "both", "--read", "Personal", "--create", "Work"])
+
       const created = await box.run(["create", "api-credential", "--title", "Office", "--vault", "Work", "--stdin"], {
         input: "work value\n",
         env: { HUSH_TOKEN: issued.receipt.token },
       })
+
       assert.strictEqual(created.code, 0, created.stderr)
+
       const response = await resolve(box, issued.receipt.token, [
         "hush://Personal/Home/credential",
         "hush://Work/Office/credential",
       ])
+
       assert.strictEqual(response.status, 200)
+
       const body = Schema.decodeUnknownSync(
         Schema.Struct({ values: Schema.Array(Schema.Struct({ reference: Schema.String, value: Schema.String })) }),
       )(await response.json())
+
       assert.deepStrictEqual(
         body.values.map(({ value: resolved }) => resolved),
         [value, "work value"],
@@ -445,9 +473,11 @@ describe("Grant enforcement", () => {
           "UPDATE token_vaults SET access = 'read+create' WHERE token_id = (SELECT id FROM tokens WHERE label = 'reader')",
         ),
       )
+
       const result = await box.run(["read", "hush://Personal/Key/credential"], {
         env: { HUSH_TOKEN: issued.receipt.token },
       })
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(
         result.stderr,
@@ -460,10 +490,12 @@ describe("Grant enforcement", () => {
       await seeded(box, seen)
       const issued = await issuePrinted(box, seen, ["--label", "reader", "--read", "Personal"])
       const items = await rows(box, "SELECT id FROM items")
+
       const result = await box.run(["create", "api-credential", "--title", "Key", "--vault", "Personal", "--stdin"], {
         input: `${value}\n`,
         env: { HUSH_TOKEN: issued.receipt.token },
       })
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(
@@ -497,8 +529,11 @@ const timesOf = async (box: Sandbox, label: string) => {
   const found = await box.inspect((db) =>
     db.query("SELECT label, created_at, expires_at, revoked_at, last_used_at FROM tokens WHERE label = ?").all(label),
   )
+
   const [row] = Schema.decodeUnknownSync(Schema.Array(TimesRow))(found)
+
   if (row === undefined) throw new Error(`no Token labelled ${label}`)
+
   return row
 }
 
@@ -566,10 +601,12 @@ describe("denied requests from a dead Token", () => {
     withSandbox(async (box, seen) => {
       const first = await seeded(box, seen)
       assert.strictEqual((await admin(box, ["token", "revoke", first.label])).code, 0)
+
       for (let index = 0; index < 100; index += 1) {
         const response = await resolve(box, first.token, ["hush://Personal/Key/credential"])
         assert.strictEqual(response.status, 401)
       }
+
       const denied = await tokenRows(box)
       assert.strictEqual(denied.length, 1)
       const [row] = denied
@@ -610,10 +647,12 @@ describe("denied requests from a dead Token", () => {
   it("never coalesces an active Token's denials, and moves last_used_at with each row", () =>
     withSandbox(async (box, seen) => {
       const first = await seeded(box, seen)
+
       for (let index = 0; index < 2; index += 1) {
         const response = await resolve(box, first.token, ["hush://Work/Key/credential"])
         assert.strictEqual(response.status, 403)
       }
+
       const denied = await tokenRows(box)
       assert.deepStrictEqual(
         denied.map(({ count, error }) => ({ count, error })),
@@ -748,6 +787,7 @@ describe("hush token save and forget", () => {
   it("refuses input that is neither a Token nor a receipt with TokenInputInvalid, with no request", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       for (const input of [`${value}\n`, '{"token":"hush_short"}\n', "[1]\n"]) {
         const before = await tokenState(box)
         const result = await box.run(["token", "save", "--stdin", "--replace"], { input })
@@ -791,9 +831,11 @@ describe("Token selection through the seam", () => {
   it("runs create and read with the Owner's Init-saved Token and no Passphrase", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const created = await box.run(["create", "api-credential", "--title", "Key", "--vault", "Personal", "--stdin"], {
         input: `${value}\n`,
       })
+
       assert.strictEqual(created.code, 0, created.stderr)
       assert.deepStrictEqual(created.calls, [call("/v1/items/create", 200), call("/v1/secrets/resolve", 200)])
       const read = await box.run(["read", "hush://Personal/Key/credential"], { secretStdout: true })
@@ -859,9 +901,11 @@ describe("hush token revoke", () => {
   it("keeps the row, removes the wraps from the files and the local entry, and refuses later uses as denied", () =>
     withSandbox(async (box, seen) => {
       const first = await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
+
       const oldWraps = Schema.decodeUnknownSync(Schema.Array(WrapRow))(
         await rows(box, "SELECT key_wrapped FROM token_vaults"),
       )
+
       const hash = await rows(box, "SELECT hash FROM tokens")
       const result = await admin(box, ["token", "revoke", "AGENT ON BOX"])
       assert.strictEqual(result.code, 0, result.stderr)
@@ -881,6 +925,7 @@ describe("hush token revoke", () => {
         { key_nonce: null, key_wrapped: null, access: "read+create" },
       ])
       const files = await databaseBytes(box)
+
       for (const { key_wrapped } of oldWraps) assert.strictEqual(files.indexOf(Buffer.from(key_wrapped)), -1)
       assert.deepStrictEqual(await lastAudit(box), {
         actor: "passphrase",

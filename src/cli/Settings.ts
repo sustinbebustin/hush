@@ -34,6 +34,7 @@ export const setServer = (
   Effect.gen(function* () {
     const server = yield* Effect.fromResult(Target.parseServer({ from: "argument" }, url))
     yield* Effect.flatMap(Config.load(env), (config) => Config.set(config, { server }))
+
     return { server }
   })
 

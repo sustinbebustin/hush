@@ -7,6 +7,7 @@ import { ListenInvalid } from "../src/server/StartupError.js"
 
 const classOf = (text: string) => {
   const result = Listen.parse("--listen", text)
+
   return Result.isSuccess(result) ? result.success.class : result.failure._tag
 }
 
@@ -37,6 +38,7 @@ describe("Listen.parse", () => {
       ["fd7a:115c:a1df:ffff::1", "other"],
       ["fd7b:115c:a1e0::1", "other"],
     ]
+
     for (const [text, expected] of cases) assert.strictEqual(classOf(text), expected, text)
   })
 
@@ -74,6 +76,7 @@ describe("Listen.parse", () => {
     fc.assert(
       fc.property(fc.ipV4(), (ip) => {
         const [a = 0, b = 0] = ip.split(".").map(Number)
+
         const expected =
           ip === "0.0.0.0"
             ? "wildcard"
@@ -82,6 +85,7 @@ describe("Listen.parse", () => {
               : a === 100 && b >= 64 && b <= 127
                 ? "tailnet"
                 : "other"
+
         return classOf(ip) === expected
       }),
     )

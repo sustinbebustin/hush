@@ -18,6 +18,7 @@ const withDatabase = <A, E>(test: (sql: SqlClient.SqlClient) => Effect.Effect<A,
         const stateDir = join(root, "state")
         yield* StateDir.prepare(stateDir)
         const sql = yield* Database.open(stateDir)
+
         return yield* test(sql)
       }).pipe(Effect.scoped),
     (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
@@ -51,6 +52,7 @@ describe("Database.open", () => {
         const objects = yield* Schema.decodeUnknownEffect(Rows({ type: Schema.String, name: Schema.String }))(
           yield* sql`SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
         )
+
         assert.deepStrictEqual(
           objects.map(({ type, name }) => `${type} ${name}`),
           [
@@ -69,10 +71,13 @@ describe("Database.open", () => {
             "trigger tokens_revoke_drops_wraps",
           ],
         )
+
         const strict = yield* Schema.decodeUnknownEffect(Rows({ name: Schema.String, strict: Schema.Number }))(
           yield* sql`SELECT name, strict FROM pragma_table_list WHERE schema = 'main' AND name NOT LIKE 'sqlite_%' AND name != 'effect_sql_migrations'`,
         )
+
         assert.strictEqual(strict.length, 8)
+
         for (const table of strict) assert.strictEqual(table.strict, 1, table.name)
       }),
     ),
@@ -121,21 +126,29 @@ describe("Database.open", () => {
         Effect.gen(function* () {
           const insert = (id: number, key: string) =>
             sql`INSERT INTO vaults VALUES (${id}, ${key}, ${key}, zeroblob(12), zeroblob(48), 'now')`
+
           const first = yield* sql.withTransaction(
             Effect.gen(function* () {
               const ids = yield* Database.nextIds("vaults", 1)
+
               for (const [index, id] of ids.entries()) yield* insert(id, `a${index}`)
+
               return ids
             }),
           )
+
           assert.deepStrictEqual(first, [1])
+
           const next = yield* sql.withTransaction(
             Effect.gen(function* () {
               const ids = yield* Database.nextIds("vaults", 2)
+
               for (const [index, id] of ids.entries()) yield* insert(id, `b${index}`)
+
               return ids
             }),
           )
+
           assert.deepStrictEqual(next, [2, 3])
           yield* sql`INSERT INTO vaults (name, name_key, key_nonce, key_wrapped, created_at)
           VALUES ('c', 'c', zeroblob(12), zeroblob(48), 'now')`
@@ -150,9 +163,11 @@ describe("Database.open", () => {
     withDatabase((sql) =>
       Effect.gen(function* () {
         yield* sql`INSERT INTO vaults VALUES (1, 'Work', 'work', zeroblob(12), zeroblob(48), 'now')`
+
         const error = yield* Effect.flip(
           sql`INSERT INTO vaults VALUES (2, 'WORK', 'work', zeroblob(12), zeroblob(48), 'now')`,
         )
+
         assert.strictEqual(error.reason._tag, "UniqueViolation")
       }),
     ),

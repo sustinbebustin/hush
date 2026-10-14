@@ -29,18 +29,22 @@ const words = (text: string) =>
 const distance = (a: string, b: string): number => {
   let previous: ReadonlyArray<number> = Array.from({ length: b.length + 1 }, (_, index) => index)
   let last = b.length
+
   for (let i = 1; i <= a.length; i++) {
     const current = [i]
     let left = i
     let diagonal = i - 1
+
     for (const [j, up] of previous.slice(1).entries()) {
       left = Math.min(up + 1, left + 1, diagonal + (a.charAt(i - 1) === b.charAt(j) ? 0 : 1))
       diagonal = up
       current.push(left)
     }
+
     previous = current
     last = left
   }
+
   return last
 }
 
@@ -50,6 +54,7 @@ export const terms = (query: string): ReadonlyArray<string> => query.toLowerCase
 // A title matches when it contains every term of the query.
 export const matches = (query: string, title: string): boolean => {
   const lower = title.toLowerCase()
+
   return terms(query).every((term) => lower.includes(term))
 }
 
@@ -58,6 +63,7 @@ export const matches = (query: string, title: string): boolean => {
 export const closeness = (queryTerms: ReadonlyArray<string>, title: string): number => {
   if (queryTerms.length === 0) return 0
   const candidates = words(title)
+
   const score = (term: string) =>
     Math.max(
       0,
@@ -67,6 +73,7 @@ export const closeness = (queryTerms: ReadonlyArray<string>, title: string): num
           : 1 - distance(term, word) / Math.max(term.length, word.length),
       ),
     )
+
   return queryTerms.reduce((sum, term) => sum + score(term), 0) / queryTerms.length
 }
 

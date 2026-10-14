@@ -17,6 +17,7 @@ const server: Doctor.ServerCheck = {
   state: "ready",
   version: "0.0.0",
 }
+
 const token: Doctor.TokenCheck = { source: "file", file: "ok" }
 
 describe("Doctor.report", () => {
@@ -71,6 +72,7 @@ const assertSafe = (stdout: string, forbidden: ReadonlyArray<string>) => {
 
 const withBox = async (test: (box: Sandbox) => Promise<ReadonlyArray<Sentinel>>) => {
   const box = await sandbox()
+
   try {
     const extra = await test(box)
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel, ...extra]), [])
@@ -83,6 +85,7 @@ const withSeeded = (test: (box: Sandbox, seeded: Seeded) => Promise<void>) =>
   withBox(async (box) => {
     const seeded = await box.seed({ items: [{ kind: "api-credential", title: "Stripe", value: valueSentinel.text }] })
     await test(box, seeded)
+
     return [{ kind: "token", text: seeded.token }]
   })
 
@@ -101,6 +104,7 @@ const withStub = async (response: () => Response, test: (url: string, run: Cli["
   const stub = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: response })
   const box = await cli()
   const url = `http://127.0.0.1:${stub.port}`
+
   try {
     await test(url, (args, options) => box.run(args, { ...options, env: { HUSH_SERVER: url, ...options?.env } }))
   } finally {
@@ -142,6 +146,7 @@ describe("hush doctor", () => {
       assert.deepStrictEqual(report.token, { source: "none", file: "missing" })
       assert.deepStrictEqual(report.notes, [note.uninitialised, note.noToken])
       assertSafe(result.stdout, [box.server.url])
+
       return []
     }))
 
@@ -172,6 +177,7 @@ describe("hush doctor", () => {
       assert.strictEqual(result.code, 0)
       assert.deepStrictEqual(parse(result.stdout).token, { source: "none", file: "invalid" })
       assert.deepStrictEqual(parse(result.stdout).notes, [note.invalid])
+
       return []
     }))
 
@@ -224,6 +230,7 @@ describe("hush doctor", () => {
         note.proxyInUse("127.0.0.1:1"),
         note.noToken,
       ])
+
       return [{ kind: "proxyUserinfo", text: "u:p" }]
     }))
 
@@ -298,8 +305,10 @@ describe("hush doctor", () => {
     const listener = createServer(() => {})
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve))
     const address = listener.address()
+
     if (address === null || typeof address === "string") throw new Error("listener has no TCP address")
     const box = await cli()
+
     try {
       const started = Date.now()
       const result = await box.run(["doctor"], { env: { HUSH_SERVER: `http://127.0.0.1:${address.port}` } })
@@ -317,6 +326,7 @@ describe("hush doctor", () => {
 
   it("exits 0 with the Server check left out when HUSH_SERVER is invalid", async () => {
     const box = await cli()
+
     try {
       const result = await box.run(["doctor"], { env: { HUSH_SERVER: "https://secret-host.example:7787" } })
       assert.strictEqual(result.code, 0)

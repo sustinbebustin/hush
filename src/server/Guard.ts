@@ -28,6 +28,7 @@ export interface GuardRequest {
 // Every error the guard answers with: its own refusals, then the Uninitialised gate's.
 const refusals = [...guardErrors, NotInitialised] as const
 const Refusal = Schema.Union(refusals)
+
 export type Refusal = typeof Refusal.Type
 
 // The only paths an Uninitialised Server serves; every other path is refused until Init.
@@ -43,11 +44,15 @@ const hostPattern = /^(?:\[([^\]]*)\]|([^:[\]]*))(?::\d{1,5})?$/
 // lowercase already.
 const hostAllowed = (host: string, allowedHosts: ReadonlyArray<string>): boolean => {
   const match = hostPattern.exec(host)
+
   if (match === null) return false
   const [, bracketed, name] = match
+
   if (bracketed !== undefined) return isIP(bracketed) === 6
+
   if (name === undefined || name === "") return false
   const lowered = name.toLowerCase()
+
   return isIP(name) === 4 || lowered === "localhost" || allowedHosts.includes(lowered)
 }
 
@@ -59,14 +64,20 @@ export const check = (
   state: ServerState,
 ): Result.Result<void, Refusal> => {
   const { host, origin } = request.headers
+
   if (host === undefined || !hostAllowed(host, allowedHosts))
     return Result.fail(new HostNotAllowed({ host: host ?? null }))
+
   if (request.headers["tailscale-funnel-request"] !== undefined) return Result.fail(new FunnelRequestRefused())
+
   if (origin !== undefined) return Result.fail(new BrowserRequestRefused())
   const contentType = request.headers["content-type"]
+
   if (request.method === "POST" && contentType?.trim().toLowerCase() !== "application/json")
     return Result.fail(new UnsupportedContentType({ received: contentType ?? null }))
+
   if (state._tag === "Uninitialised" && !ungated.has(pathOf(request.url))) return Result.fail(new NotInitialised())
+
   return Result.void
 }
 
@@ -79,6 +90,7 @@ export const middleware = (allowedHosts: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       const state = yield* Ref.get(yield* ServerState.Current)
+
       return yield* Result.match(check(request, allowedHosts, state), {
         onFailure: (error) => Effect.succeed(refusal(error)),
         onSuccess: () => app,

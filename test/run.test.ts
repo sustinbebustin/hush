@@ -16,6 +16,7 @@ const value = valueSentinel.text
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, passphraseSentinel]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -27,9 +28,11 @@ const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => vo
 // `seed` with the Item `Key` holding `value`, its Token and Init code registered as sentinels.
 const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void, spec?: Parameters<Sandbox["seed"]>[0]) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
   const result = await box.seed(spec ?? { items: [{ kind: "api-credential", title: "Key", value }] })
   seen({ kind: "token", text: result.token })
+
   return result
 }
 
@@ -40,6 +43,7 @@ const concealed = "<concealed by hush>"
 
 const rows = (box: Sandbox, query: string) => box.inspect((db) => db.query(query).all())
 const auditCount = async (box: Sandbox) => (await rows(box, "SELECT id FROM audit")).length
+
 // The audit rows after the first `count`, as action, References and outcome.
 const auditSince = async (box: Sandbox, count: number) =>
   (await rows(box, "SELECT action, refs, outcome FROM audit ORDER BY id")).slice(count)
@@ -48,10 +52,12 @@ describe("hush run", () => {
   it("injects the value intact in one secrets/resolve, with the Init-saved Token and no Passphrase", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       // The expected value reaches the child through the launch environment, so nothing prints it.
       const result = await box.run(["run", "--env", `X=${key}`, "--", "sh", "-c", 'test "$X" = "$EXPECTED"'], {
         env: { EXPECTED: value },
       })
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(result.stderr, "")
@@ -61,9 +67,11 @@ describe("hush run", () => {
   it("strips HUSH_TOKEN from the child", () =>
     withSandbox(async (box, seen) => {
       const { token } = await seeded(box, seen)
+
       const result = await box.run(["run", "--env", `X=${key}`, "--", "sh", "-c", 'test -z "${HUSH_TOKEN+x}"'], {
         env: { HUSH_TOKEN: token },
       })
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.deepStrictEqual(result.calls, resolved)
     }))
@@ -71,11 +79,14 @@ describe("hush run", () => {
   it("keeps HUSH_SERVER and the launch proxy variables on the direct route", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const script =
         'test "$HUSH_SERVER" = "$EXPECTED_SERVER" && test "$NO_PROXY" = keep.example && test "$HTTP_PROXY" = http://proxy.example:3128'
+
       const result = await box.run(["run", "--env", `X=${key}`, "--", "sh", "-c", script], {
         env: { EXPECTED_SERVER: box.server.url, NO_PROXY: "keep.example", HTTP_PROXY: "http://proxy.example:3128" },
       })
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.deepStrictEqual(result.calls, resolved)
     }))
@@ -83,13 +94,16 @@ describe("hush run", () => {
   it("passes the argv through unchanged, without a shell", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       // Each argument is compared with its copy in the environment, which no shell expanded either.
       const script =
         'test "$#" = 5 && test "$1" = "$E1" && test "$2" = "$E2" && test "$3" = "$E3" && test -z "$4" && test "$5" = "$E5"'
+
       const result = await box.run(
         ["run", "--env", `X=${key}`, "--", "sh", "-c", script, "sh", "a b", "c'd", "$HOME", "", "*"],
         { env: { E1: "a b", E2: "c'd", E3: "$HOME", E5: "*" } },
       )
+
       assert.strictEqual(result.code, 0, result.stderr)
     }))
 
@@ -130,6 +144,7 @@ describe("hush run", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       const before = await auditCount(box)
+
       const result = await box.run(
         [
           "run",
@@ -144,6 +159,7 @@ describe("hush run", () => {
         ],
         { env: { EXPECTED: value } },
       )
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.deepStrictEqual(result.calls, resolved)
       assert.deepStrictEqual(await auditSince(box, before), [
@@ -154,6 +170,7 @@ describe("hush run", () => {
   it("refuses an assignment that is not NAME=hush://... with InvalidAssignment, before any request", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       for (const [assignment, reason] of [
         ["X=plaintext", "the Reference is invalid: scheme"],
         ["X=op://Personal/Key/credential", "the value is a 1Password reference; replace `op://` with `hush://`"],
@@ -173,9 +190,11 @@ describe("hush run", () => {
   it("refuses a pasted secret as an assignment with InvalidAssignment, naming its position and never its text", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       for (const assignment of [`X=${value}`, value, `${value}==`]) {
         const run = await box.run(["run", "--env", `A=${key}`, "--env", assignment, "--", "sh", "-c", "echo spawned"])
         const write = await box.run(["env", "write", join(box.home, ".env.tpl"), `A=${key}`, assignment])
+
         for (const result of [run, write]) {
           assert.strictEqual(result.code, 1)
           assert.strictEqual(result.stdout, "")
@@ -189,6 +208,7 @@ describe("hush run", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       const before = await auditCount(box)
+
       const result = await box.run([
         "run",
         "--env",
@@ -200,6 +220,7 @@ describe("hush run", () => {
         "-c",
         "echo spawned",
       ])
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(
@@ -213,10 +234,12 @@ describe("hush run", () => {
   it("refuses 257 References with LimitExceeded naming 256, running nothing", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const assignments = Array.from({ length: 257 }, (_, index) => [
         "--env",
         `X${index}=hush://Personal/Key${index}/credential`,
       ])
+
       const result = await box.run(["run", ...assignments.flat(), "--", "sh", "-c", "echo spawned"])
       assert.strictEqual(result.code, 1)
       assert.strictEqual(result.stdout, "")
@@ -252,6 +275,7 @@ describe("masking", () => {
   it("leaves a 7-byte value alone", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen, { items: [{ kind: "api-credential", title: "Short", value: "seven77" }] })
+
       const result = await box.run([
         "run",
         "--env",
@@ -261,6 +285,7 @@ describe("masking", () => {
         "-c",
         'printf %s "$X"',
       ])
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.strictEqual(result.stdout, "seven77")
     }))
@@ -269,10 +294,12 @@ describe("masking", () => {
     withSandbox(async (box, seen) => {
       const shown = "fictional-tty-shown-value"
       await seeded(box, seen, { items: [{ kind: "api-credential", title: "Shown", value: shown }] })
+
       const result = await box.run(
         ["run", "--env", "X=hush://Personal/Shown/credential", "--", "sh", "-c", 'printf "%s\\n" "$X"'],
         { tty: { keys: [] } },
       )
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.include(result.stdout, shown)
       assert.notInclude(result.stdout, concealed)
@@ -284,6 +311,7 @@ describe("masking", () => {
 const template = async (box: Sandbox, lines: ReadonlyArray<string>, name = ".env.tpl") => {
   const path = join(box.home, name)
   await writeFile(path, lines.join("\n"))
+
   return path
 }
 
@@ -292,6 +320,7 @@ const mode = async (path: string) => ((await stat(path)).mode & 0o777).toString(
 const admin = async (box: Sandbox, args: ReadonlyArray<string>) => {
   const result = await box.run([...args, "--passphrase-stdin"], { input: `${seedPassphrase}\n` })
   assert.strictEqual(result.code, 0, result.stderr)
+
   return result
 }
 
@@ -303,10 +332,12 @@ describe("hush env write", () => {
   it("writes the template with no Token read and no request, and counts on stderr", () =>
     withSandbox(async (box) => {
       const path = join(box.home, ".env.tpl")
+
       // An invalid HUSH_TOKEN would fail any command that reads a Token.
       const result = await box.run(["env", "write", path, `A=${key}`, "B=hush://Work/Db/password"], {
         env: { HUSH_TOKEN: "not-a-token" },
       })
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(result.stderr, `hush: Wrote 2 secret references to ${path}\n`)
@@ -343,6 +374,7 @@ describe("hush env run", () => {
   it("injects every NAME=value line in file order, last one wins, in one secrets/resolve audited once", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const path = await template(box, [
         "# comment",
         "",
@@ -351,6 +383,7 @@ describe("hush env run", () => {
         "MODE=prod",
         `AGAIN = ${key}`,
       ])
+
       const before = await auditCount(box)
       const script = 'test "$MODE" = prod && test "$SECRET" = "$EXPECTED" && test "$AGAIN" = "$SECRET"'
       const result = await box.run(["env", "run", path, "--", "sh", "-c", script], { env: { EXPECTED: value } })
@@ -374,9 +407,11 @@ describe("hush env run", () => {
   it("spawns a template without References with no Token read and no request", () =>
     withSandbox(async (box) => {
       const path = await template(box, ["NODE_ENV=development"])
+
       const result = await box.run(["env", "run", path, "--", "sh", "-c", 'test "$NODE_ENV" = development'], {
         env: { HUSH_TOKEN: "not-a-token" },
       })
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.deepStrictEqual(result.calls, [])
     }))
@@ -386,21 +421,27 @@ describe("hush env run", () => {
       await seeded(box, seen)
       await admin(box, ["vault", "create", "Work"])
       await admin(box, ["token", "issue", "--label", "agent on box", "--create", "Work", "--keep-grants", "--replace"])
+
       const saved = Schema.decodeUnknownSync(SavedTokens)(
         await readFile(join(box.home, ".config", "hush", "tokens.json"), "utf8"),
       )
+
       seen({ kind: "token", text: saved.tokens[0].token })
       const work = "fictional-work-value-42"
       seen({ kind: "value", text: work })
+
       const created = await box.run(["create", "api-credential", "--title", "Office", "--vault", "Work", "--stdin"], {
         input: `${work}\n`,
       })
+
       assert.strictEqual(created.code, 0, created.stderr)
       const path = await template(box, [`A=${key}`, "B=hush://Work/Office/credential"])
+
       const result = await box.run(
         ["env", "run", path, "--", "sh", "-c", 'test "$A" = "$EXPECTED" && test "$B" = "$EXPECTED_WORK"'],
         { env: { EXPECTED: value, EXPECTED_WORK: work } },
       )
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.deepStrictEqual(result.calls, resolved)
     }))
@@ -501,6 +542,7 @@ describe("hush env resolve", () => {
   it("refuses with EnvTargetInvalid unless exactly one of --output and --in-place is given", () =>
     withSandbox(async (box) => {
       const path = await template(box, [`A=${key}`])
+
       for (const flags of [[], ["--in-place", "--output", join(box.home, "out")]]) {
         const result = await box.run(["env", "resolve", path, ...flags])
         assert.strictEqual(result.code, 1)
@@ -510,6 +552,7 @@ describe("hush env resolve", () => {
         )
         assert.deepStrictEqual(result.calls, [])
       }
+
       assert.strictEqual(await readFile(path, "utf8"), `A=${key}`)
     }))
 
@@ -533,6 +576,7 @@ describe("hush env resolve", () => {
 describe("hush run --help", () => {
   it("says masking is best effort", async () => {
     const box = await cli()
+
     try {
       const result = await box.run(["run", "--help"])
       assert.strictEqual(result.code, 0, result.stderr)

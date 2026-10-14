@@ -160,6 +160,7 @@ const checkServer = (
   Effect.map(probe(target), (found) => {
     const { route } = target
     const status = found._tag === "Answered" ? found.status : undefined
+
     return {
       check: {
         source: target.source,
@@ -183,9 +184,11 @@ export const run = (env: EnvVars): Effect.Effect<Report> =>
   Effect.gen(function* () {
     const target = yield* Effect.result(Target.load(env))
     const token = yield* TokenStore.health(Result.isSuccess(target) ? target.success.origin : undefined, env)
+
     if (Result.isFailure(target))
       return report({ version: Version.current, server: null, token, notes: [CliError.render(target.failure)] })
     const server = yield* checkServer(target.success)
+
     return report({
       version: Version.current,
       server: server.check,

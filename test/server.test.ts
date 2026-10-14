@@ -9,6 +9,7 @@ import { cli, sandbox, type Sandbox } from "./sandbox.js"
 
 const withSandbox = async (test: (box: Sandbox) => Promise<void>) => {
   const box = await sandbox()
+
   try {
     await test(box)
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel]), [])
@@ -29,6 +30,7 @@ describe("hush server start", () => {
         .output()
         .split("\n")
         .filter((text) => text.includes('"listening"'))
+
       assert.strictEqual(rest.length, 0)
       assert.deepStrictEqual(JSON.parse(line ?? ""), {
         event: "listening",
@@ -45,6 +47,7 @@ describe("hush server start", () => {
       assert.strictEqual(await mode(box.server.stateDir), "700")
       const files = (await readdir(box.server.stateDir)).toSorted()
       assert.deepStrictEqual(files, ["hush.db", "hush.db-shm", "hush.db-wal", "init-code"])
+
       for (const file of files) assert.strictEqual(await mode(join(box.server.stateDir, file)), "600")
     }))
 
@@ -61,12 +64,14 @@ describe("hush server start", () => {
   it("deletes every stale backup snapshot before opening the database, logging each", () =>
     withSandbox(async (box) => {
       const stale = ["backup-a1.db", "backup-b2.db"]
+
       for (const name of stale) await writeFile(join(box.server.stateDir, name), valueSentinel.text)
       await box.server.restart()
       assert.deepStrictEqual(
         (await readdir(box.server.stateDir)).filter((name) => name.startsWith("backup-")),
         [],
       )
+
       for (const name of stale)
         assert.include(
           box.server.output(),
@@ -81,6 +86,7 @@ describe("hush server start", () => {
       const calls = await box.calls()
       assert.deepStrictEqual(calls.at(-1), { method: "GET", path: "/v1/status", status: 200 })
       assert.notInclude(box.server.output(), secret)
+
       for (const line of box.server
         .output()
         .split("\n")
@@ -125,6 +131,7 @@ describe("hush server start", () => {
 describe("hush server config errors", () => {
   it("fails StateDirRequired with one line and exit 1, creating nothing", async () => {
     const box = await cli()
+
     try {
       const result = await box.run(["server", "--port", "0"])
       assert.strictEqual(result.code, 1)
@@ -141,6 +148,7 @@ describe("hush server config errors", () => {
 
   it("fails ConfigInvalid with exit 1 on a port that is not a number, creating nothing", async () => {
     const box = await cli()
+
     try {
       const stateDir = join(box.home, "state")
       const result = await box.run(["server", "--state-dir", stateDir], { env: { HUSH_PORT: "http" } })
@@ -160,6 +168,7 @@ describe("hush server config errors", () => {
 describe("the harness", () => {
   it("runs the CLI with no controlling terminal, so /dev/tty fails", async () => {
     const box = await cli()
+
     try {
       const result = await box.shell(": < /dev/tty")
       assert.notStrictEqual(result.code, 0)

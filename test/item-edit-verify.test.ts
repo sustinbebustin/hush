@@ -31,6 +31,7 @@ const withStore = <A, E>(test: Effect.Effect<A, E, Needs>) =>
         const stateDir = join(root, "state")
         yield* StateDir.prepare(stateDir)
         const sql = yield* Database.open(stateDir)
+
         return yield* test.pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
           Effect.provideService(Locks.Service, yield* Locks.make),
@@ -60,6 +61,7 @@ const seed = Effect.gen(function* () {
     INSERT INTO items (id, vault_id, title, title_key, kind, created_at, updated_at)
     VALUES (1, 1, 'Stripe', 'stripe', 'api-credential', ${at}, ${at})`
   const key = yield* Keys.vaultKeyFromMaster(master, 1, underMaster)
+
   const sealed = yield* Keys.sealField(
     key,
     {
@@ -71,6 +73,7 @@ const seed = Effect.gen(function* () {
     },
     "old value",
   )
+
   yield* sql`
     INSERT INTO fields (id, item_id, label, label_key, nonce, sealed, updated_at)
     VALUES (1, 1, 'credential', 'credential', ${sealed.nonce}, ${sealed.wrapped}, ${at})`
@@ -89,6 +92,7 @@ const flipsABit: ItemAdmin.Sealer = {
     Effect.map(Keys.sealField(key, location, value), (sealed) => {
       const wrapped = new Uint8Array(sealed.wrapped)
       wrapped.set([(wrapped.at(0) ?? 0) ^ 1], 0)
+
       return { ...sealed, wrapped }
     }),
 }
@@ -108,10 +112,12 @@ describe("item edit verification before commit", () => {
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient
           yield* seed
+
           const before = {
             fields: yield* sql`SELECT * FROM fields`,
             items: yield* sql`SELECT * FROM items`,
           }
+
           const failed = yield* Effect.flip(ItemAdmin.edit(request, null, sealer))
           assert.strictEqual(failed._tag, "IntegrityCheckFailed")
           assert.deepStrictEqual(failed._tag === "IntegrityCheckFailed" ? failed.damaged : undefined, {

@@ -26,6 +26,7 @@ export const check = (input: {
   readonly server: Owner
 }): Result.Result<void, StateFileNotOwned> => {
   const foreign = input.paths.find(({ owner }) => owner.uid !== input.server.uid)
+
   return foreign === undefined
     ? Result.void
     : Result.fail(new StateFileNotOwned({ stateDir: input.stateDir, ...foreign, server: input.server }))
@@ -57,6 +58,7 @@ const ownerIfPresent = (path: string): Effect.Effect<OwnedPath | undefined, Stat
 const identity = Effect.suspend(() => {
   const uid = process.geteuid?.()
   const gid = process.getegid?.()
+
   return uid === undefined || gid === undefined
     ? Effect.die(new Error("hush server runs on POSIX only: process.geteuid is unavailable"))
     : Effect.succeed<Owner>({ uid, gid })
@@ -72,6 +74,7 @@ const isSnapshot = (name: string) => name.startsWith("backup-") && name.endsWith
 export const deleteStaleSnapshots = (stateDir: string): Effect.Effect<void, StatePermissionFailed> =>
   Effect.gen(function* () {
     const names = yield* attempt("read", stateDir, () => readdir(stateDir))
+
     for (const name of names.filter(isSnapshot)) {
       const path = join(stateDir, name)
       yield* attempt("delete", path, () => unlink(path))
@@ -86,6 +89,7 @@ export const prepare = (stateDir: string): Effect.Effect<void, StateFileNotOwned
   Effect.gen(function* () {
     const server = yield* identity
     const directory = yield* ownerIfPresent(stateDir)
+
     if (directory === undefined) {
       yield* attempt("create", stateDir, () => mkdir(stateDir, { mode: 0o700 }))
     } else {
@@ -93,10 +97,12 @@ export const prepare = (stateDir: string): Effect.Effect<void, StateFileNotOwned
       const present = files.filter((file) => file !== undefined)
       yield* Effect.fromResult(check({ stateDir, paths: [directory, ...present], server }))
     }
+
     // chmod even after mkdir: the umask may have narrowed or the parent's default ACL widened the mode.
     yield* attempt("chmod-0700", stateDir, () => chmod(stateDir, 0o700))
     yield* deleteStaleSnapshots(stateDir)
     const database = databasePath(stateDir)
+
     const created = yield* Effect.tryPromise({
       try: () => open(database, "wx", 0o600).then((handle) => handle.close().then(() => true)),
       catch: (cause) => cause,
@@ -113,8 +119,10 @@ export const prepare = (stateDir: string): Effect.Effect<void, StateFileNotOwned
             ),
       ),
     )
+
     for (const name of created ? [databaseFile] : databaseFiles) {
       const path = join(stateDir, name)
+
       if ((yield* ownerIfPresent(path)) !== undefined) yield* attempt("chmod-0600", path, () => chmod(path, 0o600))
     }
   })

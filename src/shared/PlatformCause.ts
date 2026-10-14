@@ -4,6 +4,7 @@
 const stringField = (cause: unknown, name: string): string | undefined => {
   if (typeof cause !== "object" || cause === null) return undefined
   const value: unknown = Reflect.get(cause, name)
+
   return typeof value === "string" ? value : undefined
 }
 

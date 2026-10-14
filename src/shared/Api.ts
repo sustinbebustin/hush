@@ -44,6 +44,7 @@ import { Utf8 } from "./Utf8.js"
 // Names travel as plain strings: the handlers parse them, so a bad one is `InvalidName`, not an empty 400.
 
 export const ServerStateWire = Schema.Literals(["uninitialised", "ready"])
+
 export type ServerStateWire = typeof ServerStateWire.Type
 
 export const Status = Schema.Struct({
@@ -51,6 +52,7 @@ export const Status = Schema.Struct({
   version: Schema.String,
   api: Schema.Literal(1),
 })
+
 export type Status = typeof Status.Type
 
 // Needs no credential, and the Uninitialised gate never refuses it. Every endpoint declares the guard's
@@ -84,6 +86,7 @@ export const InitRequest = Schema.Struct({
   passphrase: Passphrase,
   first: Schema.optionalKey(Schema.Struct({ vault: Schema.String, label: Schema.String })),
 })
+
 export type InitRequest = typeof InitRequest.Type
 
 export const InitReceipt = Schema.Struct({
@@ -99,22 +102,28 @@ export const InitReceipt = Schema.Struct({
     }),
   ),
 })
+
 export type InitReceipt = typeof InitReceipt.Type
 
 export const PassphraseChangeRequest = Schema.Struct({ passphrase: Passphrase, newPassphrase: Passphrase })
+
 export type PassphraseChangeRequest = typeof PassphraseChangeRequest.Type
 
 export const PassphraseChangeReceipt = Schema.Struct({ changed: Schema.Literal(true) })
+
 export type PassphraseChangeReceipt = typeof PassphraseChangeReceipt.Type
 
 // Just the Passphrase, for the endpoints that take nothing else.
 export const PassphraseOnly = Schema.Struct({ passphrase: Passphrase })
+
 export type PassphraseOnly = typeof PassphraseOnly.Type
 
 export const VaultRequest = Schema.Struct({ passphrase: Passphrase, vault: Schema.String })
+
 export type VaultRequest = typeof VaultRequest.Type
 
 export const VaultReceipt = Schema.Struct({ vault: Schema.String, createdAt: Schema.String })
+
 export type VaultReceipt = typeof VaultReceipt.Type
 
 // Sorted by name; `activeTokens` counts Tokens neither revoked nor expired with a Grant on the Vault.
@@ -128,9 +137,11 @@ export const VaultList = Schema.Struct({
     }),
   ),
 })
+
 export type VaultList = typeof VaultList.Type
 
 export const VaultDeleted = Schema.Struct({ deleted: Schema.Literal(true), vault: Schema.String })
+
 export type VaultDeleted = typeof VaultDeleted.Type
 
 // The longest `--ttl`: 3650 days.
@@ -142,6 +153,7 @@ const distinctVaults = Schema.makeFilter((grants: ReadonlyArray<{ readonly vault
   const keys = grants.map(({ vault }) =>
     Result.match(Name.parse(vault), { onSuccess: Name.key, onFailure: () => vault }),
   )
+
   return new Set(keys).size === keys.length
 })
 
@@ -160,6 +172,7 @@ export const TokenIssueRequest = Schema.Struct({
       (keepGrants !== true || replaces === true) && (grants.length > 0 || keepGrants === true),
   ),
 )
+
 export type TokenIssueRequest = typeof TokenIssueRequest.Type
 
 // The plaintext Token appears here only. `replaced` says whether a Token with the
@@ -172,9 +185,11 @@ export const TokenIssueReceipt = Schema.Struct({
   expiresAt: Schema.NullOr(Schema.String),
   replaced: Schema.Boolean,
 })
+
 export type TokenIssueReceipt = typeof TokenIssueReceipt.Type
 
 export const TokenState = Schema.Literals(["active", "expired", "revoked"])
+
 export type TokenState = typeof TokenState.Type
 
 // What a Token learns about itself through `token/describe`; never its value.
@@ -184,6 +199,7 @@ export const TokenDescription = Schema.Struct({
   createdAt: Schema.String,
   expiresAt: Schema.NullOr(Schema.String),
 })
+
 export type TokenDescription = typeof TokenDescription.Type
 
 // A Token as listed by the Owner. A revoked Token keeps listing the Grants it had, until its Vault goes.
@@ -193,13 +209,16 @@ export const TokenInfo = Schema.Struct({
   lastUsedAt: Schema.NullOr(Schema.String),
   state: TokenState,
 })
+
 export type TokenInfo = typeof TokenInfo.Type
 
 // Newest first.
 export const TokenList = Schema.Struct({ tokens: Schema.Array(TokenInfo) })
+
 export type TokenList = typeof TokenList.Type
 
 export const TokenRevokeRequest = Schema.Struct({ passphrase: Passphrase, label: Schema.String })
+
 export type TokenRevokeRequest = typeof TokenRevokeRequest.Type
 
 // `label` is the stored display Label.
@@ -208,6 +227,7 @@ export const TokenRevoked = Schema.Struct({
   revoked: Schema.Literal(true),
   revokedAt: Schema.String,
 })
+
 export type TokenRevoked = typeof TokenRevoked.Type
 
 // What an audited request did.
@@ -231,6 +251,7 @@ export const AuditAction = Schema.Literals([
   "secrets.resolve",
   "items.create",
 ])
+
 export type AuditAction = typeof AuditAction.Type
 
 // Names only, never values, Tokens, the Passphrase or the Init code.
@@ -249,6 +270,7 @@ export const AuditDetail = Schema.Struct({
   replaced: Schema.optionalKey(Schema.String),
   title: Schema.optionalKey(Schema.String),
 })
+
 export type AuditDetail = typeof AuditDetail.Type
 
 // Who made an audited request; a Token by its Label, never its value.
@@ -256,6 +278,7 @@ export const AuditActor = Schema.Union([
   Schema.Struct({ type: Schema.Literals(["init", "passphrase", "host"]) }),
   Schema.Struct({ type: Schema.Literal("token"), label: Schema.String }),
 ])
+
 export type AuditActor = typeof AuditActor.Type
 
 const auditEntryFields = {
@@ -279,6 +302,7 @@ export const AuditEntry = Schema.Union([
   Schema.Struct({ ...auditEntryFields, outcome: Schema.Literal("ok") }),
   Schema.Struct({ ...auditEntryFields, outcome: Schema.Literals(["denied", "error"]), error: Schema.String }),
 ])
+
 export type AuditEntry = typeof AuditEntry.Type
 
 // The most entries one page holds, and how many when the request does not say.
@@ -289,6 +313,7 @@ export const auditLimit = { max: 1000, default: 100 } as const
 const Instant = Schema.String.check(
   Schema.makeFilter((text: string) => {
     const ms = Date.parse(text)
+
     return !Number.isNaN(ms) && new Date(ms).toISOString() === text
   }),
 )
@@ -303,10 +328,12 @@ export const AuditRequest = Schema.Struct({
   vault: Schema.optionalKey(Schema.String),
   label: Schema.optionalKey(Schema.String),
 })
+
 export type AuditRequest = typeof AuditRequest.Type
 
 // Newest first. `next` is set when older matching entries remain: pass it as `before` for the next page.
 export const AuditPage = Schema.Struct({ entries: Schema.Array(AuditEntry), next: Schema.optionalKey(Schema.Number) })
+
 export type AuditPage = typeof AuditPage.Type
 
 export const FieldMeta = Schema.Struct({ label: Schema.String, concealed: Schema.Boolean })
@@ -317,6 +344,7 @@ export const ItemChange = Schema.Union([
   Schema.Struct({ set: Schema.Struct({ label: Schema.String, value: Value }) }),
   Schema.Struct({ remove: Schema.String }),
 ])
+
 export type ItemChange = typeof ItemChange.Type
 
 export const ItemEditRequest = Schema.Struct({
@@ -325,6 +353,7 @@ export const ItemEditRequest = Schema.Struct({
   item: Schema.String,
   change: ItemChange,
 })
+
 export type ItemEditRequest = typeof ItemEditRequest.Type
 
 // Stored display names, Fields in Kind order. `verified`: the new seal was opened and compared before commit.
@@ -336,6 +365,7 @@ export const ItemEditReceipt = Schema.Struct({
   updatedAt: Schema.String,
   verified: Schema.Literal(true),
 })
+
 export type ItemEditReceipt = typeof ItemEditReceipt.Type
 
 export const ItemRenameRequest = Schema.Struct({
@@ -344,6 +374,7 @@ export const ItemRenameRequest = Schema.Struct({
   item: Schema.String,
   newTitle: Schema.String,
 })
+
 export type ItemRenameRequest = typeof ItemRenameRequest.Type
 
 // `references` holds the old and new Reference of every Field, in Kind order.
@@ -353,15 +384,19 @@ export const ItemRenamed = Schema.Struct({
   to: Schema.String,
   references: Schema.Array(Schema.Struct({ old: Schema.String, new: Schema.String })),
 })
+
 export type ItemRenamed = typeof ItemRenamed.Type
 
 export const ItemRequest = Schema.Struct({ passphrase: Passphrase, vault: Schema.String, item: Schema.String })
+
 export type ItemRequest = typeof ItemRequest.Type
 
 export const ItemDeleted = Schema.Struct({ deleted: Schema.Literal(true), vault: Schema.String, title: Schema.String })
+
 export type ItemDeleted = typeof ItemDeleted.Type
 
 export const ItemReleaseRequest = Schema.Struct({ passphrase: Passphrase, vault: Schema.String, title: Schema.String })
+
 export type ItemReleaseRequest = typeof ItemReleaseRequest.Type
 
 // `title` is the title as requested: a Retired title keeps only its key.
@@ -370,6 +405,7 @@ export const ItemReleased = Schema.Struct({
   vault: Schema.String,
   title: Schema.String,
 })
+
 export type ItemReleased = typeof ItemReleased.Type
 
 // Every error a Passphrase endpoint shares: the guard and gate, a wrong Passphrase, the backoff, the Audit Log.
@@ -504,12 +540,14 @@ export const maxReferences = 256
 export const ResolveRequest = Schema.Struct({
   references: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
 })
+
 export type ResolveRequest = typeof ResolveRequest.Type
 
 export const ResolvedValue = Schema.Struct({ reference: Schema.String, value: Value, concealed: Schema.Boolean })
 
 // In request order, one per Reference sent.
 export const ResolveResponse = Schema.Struct({ values: Schema.Array(ResolvedValue) })
+
 export type ResolveResponse = typeof ResolveResponse.Type
 
 // Each label at most once, by name identity; the CLI never sends a label twice, so a request that does is
@@ -518,6 +556,7 @@ const distinctLabels = Schema.makeFilter((fields: ReadonlyArray<{ readonly label
   const keys = fields.map(({ label }) =>
     Result.match(Name.parse(label), { onSuccess: Name.key, onFailure: () => label }),
   )
+
   return new Set(keys).size === keys.length
 })
 
@@ -527,6 +566,7 @@ export const CreateRequest = Schema.Struct({
   kind: KindWire,
   fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Value })).check(distinctLabels),
 })
+
 export type CreateRequest = typeof CreateRequest.Type
 
 // Stored display names, Fields in Kind order.
@@ -537,10 +577,12 @@ export const CreateReceipt = Schema.Struct({
   fields: Schema.Array(FieldMeta),
   createdAt: Schema.String,
 })
+
 export type CreateReceipt = typeof CreateReceipt.Type
 
 // Absent `vaults`: every granted Vault. Each named Vault must be granted.
 export const ListRequest = Schema.Struct({ vaults: Schema.optionalKey(Schema.Array(Schema.String)) })
+
 export type ListRequest = typeof ListRequest.Type
 
 // An Item's metadata: stored display names, Fields in Kind order, never a value.
@@ -551,6 +593,7 @@ export const ItemMeta = Schema.Struct({
   updatedAt: Schema.String,
   fields: Schema.Array(FieldMeta),
 })
+
 export type ItemMeta = typeof ItemMeta.Type
 
 // Every Vault listed, empty ones included, with the Token's Access to it.
@@ -559,6 +602,7 @@ export const ItemList = Schema.Struct({
     Schema.Struct({ vault: Schema.String, access: Schema.Literals(Access.all), items: Schema.Array(ItemMeta) }),
   ),
 })
+
 export type ItemList = typeof ItemList.Type
 
 // Every endpoint here is refused by the Uninitialised gate before `TokenAuth` runs.
@@ -629,4 +673,5 @@ export const BackupRoute = {
   headers: { bytes: "x-hush-backup-bytes", sha256: "x-hush-backup-sha256" },
   error: Schema.Union(passphraseEndpointErrors),
 } as const
+
 export type BackupError = typeof BackupRoute.error.Type

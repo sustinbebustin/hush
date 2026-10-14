@@ -28,7 +28,9 @@ const isContinuation = (byte: number) => (byte & 0xc0) === 0x80
 // The bytes without their last UTF-8 character: trailing continuation bytes, then the lead byte.
 const eraseLast = (bytes: Uint8Array) => {
   let end = bytes.length
+
   while (end > 0 && isContinuation(bytes[end - 1] ?? 0)) end -= 1
+
   return bytes.slice(0, Math.max(end - 1, 0))
 }
 
@@ -36,6 +38,7 @@ const append = (bytes: Uint8Array, byte: number) => {
   const next = new Uint8Array(bytes.length + 1)
   next.set(bytes)
   next[bytes.length] = byte
+
   return next
 }
 
@@ -62,10 +65,12 @@ const key = (bytes: Uint8Array, byte: number): Line => {
 // A chunk of input as the terminal delivered it; a finished line ignores anything after its end.
 export const feed = (line: Line, chunk: Uint8Array): Line => {
   let current = line
+
   for (const byte of chunk) {
     if (current._tag !== "Reading") return current
     current = key(current.bytes, byte)
   }
+
   return current
 }
 
@@ -81,6 +86,7 @@ const open = (unavailable: Unavailable) =>
   Effect.try({
     try: (): Opened => {
       const fd = openSync("/dev/tty", "r+")
+
       try {
         return { fd, stream: new ReadStream(fd) }
       } catch (cause) {
@@ -98,6 +104,7 @@ const close = ({ fd, stream }: Opened) =>
     try {
       writeSync(fd, "\r\n")
     } catch {}
+
     stream.setRawMode(false)
     stream.destroy()
   })
@@ -105,14 +112,18 @@ const close = ({ fd, stream }: Opened) =>
 const readLine = ({ stream }: Opened, unavailable: Unavailable) =>
   Effect.callback<Uint8Array, PromptCancelled | NoTerminal>((resume) => {
     let line: Line = empty
+
     const onData = (chunk: Uint8Array) => {
       line = feed(line, chunk)
+
       if (line._tag === "Reading") return
       resume(line._tag === "Entered" ? Effect.succeed(line.bytes) : Effect.fail(new PromptCancelled()))
     }
+
     const onEnd = () => resume(Effect.fail(new PromptCancelled()))
     const onError = () => resume(Effect.fail(unavailable()))
     stream.on("data", onData).on("end", onEnd).on("error", onError)
+
     return Effect.sync(() => {
       stream.off("data", onData).off("end", onEnd).off("error", onError)
     })
@@ -126,6 +137,7 @@ export const hidden = (
   need: NoTerminal["prompt"],
 ): Effect.Effect<Redacted.Redacted<Uint8Array>, PromptCancelled | NoTerminal> => {
   const unavailable = () => new NoTerminal({ prompt: need })
+
   return Effect.acquireUseRelease(
     open(unavailable),
     (opened) =>
@@ -137,6 +149,7 @@ export const hidden = (
           },
           catch: unavailable,
         })
+
         return Redacted.make(yield* readLine(opened, unavailable))
       }),
     close,

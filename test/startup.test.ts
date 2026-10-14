@@ -14,6 +14,7 @@ import { sandbox, type Sandbox } from "./sandbox.js"
 
 const withSandbox = async (test: (box: Sandbox) => Promise<void>) => {
   const box = await sandbox()
+
   try {
     await test(box)
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel]), [])
@@ -32,6 +33,7 @@ const startOnce = (box: Sandbox, stateDir = box.server.stateDir) =>
 const status = async (box: Sandbox): Promise<ServerStateWire> => {
   const result = await box.run(["status"])
   assert.strictEqual(result.code, 0, result.stderr)
+
   return Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({ state: ServerStateWire })))(result.stdout).state
 }
 
@@ -66,14 +68,17 @@ const cases: ReadonlyArray<FailureCase> = [
     plant: async (box) => {
       await box.seed()
       await box.server.stop()
+
       const original = await box.inspect((db) =>
         Schema.decodeUnknownSync(Salt)(db.query("SELECT kdf_salt FROM meta").get()),
       )
+
       // The CHECK refuses a wrong length, so the edit goes around it, as a hand edit of the file can.
       await box.inspect((db) => {
         db.run("PRAGMA ignore_check_constraints = ON")
         db.run("UPDATE meta SET kdf_salt = x'00'")
       })
+
       return {
         remove: () => box.inspect((db) => void db.run("UPDATE meta SET kdf_salt = ?", [original.kdf_salt])),
       }
@@ -88,6 +93,7 @@ const cases: ReadonlyArray<FailureCase> = [
       await box.server.stop()
       await removeDatabase(box)
       await writeFile(databaseOf(box), "this is not a hush backup\n".repeat(40), { mode: 0o600 })
+
       return { remove: () => removeDatabase(box) }
     },
     line: (box) =>
@@ -108,6 +114,7 @@ const cases: ReadonlyArray<FailureCase> = [
       db.run("CREATE TABLE meta (id INTEGER PRIMARY KEY)")
       db.close()
       const before = await readFile(databaseOf(box))
+
       return {
         remove: () => removeDatabase(box),
         afterFailure: async () => assert.isTrue(before.equals(await readFile(databaseOf(box)))),
@@ -124,6 +131,7 @@ const cases: ReadonlyArray<FailureCase> = [
       await box.server.stop()
       await rm(box.server.stateDir, { recursive: true })
       await chmod(dirname(box.server.stateDir), 0o500)
+
       return {
         remove: () => chmod(dirname(box.server.stateDir), 0o700),
         afterFailure: async () => assert.notInclude(await readdir(dirname(box.server.stateDir)), "state"),
@@ -140,6 +148,7 @@ const cases: ReadonlyArray<FailureCase> = [
       const initCode = join(box.server.stateDir, "init-code")
       await rm(initCode)
       await mkdir(join(initCode, "occupied"), { recursive: true })
+
       return {
         remove: () => rm(initCode, { recursive: true }),
         afterFailure: async () => assert.notInclude(await readdir(box.server.stateDir), "init-code.tmp"),
@@ -155,6 +164,7 @@ const cases: ReadonlyArray<FailureCase> = [
     plant: async (box) => {
       await box.server.stop()
       await chown(databaseOf(box), 12345, 12345)
+
       return { remove: () => chown(databaseOf(box), 0, 0) }
     },
     line: (box) =>
@@ -186,15 +196,18 @@ describe("a failed start", () => {
 // unprivileged runner cannot make one.
 const readOnlyOwnedMount = (): string | undefined => {
   const uid = process.geteuid?.()
+
   return readFileSync("/proc/self/mounts", "utf8")
     .split("\n")
     .flatMap((line) => {
       const [, target, , options] = line.split(" ")
+
       return target !== undefined && options?.split(",").includes("ro") === true ? [target] : []
     })
     .find((target) => {
       try {
         const stats = statSync(target)
+
         return stats.isDirectory() && stats.uid === uid
       } catch {
         return false

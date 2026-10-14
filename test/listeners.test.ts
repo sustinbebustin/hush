@@ -14,6 +14,7 @@ const withSandbox = async (
 ) => {
   const box = await sandbox(options)
   const codes: Array<Sentinel> = []
+
   try {
     await test(box, (code) => codes.push({ kind: "initCode", text: code }))
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel, ...codes]), [])
@@ -47,6 +48,7 @@ const createdBesidesBun = async (home: string) => (await readdir(home)).filter((
 // Runs `hush server` with `args` from a fresh HOME and asserts it failed with `message`, exit 1 and nothing created.
 const assertStartRefused = async (args: ReadonlyArray<string>, message: string, env: Record<string, string> = {}) => {
   const box = await cli()
+
   try {
     const result = await box.run(["server", "--state-dir", join(box.home, "state"), "--port", "0", ...args], { env })
     assert.strictEqual(result.code, 1)
@@ -75,11 +77,13 @@ describe("hush server listeners", () => {
         ["127.0.0.1", "::1"],
       )
       assert.strictEqual(new Set(addresses.map(({ port }) => port)).size, 2)
+
       for (const { ip, port } of addresses) {
         const origin = ip.includes(":") ? `http://[${ip}]:${port}` : `http://${ip}:${port}`
         const status = await box.run(["status"], { env: { HUSH_SERVER: origin } })
         assert.strictEqual(status.code, 0, ip)
       }
+
       assert.deepStrictEqual(startupLine(box), {
         event: "listening",
         version: packageJson.version,
@@ -93,8 +97,10 @@ describe("hush server listeners", () => {
   it("accepts Init on a second, opted-in listener and warns about cleartext at every start", async () => {
     if (lanAddress === undefined) {
       console.log("skipped: the runner has no non-loopback IPv4 address to listen on")
+
       return
     }
+
     await withSandbox({ serverArgs: ["--allow-any-listen", "--listen", lanAddress] }, async (box, seen) => {
       const [, second] = box.server.addresses()
       assert.strictEqual(second?.ip, lanAddress)
@@ -102,10 +108,12 @@ describe("hush server listeners", () => {
       assert.strictEqual(warnings(box).length, 1)
       const code = (await box.server.initCode()) ?? ""
       seen(code)
+
       const init = await box.run(["init", "--passphrase-stdin"], {
         input: `${code}\n${passphraseSentinel.text}\n`,
         env: { HUSH_SERVER: `http://${lanAddress}:${second?.port}` },
       })
+
       assert.strictEqual(init.code, 0, init.stderr)
       assert.strictEqual(JSON.parse((await box.run(["status"])).stdout).state, "ready")
       await box.server.restart()
@@ -150,10 +158,13 @@ describe("hush server listen errors", () => {
 
   it("fails an unassigned tailnet address with ListenAddressUnavailable, creating nothing", async () => {
     const ip = "100.127.255.254"
+
     if (Object.values(networkInterfaces()).some((entries) => entries?.some(({ address }) => address === ip))) {
       console.log(`skipped: the runner has ${ip} assigned`)
+
       return
     }
+
     await assertStartRefused(
       ["--listen", ip],
       `${ip} is not assigned to this host yet; nothing was started. If it is the tailnet IP, start after Tailscale (\`systemctl enable tailscale-wait-online.service\` and order the unit after \`tailscale-online.target\`); systemd and Docker retry automatically.`,
@@ -162,11 +173,15 @@ describe("hush server listen errors", () => {
 
   it("fails any other bind error with ListenFailed naming its code, creating nothing", async () => {
     const unprivilegedFrom = linux ? Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8")) : 0
+
     if (process.getuid?.() === 0 || unprivilegedFrom <= 80) {
       console.log("skipped: this runner may bind port 80, so it cannot provoke EACCES")
+
       return
     }
+
     const box = await cli()
+
     try {
       const result = await box.run(["server", "--state-dir", join(box.home, "state"), "--port", "80"])
       assert.strictEqual(result.code, 1)

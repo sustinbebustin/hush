@@ -9,6 +9,7 @@ import type { EnvVars } from "./LaunchEnv.js"
 
 const modes = ["auto", "direct"] as const
 export const Mode = Schema.Literals(modes)
+
 export type Mode = typeof Mode.Type
 
 // Why a present proxy went unused: `disabled` is a loopback proxy turned off by mode `direct`.
@@ -24,6 +25,7 @@ export type Route =
 // `host:port` with the scheme's default port filled in; never the userinfo.
 const display = (url: URL): string => {
   const port = url.port === "" ? (url.protocol === "https:" ? "443" : "80") : url.port
+
   return `${url.hostname}:${port}`
 }
 
@@ -35,10 +37,14 @@ const parse = (text: string): URL | undefined => (URL.canParse(text) ? new URL(t
 
 const select = (mode: Mode, env: EnvVars): Route => {
   const text = env.HTTP_PROXY ?? env.http_proxy
+
   if (text === undefined || text === "") return { _tag: "Direct", unused: "none" }
   const url = parse(text)
+
   if (url === undefined) return { _tag: "Direct", unused: "not-loopback", proxyDisplay: undefined }
+
   if (!isLoopback(url)) return { _tag: "Direct", unused: "not-loopback", proxyDisplay: display(url) }
+
   return mode === "direct"
     ? { _tag: "Direct", unused: "disabled", proxyDisplay: display(url) }
     : { _tag: "Proxy", proxy: Redacted.make(url), proxyDisplay: display(url) }
@@ -52,6 +58,7 @@ const apply = (route: Route): void => {
     case "Direct":
       process.env.NO_PROXY = "*"
       process.env.no_proxy = "*"
+
       return
     case "Proxy":
       delete process.env.NO_PROXY
@@ -68,6 +75,7 @@ export const RouteView = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Direct"), unused: Schema.Literals(["none", "not-loopback", "disabled"]) }),
   Schema.Struct({ _tag: Schema.Literal("Proxy"), proxy: Schema.String }),
 ])
+
 export type RouteView = typeof RouteView.Type
 
 const view = (route: Route): RouteView =>

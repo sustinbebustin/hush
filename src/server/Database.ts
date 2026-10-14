@@ -33,9 +33,11 @@ export const nextId = (table: IdTable): Effect.Effect<number, never, SqlClient.S
 const lastId = (table: IdTable): Effect.Effect<number, never, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
+
     const rows = yield* Schema.decodeUnknownEffect(Sequence)(
       yield* sql`SELECT seq FROM sqlite_sequence WHERE name = ${table}`,
     )
+
     return rows[0]?.seq ?? 0
   }).pipe(Effect.orDie)
 
@@ -70,6 +72,7 @@ export const checkpoint: Effect.Effect<void, SqlError.SqlError | Schema.SchemaEr
     const sql = yield* SqlClient.SqlClient
     const answer = yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`
     const result = yield* Schema.decodeUnknownEffect(Schema.Tuple([CheckpointResult]))(answer)
+
     if (result[0].busy !== 0) yield* Log.write({ event: "checkpoint-busy" })
   },
 )
@@ -92,11 +95,14 @@ const migrate = SqliteMigrator.run({ loader: SqliteMigrator.fromRecord(migration
   ),
   Effect.mapError((error) => {
     const version = Object.keys(migrations).at(-1) ?? "unknown"
+
     if (error instanceof SqliteMigrator.MigrationError) {
       const cause: unknown = error.cause
       const detail = SqlError.isSqlError(cause) ? sqliteDetail(cause).message : error.message
+
       return new MigrationFailed({ version, message: detail })
     }
+
     return new MigrationFailed({ version, message: sqliteDetail(error).message })
   }),
 )
@@ -115,14 +121,17 @@ export const open = (
   Effect.gen(function* () {
     const path = StateDir.databasePath(stateDir)
     const failed = openFailed(stateDir)
+
     const client = yield* SqliteClient.make({ filename: path }).pipe(
       Effect.provide(Reactivity.layer),
       Effect.mapError(failed),
     )
+
     const withClient = Effect.provideService(SqlClient.SqlClient, client)
     yield* hygiene.pipe(withClient, Effect.mapError(failed))
     yield* migrate.pipe(withClient)
     yield* checkpoint.pipe(withClient, Effect.mapError(failed))
+
     return client
   })
 
@@ -135,10 +144,13 @@ const Applied = Schema.Array(Schema.Struct({ id: Schema.NullOr(Schema.Number) })
 const schemaCurrent = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   const table = yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`
+
   if (table.length === 0) return false
+
   const [applied] = yield* Schema.decodeUnknownEffect(Applied)(
     yield* sql`SELECT max(migration_id) AS id FROM effect_sql_migrations`,
   )
+
   return (applied?.id ?? 0) >= latestMigration
 })
 
@@ -150,13 +162,17 @@ export const openHost = (
 ): Effect.Effect<SqlClient.SqlClient, DatabaseOpenFailed | MigrationPending, Scope.Scope> =>
   Effect.gen(function* () {
     const failed = openFailed(stateDir)
+
     const client = yield* SqliteClient.make({ filename: StateDir.databasePath(stateDir), create: false }).pipe(
       Effect.provide(Reactivity.layer),
       Effect.mapError(failed),
     )
+
     const withClient = Effect.provideService(SqlClient.SqlClient, client)
     yield* hygiene.pipe(withClient, Effect.mapError(failed))
+
     if (!(yield* schemaCurrent.pipe(withClient, Effect.mapError(failed)))) return yield* new MigrationPending()
+
     return client
   })
 

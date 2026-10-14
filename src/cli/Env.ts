@@ -58,6 +58,7 @@ const namePattern = /^[A-Za-z_][A-Za-z0-9_]*$/
 // `NAME=value` split at the first `=`; undefined when nothing precedes it.
 const split = (text: string): { readonly name: string; readonly value: string } | undefined => {
   const equals = text.indexOf("=")
+
   return equals < 1 ? undefined : { name: text.slice(0, equals), value: text.slice(equals + 1) }
 }
 
@@ -68,8 +69,11 @@ export const parseAssignment = (
   assignment: string,
 ): Result.Result<Assignment, { readonly reason: AssignmentInvalidReason }> => {
   const parts = split(assignment)
+
   if (parts === undefined || !namePattern.test(parts.name)) return Result.fail({ reason: "not-assignment" })
+
   if (scheme(parts.value) === "op") return Result.fail({ reason: "op-reference" })
+
   return Result.mapBoth(normalizeReference(parts.value), {
     onSuccess: (formatted) => ({ name: parts.name, reference: formatted }),
     onFailure: (reason) => ({ reason }),
@@ -84,13 +88,17 @@ const unquote = (value: string): string =>
 
 const parseLine = (original: string, line: number): Result.Result<EnvLine, LineInvalid> => {
   const trimmed = original.trim()
+
   if (trimmed === "" || trimmed.startsWith("#")) return Result.succeed({ _tag: "Verbatim", original })
   const assignment = trimmed.startsWith("export ") ? trimmed.slice(7).trim() : trimmed
   const parts = split(assignment)
+
   if (parts === undefined) return Result.succeed({ _tag: "Other", original, line })
   const name = parts.name.trim()
+
   if (!namePattern.test(name)) return Result.succeed({ _tag: "Other", original, line })
   const value = unquote(parts.value.trim())
+
   switch (scheme(value)) {
     case "hush":
       return Result.mapBoth(normalizeReference(value), {
@@ -124,20 +132,25 @@ export const resolve = <E, R>(
   Effect.gen(function* () {
     const lines = yield* Effect.fromResult(parse(content))
     const references = [...new Set(lines.flatMap((line) => (line._tag === "Reference" ? [line.reference] : [])))]
+
     if (references.length === 0) return { content, count: 0 }
     const resolved = yield* resolver(references)
+
     if (resolved.length !== references.length)
       return yield* Effect.die(
         new Error(`Env.resolve: resolver returned ${resolved.length} values for ${references.length} references`),
       )
     const values = new Map(references.map((reference, index) => [reference, resolved[index]]))
+
     const rendered = yield* Effect.forEach(lines, (line) => {
       if (line._tag !== "Reference") return Effect.succeed(line.original)
       const value = values.get(line.reference)
+
       return value === undefined
         ? Effect.die(new Error("Env.resolve: a reference has no resolved value"))
         : Effect.succeed(`${line.name}=${quote(value.replace(/\n$/, ""))}`)
     })
+
     return { content: rendered.join("\n"), count: lines.filter((line) => line._tag === "Reference").length }
   })
 
@@ -167,14 +180,17 @@ const resolveValues = (target: Target, references: ReadonlyArray<string>, env: E
     const first = references[0]
     const vault = first === undefined ? undefined : Result.getOrUndefined(Reference.parse(first))?.vault
     const choice = yield* TokenStore.current(target, env, vault)
+
     const { values } = yield* Client.request(
       Api,
       target,
       (client) => client.token.resolve({ payload: { references } }),
       choice.token,
     )
+
     // One value per Reference sent; anything else is an answer this CLI does not understand.
     if (values.length !== references.length) return yield* new UnexpectedResponse({ url: target.origin, status: 200 })
+
     return values.map(({ value, concealed }) => ({ value: Redacted.value(value), concealed }))
   })
 
@@ -196,15 +212,20 @@ const inject = (
     const references = [...new Set(injected.flatMap((entry) => (entry._tag === "Reference" ? [entry.reference] : [])))]
     const resolved = references.length === 0 ? [] : yield* resolveValues(target, references, launch)
     const values = new Map(references.map((reference, index) => [reference, resolved[index]?.value]))
+
     const env: Record<string, string> = Object.fromEntries(
       Object.entries(launch).filter(([name]) => name !== "HUSH_TOKEN"),
     )
+
     for (const entry of injected) {
       const value = entry._tag === "Plain" ? entry.value : values.get(entry.reference)
+
       if (value === undefined) return yield* Effect.die(new Error("Env.inject: a Reference has no resolved value"))
       env[entry.name] = value
     }
+
     const conceal = resolved.flatMap(({ value, concealed }) => (concealed ? [value] : []))
+
     return yield* Child.run(command, env, conceal)
   })
 
@@ -230,6 +251,7 @@ export const runFile = (target: Target, path: string, command: Arr.NonEmptyReado
   Effect.gen(function* () {
     const lines = yield* Effect.fromResult(Result.mapError(parse(yield* readTemplate(path)), fileInvalid(path)))
     const injected: Array<Injected> = []
+
     for (const line of lines)
       switch (line._tag) {
         case "Verbatim":
@@ -242,6 +264,7 @@ export const runFile = (target: Target, path: string, command: Arr.NonEmptyReado
         case "Reference":
           injected.push({ _tag: "Reference", name: line.name, reference: line.reference })
       }
+
     return yield* inject(target, injected, command, launch)
   })
 
@@ -255,6 +278,7 @@ export const write = (path: string, assignments: ReadonlyArray<string>) =>
       catch: (cause) =>
         new FileWriteFailed({ path, code: PlatformCause.codeOrUnknown(cause), consequence: "template" }),
     })
+
     return parsed.length
   })
 
@@ -263,6 +287,7 @@ export const write = (path: string, assignments: ReadonlyArray<string>) =>
 const writePrivate = (target: string, content: string) => {
   const suffix = Buffer.from(crypto.getRandomValues(new Uint8Array(8))).toString("hex")
   const temp = join(dirname(target), `.${basename(target)}.${suffix}.tmp`)
+
   return Effect.tryPromise({
     try: async () => {
       await writeFile(temp, content, { flag: "wx", mode: 0o600 })
@@ -285,10 +310,13 @@ export const resolveFile = (
   Effect.gen(function* () {
     if ((flags.output === undefined) !== flags.inPlace) return yield* new EnvTargetInvalid()
     const output = flags.output ?? path
+
     const result = yield* resolve(yield* readTemplate(path), (references) =>
       Effect.map(resolveValues(target, references, launch), (values) => values.map(({ value }) => value)),
     ).pipe(Effect.catchTag("LineInvalid", (error) => Effect.fail(fileInvalid(path)(error))))
+
     yield* writePrivate(output, result.content)
+
     return { output, count: result.count }
   })
 

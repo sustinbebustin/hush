@@ -26,9 +26,11 @@ describe("Keys envelopes, from the real Argon2id key-encryption key", () => {
     const underMaster = yield* Keys.newVault(master, 1)
     const issued = yield* Keys.newToken(master, 1, [{ vaultId: 1, access: "read+create", underMaster }])
     const [grant] = issued.wraps
+
     if (grant === undefined) return yield* Effect.die("newToken returned no wrap")
     const sealed = yield* Keys.sealField(yield* Keys.vaultKeyFromMaster(master, 1, underMaster), location, value)
     const holder = { id: 1, token: issued.token, wrapSalt: issued.salt }
+
     return { master, underMaster, issued, grant, sealed, holder }
   })
 
@@ -78,6 +80,7 @@ describe("Keys envelopes, from the real Argon2id key-encryption key", () => {
     Effect.gen(function* () {
       const { master, underMaster, sealed } = yield* setup
       const vaultKey = yield* Keys.vaultKeyFromMaster(master, 1, underMaster)
+
       for (const moved of [
         { ...location, fieldId: 2 },
         { ...location, itemId: 2 },
@@ -95,11 +98,13 @@ describe("Keys envelopes, from the real Argon2id key-encryption key", () => {
       const vaultKey = yield* Keys.vaultKeyFromMaster(master, 1, underMaster)
       // Sealed by hand without padding, under the right key and AAD.
       const raw = yield* Keys.sealField(vaultKey, location, "")
+
       const bare = yield* Crypto.seal(
         yield* Keys.vaultKeyFromMaster(master, 1, underMaster),
         Keys.fieldAad(location),
         new Uint8Array(64).fill(1),
       )
+
       assert.strictEqual(yield* Keys.openField(vaultKey, location, raw), "")
       assert.deepStrictEqual(yield* failure(Keys.openField(vaultKey, location, bare)), integrity("field"))
     }),

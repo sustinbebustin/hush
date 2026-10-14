@@ -22,6 +22,7 @@ describe("skills/hush/SKILL.md", () => {
 
   it("names every command an agent uses", () => {
     const named = new Set(invocations(skill).map(({ args }) => args.filter(isPositional).slice(0, 2).join(" ")))
+
     for (const command of [
       "find",
       "inventory",
@@ -47,6 +48,7 @@ describe("skills/hush/SKILL.md", () => {
   it("names only error tags of the error catalogues", () => {
     const named = errorTags(skill)
     assert.isNotEmpty(named)
+
     for (const tag of named) assert.isTrue(tags.has(tag), `${tag} is in no error catalogue`)
   })
 

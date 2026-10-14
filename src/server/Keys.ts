@@ -18,6 +18,7 @@ export const kdfVersion = 1
 // Both are plain AES-GCM `CryptoKey`s to WebCrypto; the brands keep MK (which wraps K_v) from being passed where a
 // K_v (which seals Fields) is expected, and the reverse.
 export type MasterKey = CryptoKey & Brand.Brand<"MasterKey">
+
 export type VaultKey = CryptoKey & Brand.Brand<"VaultKey">
 
 const masterKey = Brand.nominal<MasterKey>()
@@ -76,6 +77,7 @@ const unwrap = (key: CryptoKey, aad: Crypto.Bytes, wrap: Crypto.Wrap, what: KeyO
 const sealRandomKey = (key: CryptoKey, aad: Crypto.Bytes): Effect.Effect<Crypto.Wrap> =>
   Effect.suspend(() => {
     const raw = Crypto.randomBytes(32)
+
     return Crypto.seal(key, aad, raw).pipe(Effect.ensuring(Effect.sync(() => raw.fill(0))))
   })
 
@@ -86,12 +88,14 @@ export const newMaster = (passphrase: string): Effect.Effect<NewMaster> =>
     const salt = Crypto.randomBytes(16)
     const params = Crypto.kdfDefaults
     const kek = yield* Crypto.deriveKek(passphrase, salt, params, "encrypt")
+
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => Crypto.randomBytes(32)),
       (raw) =>
         Effect.gen(function* () {
           const wrap = yield* Crypto.seal(kek, masterAad(kdfVersion), raw)
           const master = masterKey(yield* Crypto.importKey(raw, ["encrypt", "decrypt"]))
+
           return { salt, params, wrap, master }
         }),
       (raw) => Effect.sync(() => raw.fill(0)),
@@ -125,13 +129,16 @@ export const rewrapMaster = (
     (raw) =>
       Effect.gen(function* () {
         const salt = Crypto.randomBytes(16)
+
         const params: Crypto.KdfParams = {
           memoryKib: Math.max(stored.params.memoryKib, Crypto.kdfDefaults.memoryKib),
           passes: Math.max(stored.params.passes, Crypto.kdfDefaults.passes),
           parallelism: Math.max(stored.params.parallelism, Crypto.kdfDefaults.parallelism),
         }
+
         const kek = yield* Crypto.deriveKek(next, salt, params, "encrypt")
         const wrap = yield* Crypto.seal(kek, masterAad(kdfVersion), raw)
+
         return { salt, params, wrap }
       }),
     (raw) => Effect.sync(() => raw.fill(0)),
@@ -197,6 +204,7 @@ export const newToken = (
     const token = Token.format(Crypto.randomBytes(32))
     const salt = Crypto.randomBytes(16)
     const wrapKey = yield* tokenWrapKey(token, salt, "encrypt")
+
     const wraps = yield* Effect.forEach(grants, ({ vaultId, access, underMaster }) =>
       Effect.acquireUseRelease(
         unwrap(master, vaultAad(vaultId), underMaster, "vault-key").pipe(
@@ -206,6 +214,7 @@ export const newToken = (
         (raw) => Effect.sync(() => raw.fill(0)),
       ).pipe(Effect.map((wrap) => ({ vaultId, access, wrap }))),
     )
+
     return { token: Redacted.make(token), hash: authHash(token), salt, wraps }
   })
 
@@ -221,6 +230,7 @@ export const vaultKeyFromToken = (holder: TokenHolder, grant: GrantWrap): Effect
   Effect.gen(function* () {
     const wrapKey = yield* tokenWrapKey(Redacted.value(holder.token), holder.wrapSalt, "decrypt")
     const raw = yield* unwrap(wrapKey, grantAad(grant.vaultId, holder.id, grant.access), grant.wrap, "vault-key")
+
     return vaultKey(yield* Crypto.importKey(raw, ["encrypt", "decrypt"]))
   })
 
@@ -228,6 +238,7 @@ export const vaultKeyFromToken = (holder: TokenHolder, grant: GrantWrap): Effect
 export const sealField = (key: VaultKey, at: FieldLocation, value: string): Effect.Effect<Crypto.Wrap> =>
   Effect.suspend(() => {
     const padded = Padding.pad(value)
+
     return Crypto.seal(key, fieldAad(at), padded).pipe(Effect.ensuring(Effect.sync(() => padded.fill(0))))
   })
 

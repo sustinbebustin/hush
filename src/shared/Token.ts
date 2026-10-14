@@ -17,6 +17,7 @@ const format = (secret: Uint8Array): Token => make(`${prefix}${Buffer.from(secre
 const is = (input: unknown): input is Token => {
   if (typeof input !== "string" || !shape.test(input)) return false
   const secret = Buffer.from(input.slice(prefix.length), "base64url")
+
   return secret.length === secretBytes && format(secret) === input
 }
 

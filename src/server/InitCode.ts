@@ -37,6 +37,7 @@ export const write = (stateDir: string): Effect.Effect<Crypto.Bytes, InitCodeWri
       },
       catch: (cause) => new InitCodeWriteFailed({ path: target, code: PlatformCause.codeOrUnknown(cause) }),
     }).pipe(Effect.tapError(() => Effect.promise(() => rm(temp, { force: true }).catch(() => undefined))))
+
     return digest(code)
   })
 

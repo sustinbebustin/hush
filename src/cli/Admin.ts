@@ -78,7 +78,9 @@ const prompted = (command: string, first: FirstSecret) =>
   Effect.gen(function* () {
     const typed = yield* ask(command, first.prompt)
     const entered = yield* ask(command, newPassphrase.prompt)
+
     if ((yield* ask(command, newPassphrase.repeat)) !== entered) return yield* new PassphraseMismatch()
+
     return [typed, entered] as const
   })
 
@@ -93,8 +95,10 @@ export const withNewPassphrase = (first: FirstSecret) => (command: string, sourc
       source === "stdin"
         ? yield* PassphraseStdin.read(command, [first.line, newPassphrase.line])
         : yield* prompted(command, first)
+
     const passphrase = yield* Effect.fromResult(Passphrase.policy(entered))
     const secrets: Secrets = { first: Redacted.make(typed), passphrase: Redacted.make(passphrase) }
+
     return secrets
   })
 
@@ -102,6 +106,7 @@ export const withNewPassphrase = (first: FirstSecret) => (command: string, sourc
 export const passphraseOnly = (command: string, source: SecretSource) =>
   Effect.gen(function* () {
     const entered = source === "stdin" ? yield* PassphraseStdin.readOne(command) : yield* ask(command, passphrasePrompt)
+
     return Redacted.make(entered)
   })
 
@@ -118,6 +123,7 @@ export const passphraseCommand = <P, E1, R1, S, ES, A, E2, R2>(spec: {
   Effect.gen(function* () {
     const prepared = yield* spec.prepare
     const secrets = yield* spec.secrets(spec.command, spec.source)
+
     return yield* spec.send(prepared, secrets)
   })
 
@@ -216,7 +222,9 @@ export const tokenRevoke = (input: {
         const revoked = yield* unverifiedOnTransport(
           Client.request(Api, input.target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
         )
+
         const forgotten = yield* Effect.result(TokenStore.forget(input.target, input.env, label))
+
         const delivered: Revoked = Result.match(forgotten, {
           onSuccess: (dropped) => ({ receipt: { ...revoked, forgotLocally: dropped !== undefined }, notices: [] }),
           onFailure: (error) => ({
@@ -224,6 +232,7 @@ export const tokenRevoke = (input: {
             notices: [`The Token was revoked, but its saved entry was not removed: ${CliError.render(error)}`],
           }),
         })
+
         return delivered
       }),
   })
@@ -232,12 +241,14 @@ export const tokenRevoke = (input: {
 export const tokenStatus = (input: { readonly target: Target; readonly env: EnvVars }) =>
   Effect.gen(function* () {
     const choice = yield* TokenStore.current(input.target, input.env)
+
     const described = yield* Client.request(
       Api,
       input.target,
       (client) => client.token.describe({ payload: {} }),
       choice.token,
     )
+
     return { ...described, source: choice._tag === "Env" ? "env" : "file" } as const
   })
 
@@ -270,20 +281,25 @@ export const tokenSave = (input: {
     yield* TokenStore.checkReplaceable(input.target, input.replace, input.env, "save")
     const text = yield* PrivateInput.read({ source, wording, prompt: "Token: " })
     const token = Redacted.make(yield* Effect.fromResult(tokenInput(Redacted.value(text))))
+
     const described = yield* Client.request(
       Api,
       input.target,
       (client) => client.token.describe({ payload: {} }),
       token,
     )
+
     const label = Name.parse(described.label)
+
     if (Result.isFailure(label)) return yield* new UnexpectedResponse({ url: input.target.origin, status: 200 })
+
     const saved = yield* TokenStore.save(
       { server: input.target.origin, label: label.success, token },
       input.replace,
       input.env,
       "save",
     )
+
     return {
       saved: saved.path,
       label: described.label,
@@ -298,7 +314,9 @@ export const tokenSave = (input: {
 export const tokenForget = (input: { readonly target: Target; readonly env: EnvVars }) =>
   Effect.gen(function* () {
     const forgotten = yield* TokenStore.forget(input.target, input.env)
+
     if (forgotten === undefined) return yield* new NoToken({ server: input.target.origin })
+
     return { forgotten: true, label: forgotten.label, revoked: false } as const
   })
 
@@ -365,18 +383,22 @@ export const init = (input: {
   readonly env: EnvVars
 }) => {
   const { target, source, firstVault, env } = input
+
   return passphraseCommand({
     command: "init",
     source,
     secrets: withNewPassphrase(sequences.init),
     prepare: Effect.gen(function* () {
       if (firstVault === undefined) return undefined
+
       const first = {
         vault: yield* parse("vault", firstVault.vault),
         label: yield* parse("label", firstVault.label ?? defaultLabel()),
         delivery: firstVault.delivery,
       }
+
       if (first.delivery._tag === "Save") yield* TokenStore.checkSavable(target, first.delivery.replace, env)
+
       return first
     }),
     send: (first, secrets) => sendInit({ target, env, first, secrets }),
@@ -393,7 +415,9 @@ const sendInit = (input: {
   Effect.gen(function* () {
     const { target, env, first, secrets } = input
     const initCode = Redacted.value(secrets.first).trim().toLowerCase()
+
     if (initCode === "") return yield* new InitCodeEmpty()
+
     const receipt = yield* Client.request(Api, target, (client) =>
       client.admin.init({
         payload: {
@@ -403,11 +427,15 @@ const sendInit = (input: {
         },
       }),
     )
+
     if (first === undefined) return { state: receipt.state }
+
     if (receipt.first === undefined) return yield* new UnexpectedResponse({ url: target.origin, status: 200 })
     const { vault, label, grants } = receipt.first
     const parsed = Token.parse(Redacted.value(receipt.first.token))
+
     if (Result.isFailure(parsed)) return yield* new UnexpectedResponse({ url: target.origin, status: 200 })
+
     switch (first.delivery._tag) {
       case "Print":
         return { state: receipt.state, vault, label, grants, token: parsed.success }
@@ -419,6 +447,7 @@ const sendInit = (input: {
           replace: first.delivery.replace,
           env,
         })
+
         return { state: receipt.state, vault, label, grants, saved: saved.path }
       }
     }
@@ -431,13 +460,16 @@ const isTtlUnit = (unit: string): unit is keyof typeof ttlUnits => Object.hasOwn
 // A duration such as `90d` (`^[1-9]\d*[smhdw]$`) in seconds; undefined for anything else.
 const durationSeconds = (text: string): number | undefined => {
   const [, count, unit] = /^([1-9]\d*)([smhdw])$/.exec(text) ?? []
+
   if (count === undefined || unit === undefined || !isTtlUnit(unit)) return undefined
+
   return Number(count) * ttlUnits[unit]
 }
 
 // `--ttl`: a duration of at most 3650 days, in seconds.
 export const parseTtl = (ttl: string): Result.Result<number, IssueFlagsInvalid> => {
   const seconds = durationSeconds(ttl)
+
   return seconds === undefined || seconds > maxTtlSeconds
     ? Result.fail(new IssueFlagsInvalid({ problem: { reason: "ttl", ttl } }))
     : Result.succeed(seconds)
@@ -463,6 +495,7 @@ const isoTime = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|
 export const parseSince = (since: string, nowMs: number): Result.Result<string, AuditFlagsInvalid> => {
   const seconds = durationSeconds(since)
   const ms = seconds === undefined ? (isoTime.test(since) ? Date.parse(since) : Number.NaN) : nowMs - seconds * 1000
+
   return Number.isNaN(ms)
     ? Result.fail(new AuditFlagsInvalid({ problem: { flag: "since", input: since } }))
     : Result.succeed(new Date(Math.max(ms, 0)).toISOString())
@@ -472,6 +505,7 @@ export const parseSince = (since: string, nowMs: number): Result.Result<string, 
 const wholeNumber = (text: string, max: number): number | undefined => {
   if (!/^[1-9]\d*$/.test(text)) return undefined
   const parsed = Number(text)
+
   return parsed <= max ? parsed : undefined
 }
 
@@ -482,8 +516,10 @@ const numberFlag = (
   max: number,
 ): Result.Result<number | undefined, AuditFlagsInvalid> => {
   const input = flags[flag]
+
   if (input === undefined) return Result.succeed(undefined)
   const parsed = wholeNumber(input, max)
+
   return parsed === undefined
     ? Result.fail(new AuditFlagsInvalid({ problem: { flag, input } }))
     : Result.succeed(parsed)
@@ -500,6 +536,7 @@ export const auditQuery = (
     const since = flags.since === undefined ? undefined : yield* parseSince(flags.since, nowMs)
     const limit = yield* numberFlag(flags, "limit", auditLimit.max)
     const before = yield* numberFlag(flags, "before", Number.MAX_SAFE_INTEGER)
+
     const query: AuditQuery = {
       ...(vault === undefined ? {} : { vault }),
       ...(label === undefined ? {} : { label }),
@@ -507,6 +544,7 @@ export const auditQuery = (
       ...(limit === undefined ? {} : { limit }),
       ...(before === undefined ? {} : { before }),
     }
+
     return query
   })
 
@@ -543,6 +581,7 @@ type Replacement = { readonly _tag: "None" } | { readonly _tag: "Replace"; reado
 
 const replacementOf = (input: TokenIssueInput): Result.Result<Replacement, IssueFlagsInvalid> => {
   if (input.replace) return Result.succeed({ _tag: "Replace", keepGrants: input.keepGrants })
+
   return input.keepGrants
     ? Result.fail(new IssueFlagsInvalid({ problem: { reason: "keep-grants-needs-replace" } }))
     : Result.succeed({ _tag: "None" })
@@ -554,21 +593,27 @@ const issueFlags = (input: TokenIssueInput) =>
   Effect.gen(function* () {
     const replacement = yield* Effect.fromResult(replacementOf(input))
     const keepGrants = replacement._tag === "Replace" && replacement.keepGrants
+
     if (input.read.length + input.create.length === 0 && !keepGrants)
       return yield* new IssueFlagsInvalid({ problem: { reason: "no-grants" } })
     const ttlSeconds = input.ttl === undefined ? undefined : yield* Effect.fromResult(parseTtl(input.ttl))
     const label = yield* parse("label", input.label)
+
     const requested: ReadonlyArray<{ readonly vault: string; readonly access: Access }> = [
       ...input.read.map((vault) => ({ vault, access: "read" as const })),
       ...input.create.map((vault) => ({ vault, access: "read+create" as const })),
     ]
+
     const grants: Array<Grant> = []
+
     for (const { vault: name, access } of requested) {
       const vault = yield* parse("vault", name)
+
       if (grants.some((grant) => Name.key(grant.vault) === Name.key(vault)))
         return yield* new IssueFlagsInvalid({ problem: { reason: "vault-twice", vault } })
       grants.push({ vault, access })
     }
+
     return { label, grants, ttlSeconds, replacement }
   })
 
@@ -605,13 +650,16 @@ export interface Delivered {
 // `admin/tokens/issue`, then the Token's delivery.
 export const tokenIssue = (input: TokenIssueInput) => {
   const delivery: Delivery = input.print ? { _tag: "Print" } : { _tag: "Save", replace: input.replace }
+
   return passphraseCommand({
     command: "token issue",
     source: input.source,
     secrets: passphraseOnly,
     prepare: Effect.gen(function* () {
       const flags = yield* issueFlags(input)
+
       if (delivery._tag === "Save") yield* TokenStore.checkSavable(input.target, delivery.replace, input.env)
+
       return flags
     }),
     send: ({ label, grants, ttlSeconds, replacement }, passphrase) =>
@@ -630,6 +678,7 @@ export const tokenIssue = (input: TokenIssueInput) => {
             }),
           ),
         )
+
         return yield* deliverIssued({ target: input.target, issued, label, delivery, env: input.env })
       }),
   })
@@ -647,20 +696,26 @@ export const deliverIssued = (input: {
   Effect.gen(function* () {
     const { target, issued, label, delivery } = input
     const parsed = Token.parse(Redacted.value(issued.token))
+
     if (Result.isFailure(parsed)) return yield* new UnexpectedResponse({ url: target.origin, status: 200 })
+
     const shown: IssuedShown = {
       label: issued.label,
       grants: issued.grants,
       expiresAt: issued.expiresAt,
       revokedOnServer: issued.replaced,
     }
+
     if (delivery._tag === "Print") {
       const printed: Delivered = { receipt: { ...shown, token: parsed.success }, notices: [] }
+
       return printed
     }
+
     const token = Redacted.make(parsed.success)
     const saved = yield* saveIssued({ target, label, token, replace: delivery.replace, env: input.env })
     const previous = saved.replaced
+
     const stillActive =
       previous === undefined ||
       Result.match(Name.parse(previous), {
@@ -669,16 +724,19 @@ export const deliverIssued = (input: {
       })
         ? undefined
         : previous
+
     const receipt: SavedReceipt = {
       ...shown,
       saved: saved.path,
       ...(previous === undefined ? {} : { replacedLocally: previous }),
       ...(stillActive === undefined ? {} : { stillActive }),
     }
+
     const delivered: Delivered = {
       receipt,
       notices: stillActive === undefined ? [] : [stillActiveNotice(stillActive)],
     }
+
     return delivered
   })
 

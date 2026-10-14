@@ -10,6 +10,7 @@ const userinfo: Sentinel = { kind: "proxyUserinfo", text: "u:p" }
 
 const withSeeded = async (test: (box: Sandbox, seeded: Seeded) => Promise<void>) => {
   const box = await sandbox()
+
   try {
     const seeded = await box.seed({ items: [{ kind: "api-credential", title: "Stripe", value: valueSentinel.text }] })
     await test(box, seeded)
@@ -101,6 +102,7 @@ describe("request route", () => {
         ],
         { env: { HTTP_PROXY: box.proxy.url, NO_PROXY: "127.0.0.1", no_proxy: "localhost" } },
       )
+
       assert.strictEqual(result.stderr, "")
       assert.strictEqual(result.code, 0)
       assert.deepStrictEqual(box.proxy.log(), [`POST ${box.server.url}/v1/secrets/resolve HTTP/1.1`])

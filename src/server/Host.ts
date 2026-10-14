@@ -29,6 +29,7 @@ export type HostError =
 
 const walFiles = (stateDir: string) => {
   const database = StateDir.databasePath(stateDir)
+
   return [`${database}-wal`, `${database}-shm`] as const
 }
 
@@ -43,6 +44,7 @@ const existing = (paths: ReadonlyArray<string>) =>
         ),
       ),
     )
+
     return found.flat()
   })
 
@@ -61,13 +63,16 @@ const chownCreated = (stateDir: string, before: ReadonlyArray<string>) =>
       before,
       after: yield* existing(walFiles(stateDir)),
     })
+
     if (created.length === 0) return
     const database = StateDir.databasePath(stateDir)
+
     const owner: Owner = yield* Effect.tryPromise({
       try: () => stat(database).then(({ uid, gid }) => ({ uid, gid })),
       catch: (cause) =>
         new StatePermissionFailed({ operation: "read", path: database, code: PlatformCause.codeOrUnknown(cause) }),
     })
+
     for (const path of created)
       yield* Effect.tryPromise({
         try: () => chown(path, owner.uid, owner.gid),
@@ -82,6 +87,7 @@ const withConnection = <A, E>(stateDir: string, work: Effect.Effect<A, E, SqlCli
   Effect.gen(function* () {
     yield* StateDir.deleteStaleSnapshots(stateDir)
     const before = yield* existing(walFiles(stateDir))
+
     return yield* Effect.scoped(
       Effect.flatMap(Database.openHost(stateDir), (sql) => Effect.provideService(work, SqlClient.SqlClient, sql)),
     ).pipe(Effect.ensuring(Effect.orDie(chownCreated(stateDir, before))))
@@ -108,12 +114,14 @@ const revokedByHost = (revoked: TokenRevoked) =>
 export const revoke = (stateDir: string, label: string): Effect.Effect<TokenRevoked, HostError> =>
   Effect.gen(function* () {
     const parsed = yield* Effect.fromResult(parseName("label", label))
+
     return yield* withConnection(
       stateDir,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         const receipt = yield* sql.withTransaction(Effect.tap(Tokens.revokeLabelled(parsed), revokedByHost))
         yield* Database.checkpointCommitted
+
         return receipt
       }).pipe(Effect.catchTag("SqlError", Effect.die)),
     )

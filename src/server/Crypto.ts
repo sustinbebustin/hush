@@ -41,11 +41,13 @@ export const lp = (...parts: ReadonlyArray<string | number>): Bytes => {
   const out = new Uint8Array(encoded.reduce((total, part) => total + 4 + part.length, 0))
   const view = new DataView(out.buffer)
   let offset = 0
+
   for (const part of encoded) {
     view.setUint32(offset, part.length)
     out.set(part, offset + 4)
     offset += 4 + part.length
   }
+
   return out
 }
 
@@ -54,6 +56,7 @@ export const lp = (...parts: ReadonlyArray<string | number>): Bytes => {
 export const importKey = (raw: Uint8Array, usages: ReadonlyArray<KeyUsage>): Effect.Effect<CryptoKey> =>
   Effect.suspend(() => {
     const copy = new Uint8Array(raw)
+
     return Effect.promise(() => crypto.subtle.importKey("raw", copy, "AES-GCM", false, [...usages])).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -100,6 +103,7 @@ export const tokenWrapBits = (secret: Bytes, salt: Bytes): Effect.Effect<Bytes> 
   Effect.promise(async () => {
     const ikm = await crypto.subtle.importKey("raw", secret, "HKDF", false, ["deriveBits"])
     const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info: tokenWrapInfo }, ikm, 256)
+
     return new Uint8Array(bits)
   })
 
@@ -107,9 +111,11 @@ export const tokenWrapBits = (secret: Bytes, salt: Bytes): Effect.Effect<Bytes> 
 export const seal = (key: CryptoKey, aad: Bytes, plaintext: Bytes): Effect.Effect<Wrap> =>
   Effect.gen(function* () {
     const nonce = randomBytes(12)
+
     const wrapped = yield* Effect.promise(() =>
       crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: aad }, key, plaintext),
     )
+
     return { nonce, wrapped: new Uint8Array(wrapped) }
   })
 

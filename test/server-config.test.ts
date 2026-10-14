@@ -62,6 +62,7 @@ describe("ServerConfig.parse: listen and allowed hosts", () => {
     const config = success(
       parse(base, { HUSH_LISTEN: " 100.84.135.127 ,::1", HUSH_ALLOWED_HOSTS: "Dev.Tail1234.ts.net, localhost.lan " }),
     )
+
     assert.deepStrictEqual(config?.listen, [
       { ip: "100.84.135.127", class: "tailnet" },
       { ip: "::1", class: "loopback" },
@@ -76,6 +77,7 @@ describe("ServerConfig.parse: listen and allowed hosts", () => {
         { HUSH_LISTEN: "100.84.135.127", HUSH_ALLOWED_HOSTS: "b.example" },
       ),
     )
+
     assert.deepStrictEqual(config?.listen, [{ ip: "127.0.0.2", class: "loopback" }])
     assert.deepStrictEqual(config?.allowedHosts, ["a.example"])
   })
@@ -109,6 +111,7 @@ describe("ServerConfig.parse: listen and allowed hosts", () => {
     it(`refuses the allowed host ${JSON.stringify(host)} from ${source} with ConfigInvalid`, () => {
       const result =
         source === "--allowed-host" ? parse({ ...base, allowedHost: [host] }) : parse(base, { [source]: host })
+
       assert.deepStrictEqual(
         failure(result),
         new ConfigInvalid({ source, reason: "expected a hostname without a port, such as hush.tail1234.ts.net" }),

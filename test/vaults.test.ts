@@ -17,6 +17,7 @@ const newPassphraseSentinel: Sentinel = { kind: "passphrase", text: newPassphras
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, passphraseSentinel, newPassphraseSentinel]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -28,9 +29,11 @@ const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => vo
 // `seed`, with its Token and the Init code it used registered as sentinels.
 const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void, spec?: Parameters<Sandbox["seed"]>[0]) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
   const result = await box.seed(spec)
   seen({ kind: "token", text: result.token })
+
   return result
 }
 
@@ -51,6 +54,7 @@ const post = (box: Sandbox, path: string, body: unknown) =>
   box.fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
 
 const rows = (box: Sandbox, query: string) => box.inspect((db) => db.query(query).all())
+
 const auditRows = (box: Sandbox) =>
   rows(box, "SELECT actor, token_id, action, vaults, refs, detail, outcome, error FROM audit ORDER BY id")
 
@@ -100,6 +104,7 @@ describe("hush vault create and vault list", () => {
         { vault: "Personal", items: 1, activeTokens: 1 },
         { vault: "Work", items: 0, activeTokens: 0 },
       ])
+
       for (const { createdAt } of JSON.parse(result.stdout).vaults) assert.match(createdAt, isoTime)
       assert.deepStrictEqual(result.calls, [call("/v1/admin/vaults/list", 200)])
     }))
@@ -107,6 +112,7 @@ describe("hush vault create and vault list", () => {
   it("sorts Vaults by name, case aside", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen, { vault: "beta" })
+
       for (const name of ["Alpha", "gamma"]) assert.strictEqual((await admin(box, ["vault", "create", name])).code, 0)
       const result = await admin(box, ["vault", "list"])
       assert.deepStrictEqual(
@@ -209,8 +215,10 @@ describe("hush vault delete", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       assert.strictEqual((await admin(box, ["vault", "create", "Work"])).code, 0)
+
       const wrap = await box.inspect((db) => {
         const row = db.query("SELECT key_wrapped FROM vaults WHERE name = 'Work'").get()
+
         if (
           typeof row !== "object" ||
           row === null ||
@@ -218,8 +226,10 @@ describe("hush vault delete", () => {
           !(row.key_wrapped instanceof Uint8Array)
         )
           throw new Error("no wrap for Work")
+
         return Buffer.from(row.key_wrapped)
       })
+
       const result = await admin(box, ["vault", "delete", "work"])
       assert.strictEqual(result.code, 0, result.stderr)
       assert.strictEqual(result.stdout, json({ deleted: true, vault: "Work" }))
@@ -234,18 +244,23 @@ describe("hush vault delete", () => {
 // The database files that hold `bytes`, read raw.
 const stateFilesHolding = async (box: Sandbox, bytes: Buffer) => {
   const holding: Array<string> = []
+
   for (const name of ["hush.db", "hush.db-wal"]) {
     const content = await readFile(join(box.server.stateDir, name)).catch(() => Buffer.alloc(0))
+
     if (content.includes(bytes)) holding.push(name)
   }
+
   return holding
 }
 
 const mkWrapped = (box: Sandbox) =>
   box.inspect((db) => {
     const row = db.query("SELECT mk_wrapped FROM meta").get()
+
     if (typeof row !== "object" || row === null || !("mk_wrapped" in row) || !(row.mk_wrapped instanceof Uint8Array))
       throw new Error("no meta row")
+
     return Buffer.from(row.mk_wrapped)
   })
 
@@ -314,10 +329,12 @@ describe("hush passphrase change", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       const before = await state(box)
+
       const wrong = await post(box, "/v1/admin/passphrase/change", {
         passphrase: `${passphrase}x`,
         newPassphrase: "short pass",
       })
+
       assert.strictEqual(wrong.status, 401)
       assert.deepStrictEqual(await wrong.json(), { _tag: "PassphraseIncorrect", retryAfterSeconds: 0 })
       const response = await post(box, "/v1/admin/passphrase/change", { passphrase, newPassphrase: "short pass" })
@@ -371,9 +388,11 @@ describe("Passphrase input", () => {
   it.skipIf(!onPty)("reads the Passphrase at the hidden `hush Passphrase: ` prompt", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const result = await box.run(["vault", "list"], {
         tty: { keys: [{ after: "hush Passphrase: ", keys: `${passphrase}\r` }] },
       })
+
       assert.strictEqual(result.code, 0, result.stdout)
       assert.include(result.stdout, '"vault": "Personal"')
       assert.deepStrictEqual(result.calls, [call("/v1/admin/vaults/list", 200)])
@@ -383,6 +402,7 @@ describe("Passphrase input", () => {
   it.skipIf(!onPty)("asks current, new and repeat at a terminal for passphrase change", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const result = await box.run(["passphrase", "change"], {
         tty: {
           keys: [
@@ -392,6 +412,7 @@ describe("Passphrase input", () => {
           ],
         },
       })
+
       assert.strictEqual(result.code, 0, result.stdout)
       assert.include(result.stdout, '"changed": true')
       assert.strictEqual((await admin(box, ["vault", "list"], [newPassphrase])).code, 0)
@@ -404,6 +425,7 @@ describe("the Audit Log of Passphrase operations", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       const before = (await auditRows(box)).length
+
       for (const [args, lines] of [
         [["vault", "create", "Work"], [passphrase]],
         [["vault", "list"], [passphrase]],
@@ -430,6 +452,7 @@ const wrongLists = (box: Sandbox, n: number) =>
   Promise.all(
     Array.from({ length: n }, async () => {
       const response = await post(box, "/v1/admin/vaults/list", { passphrase: "a wrong fictional passphrase" })
+
       return { status: response.status, body: await response.json() }
     }),
   )
@@ -440,10 +463,12 @@ describe("the Passphrase backoff", () => {
   it("lets three wrong Passphrases through free, then gives the fourth retryAfterSeconds >= 1", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         const result = await admin(box, ["vault", "list"], ["a wrong fictional passphrase"])
         assert.strictEqual(result.stderr, incorrectNow)
       }
+
       const fourth = await admin(box, ["vault", "list"], ["a wrong fictional passphrase"])
       assert.strictEqual(fourth.code, 1)
       assert.strictEqual(
@@ -462,6 +487,7 @@ describe("the Passphrase backoff", () => {
       const active = answers.filter(({ status }) => status === 429)
       assert.strictEqual(incorrect.length, 4)
       assert.strictEqual(active.length, 16)
+
       for (const { body } of active) assert.strictEqual(body._tag, "BackoffActive")
       assert.deepStrictEqual(
         incorrect.map(({ body }) => body).toSorted((a, b) => a.retryAfterSeconds - b.retryAfterSeconds),
@@ -469,6 +495,7 @@ describe("the Passphrase backoff", () => {
       )
       const added = (await auditRows(box)).slice(before)
       assert.strictEqual(added.length, 4)
+
       for (const row of added)
         assert.deepStrictEqual(row, passphraseRow("vault.list", [], "denied", "PassphraseIncorrect"))
     }))
@@ -479,14 +506,17 @@ describe("the Passphrase backoff", () => {
       await wrongLists(box, 3)
       const before = (await auditRows(box)).length
       const body = JSON.stringify({ passphrase: "a wrong fictional passphrase" })
+
       const refusals: ReadonlyArray<Record<string, string>> = [
         { "content-type": "application/json", origin: "https://evil.example" },
         { "content-type": "text/plain" },
       ]
+
       for (const headers of refusals) {
         const refused = await box.fetch("/v1/admin/vaults/list", { method: "POST", headers, body })
         assert.include([403, 415], refused.status)
       }
+
       assert.strictEqual((await auditRows(box)).length, before)
       const [fourth] = await wrongLists(box, 1)
       assert.deepStrictEqual(fourth, { status: 401, body: { _tag: "PassphraseIncorrect", retryAfterSeconds: 1 } })
@@ -529,10 +559,12 @@ describe("a Passphrase write whose answer is lost", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       box.proxy.mode("drop-response")
+
       const result = await box.run(["vault", "create", "Work", "--passphrase-stdin"], {
         input: `${passphrase}\n`,
         env: { HUSH_SERVER: box.proxy.url },
       })
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(

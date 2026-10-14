@@ -29,6 +29,7 @@ describe("Admin.tokenInput", () => {
 
   it("refuses anything else as TokenInputInvalid", () => {
     const token = Token.format(new Uint8Array(32).fill(1))
+
     for (const input of [
       "hush_short",
       `"${token}"`,
@@ -57,6 +58,7 @@ describe("Admin.parseSince", () => {
       ["2026-10-01T09:00:00.5Z", "2026-10-01T09:00:00.500Z"],
       ["2026-10-01T09:00:00.123Z", "2026-10-01T09:00:00.123Z"],
     ]
+
     for (const [since, instant] of cases) assert.deepStrictEqual(Admin.parseSince(since, now), Result.succeed(instant))
   })
 
@@ -104,6 +106,7 @@ describe("Admin.auditQuery", () => {
         assert.strictEqual(Result.isSuccess(result), limit >= 1 && limit <= 1000)
       }),
     )
+
     for (const limit of ["01", "1.0", " 5", "1e2"])
       assert.isTrue(Result.isFailure(Admin.auditQuery({ ...none, limit }, 0)), limit)
   })
@@ -119,6 +122,7 @@ describe("Admin.saveIssued", () => {
           Effect.gen(function* () {
             // The home turned read-only after the pre-prompt check passed.
             yield* Effect.promise(() => chmod(home, 0o500))
+
             const error = yield* Effect.flip(
               Admin.saveIssued({
                 target,
@@ -128,6 +132,7 @@ describe("Admin.saveIssued", () => {
                 env: { HOME: home },
               }),
             )
+
             assert.strictEqual(error._tag, "TokenNotSaved")
             const file = join(home, ".config", "hush", "tokens.json")
             assert.strictEqual(
@@ -153,6 +158,7 @@ describe("Admin.deliverIssued", () => {
           Effect.gen(function* () {
             // The home turned read-only after the pre-prompt check passed and the Server issued the Token.
             yield* Effect.promise(() => chmod(home, 0o500))
+
             const error = yield* Effect.flip(
               Admin.deliverIssued({
                 target,
@@ -169,6 +175,7 @@ describe("Admin.deliverIssued", () => {
                 env: { HOME: home },
               }),
             )
+
             assert.strictEqual(error._tag, "TokenNotSaved")
             const message = CliError.render(error)
             assert.include(message, 'Revoke it with `hush token revoke "work agent"`')

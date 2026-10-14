@@ -21,10 +21,12 @@ export const digest = (path: string): Effect.Effect<Digest> =>
   Effect.promise(async () => {
     const hash = createHash("sha256")
     let bytes = 0
+
     for await (const chunk of Bun.file(path).stream()) {
       hash.update(chunk)
       bytes += chunk.byteLength
     }
+
     return { bytes, sha256: hash.digest("hex") }
   })
 
@@ -34,6 +36,7 @@ export const vacuumInto = (path: string): Effect.Effect<Digest, SqlError.SqlErro
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`VACUUM INTO ${path}`
+
     return yield* digest(path)
   })
 
@@ -52,6 +55,7 @@ export const snapshot = (
       OutputFile.createPrivate(stateDir, StateDir.snapshotName).pipe(Effect.orDie),
       OutputFile.remove,
     )
+
     return { path, ...(yield* vacuumInto(path)) }
   })
 

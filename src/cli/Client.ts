@@ -28,6 +28,7 @@ const fromHttpClientError =
   (error: HttpClientError.HttpClientError): Effect.Effect<never, TransportFailure> => {
     const { reason } = error
     const url = target.origin
+
     switch (reason._tag) {
       case "TransportError":
         return Effect.fail(
@@ -102,10 +103,12 @@ export const request = <ApiId extends string, Groups extends HttpApiGroup.Constr
   Effect.gen(function* () {
     yield* Effect.sync(() => Route.apply(target.route))
     const lastStatus = yield* Ref.make<number | undefined>(undefined)
+
     const client = yield* HttpApiClient.make(api, {
       baseUrl: target.origin,
       transformClient: transport(lastStatus, token, headersTimeout),
     })
+
     return yield* call(client).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, Route.fetchInit(target.route)),
       Effect.catchIf(HttpClientError.isHttpClientError, fromHttpClientError(target)),
@@ -139,27 +142,37 @@ export const backup = <A, E>(
 ): Effect.Effect<A, Exclude<E, HttpClientError.HttpClientError> | BackupError | TransportFailure> =>
   Effect.gen(function* () {
     yield* Effect.sync(() => Route.apply(target.route))
+
     const client = transport(
       yield* Ref.make<number | undefined>(undefined),
       undefined,
       backupHeadersTimeout,
     )(yield* HttpClient.HttpClient)
+
     const body = yield* Schema.encodeEffect(PassphraseOnly)({ passphrase }).pipe(Effect.orDie)
+
     const response = yield* client.execute(
       HttpClientRequest.post(`${target.origin}${BackupRoute.path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
     )
+
     const unexpected = new UnexpectedResponse({ url: target.origin, status: response.status })
+
     if (response.status === 413) return yield* new RequestTooLarge()
+
     if (response.status !== 200) {
       const declared = yield* response.json.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(BackupRoute.error)),
         Effect.option,
       )
+
       return yield* Option.match(declared, { onNone: () => Effect.fail(unexpected), onSome: Effect.fail })
     }
+
     const bytes = Schema.decodeUnknownOption(BytesHeader)(response.headers[BackupRoute.headers.bytes])
     const sha256 = Schema.decodeUnknownOption(Sha256Header)(response.headers[BackupRoute.headers.sha256])
+
     if (Option.isNone(bytes) || Option.isNone(sha256)) return yield* unexpected
+
     return yield* receive({ bytes: bytes.value, sha256: sha256.value, body: response.stream })
   }).pipe(
     Effect.provideService(FetchHttpClient.RequestInit, Route.fetchInit(target.route)),

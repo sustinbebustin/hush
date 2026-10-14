@@ -16,7 +16,9 @@ export const replacement: Uint8Array = encoder.encode("<concealed by hush>")
 
 const startsAt = (buffer: Uint8Array, at: number, value: Uint8Array) => {
   if (at + value.length > buffer.length) return false
+
   for (let k = 0; k < value.length; k += 1) if (buffer[at + k] !== value[k]) return false
+
   return true
 }
 
@@ -38,17 +40,22 @@ export const make = (values: ReadonlyArray<string>): Mask => {
     const out: Array<Uint8Array> = []
     let plainFrom = 0
     let at = 0
+
     while (at < until) {
       const found = patterns.find((value) => startsAt(buffer, at, value))
+
       if (found === undefined) {
         at += 1
         continue
       }
+
       out.push(buffer.subarray(plainFrom, at), replacement)
       at += found.length
       plainFrom = at
     }
+
     out.push(buffer.subarray(plainFrom, Math.min(at, buffer.length)))
+
     return { out: Buffer.concat(out), stopped: Math.min(at, buffer.length) }
   }
 
@@ -57,11 +64,13 @@ export const make = (values: ReadonlyArray<string>): Mask => {
       const buffer = Buffer.concat([carry, chunk])
       const { out, stopped } = scan(buffer, buffer.length - hold)
       carry = buffer.subarray(stopped)
+
       return out
     },
     end: () => {
       const { out } = scan(carry, carry.length)
       carry = new Uint8Array(0)
+
       return out
     },
   }

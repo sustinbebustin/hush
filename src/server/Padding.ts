@@ -9,6 +9,7 @@ const block = 64
 const prefix = 4
 
 const utf8 = new TextEncoder()
+
 // Fatal, so bytes that are not UTF-8 fail instead of opening as U+FFFD.
 const decoder = new TextDecoder("utf-8", { fatal: true })
 
@@ -17,6 +18,7 @@ export const pad = (value: string): Crypto.Bytes => {
   const out = new Uint8Array(Math.ceil((prefix + encoded.length) / block) * block)
   new DataView(out.buffer).setUint32(0, encoded.length)
   out.set(encoded, prefix)
+
   return out
 }
 
@@ -25,8 +27,11 @@ export const pad = (value: string): Crypto.Bytes => {
 export const unpad = (padded: Uint8Array): Result.Result<string, "invalid-padding"> => {
   if (padded.length < block || padded.length % block !== 0) return Result.fail("invalid-padding")
   const length = new DataView(padded.buffer, padded.byteOffset, padded.byteLength).getUint32(0)
+
   if (Math.ceil((prefix + length) / block) * block !== padded.length) return Result.fail("invalid-padding")
+
   if (padded.subarray(prefix + length).some((byte) => byte !== 0)) return Result.fail("invalid-padding")
+
   try {
     return Result.succeed(decoder.decode(padded.subarray(prefix, prefix + length)))
   } catch {

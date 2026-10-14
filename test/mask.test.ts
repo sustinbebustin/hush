@@ -10,6 +10,7 @@ const decoder = new TextDecoder()
 const through = (values: ReadonlyArray<string>, chunks: ReadonlyArray<string | Uint8Array>): string => {
   const mask = Mask.make(values)
   const parts = chunks.map((chunk) => mask.push(typeof chunk === "string" ? encoder.encode(chunk) : chunk))
+
   return decoder.decode(Buffer.concat([...parts, mask.end()]))
 }
 
@@ -21,11 +22,14 @@ const reference = (values: ReadonlyArray<string>, input: Uint8Array): string => 
     .map((value) => encoder.encode(value))
     .filter((bytes) => bytes.length >= 8)
     .toSorted((a, b) => b.length - a.length)
+
   const out: Array<Uint8Array> = []
   let i = 0
+
   while (i < input.length) {
     const at = i
     const found = masked.find((value) => value.every((byte, k) => input[at + k] === byte))
+
     if (found === undefined) {
       out.push(input.subarray(i, i + 1))
       i += 1
@@ -34,6 +38,7 @@ const reference = (values: ReadonlyArray<string>, input: Uint8Array): string => 
       i += found.length
     }
   }
+
   return decoder.decode(Buffer.concat(out))
 }
 

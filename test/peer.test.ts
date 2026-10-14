@@ -11,6 +11,7 @@ const serverSources = join(import.meta.dirname, "..", "src", "server")
 const sourcesMatching = async (pattern: RegExp) => {
   const names = (await readdir(serverSources)).filter((name) => name.endsWith(".ts"))
   const texts = await Promise.all(names.map(async (name) => [name, await readFile(join(serverSources, name), "utf8")]))
+
   return texts.flatMap(([name, text]) => (name !== undefined && text !== undefined && pattern.test(text) ? [name] : []))
 }
 

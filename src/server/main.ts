@@ -27,6 +27,7 @@ const bindError =
   (ip: string, port: number) =>
   (defect: unknown): Effect.Effect<never, ListenAddressUnavailable | ListenAddressInUse | ListenFailed> => {
     const code = PlatformCause.code(defect)
+
     switch (code) {
       case undefined:
         return Effect.die(defect)
@@ -47,6 +48,7 @@ const bind = (address: ListenAddress, port: number) =>
     Effect.catchDefect(bindError(address.ip, port)),
     Effect.flatMap((context) => {
       const bound = Context.get(context, HttpServer.HttpServer).address
+
       return bound._tag === "UnixPathAddress"
         ? Effect.die(new Error("the listener bound a unix socket"))
         : Effect.succeed({ ip: address.ip, port: bound.port, context })
@@ -69,6 +71,7 @@ export const run = (
       const listeners = yield* Effect.forEach(addresses, (address) => bind(address, config.port))
       yield* StateDir.prepare(config.stateDir)
       const sql = yield* Database.open(config.stateDir)
+
       const state = yield* ServerState.load(config.stateDir).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
         Effect.catchIf(
@@ -77,6 +80,7 @@ export const run = (
           (error) => Effect.fail(Database.openFailed(config.stateDir)(error)),
         ),
       )
+
       // Built once and shared by every listener.
       const services = Layer.mergeAll(
         Layer.succeed(SqlClient.SqlClient, sql),
@@ -84,10 +88,12 @@ export const run = (
         Layer.succeed(Locks.Service, yield* Locks.make),
         Layer.succeed(Passphrase.Attempts, yield* Passphrase.makeAttempts),
       )
+
       const app = Http.app(config).pipe(Layer.provide(services))
       yield* Effect.forEach(listeners, ({ context }) =>
         Layer.build(app.pipe(Layer.provide(Layer.succeedContext(context)))).pipe(Effect.orDie),
       )
+
       // Logged only once serving, so a failed start prints nothing but its error line.
       if (config.allowAnyListen)
         yield* Log.write({
@@ -95,6 +101,7 @@ export const run = (
           addresses: addresses.filter((address) => !Listen.allowed(address)).map(({ ip }) => ip),
           message: cleartextWarning,
         })
+
       if (state._tag === "Uninitialised")
         yield* Log.write({
           event: "init-code-written",
@@ -112,6 +119,7 @@ export const run = (
           ...(state._tag === "Uninitialised" ? { initCodeFile: state.initCodeFile } : {}),
         }),
       )
+
       return yield* Effect.never
     }),
   ).pipe(

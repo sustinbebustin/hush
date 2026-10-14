@@ -37,11 +37,13 @@ const AuditRow = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   peer: Schema.NullOr(Schema.String),
 })
+
 type AuditRow = typeof AuditRow.Type
 
 // The row's actor; undefined for a Token row without its Label.
 const actorOf = ({ actor, token_label }: AuditRow): AuditActor | undefined => {
   if (actor !== "token") return { type: actor }
+
   return token_label === null ? undefined : { type: actor, label: token_label }
 }
 
@@ -50,7 +52,9 @@ const actorOf = ({ actor, token_label }: AuditRow): AuditActor | undefined => {
 const entryOf = (row: AuditRow): Effect.Effect<AuditEntry> => {
   const broken = Effect.die(new Error(`audit row ${row.id} breaks the table's constraints`))
   const actor = actorOf(row)
+
   if (actor === undefined) return broken
+
   const common = {
     id: row.id,
     at: row.at,
@@ -63,8 +67,11 @@ const entryOf = (row: AuditRow): Effect.Effect<AuditEntry> => {
     ...(row.detail === null ? {} : { detail: row.detail }),
     ...(row.peer === null ? {} : { peer: row.peer }),
   }
+
   if (row.outcome === "ok") return Effect.succeed({ ...common, outcome: row.outcome })
+
   if (row.error === null) return broken
+
   return Effect.succeed({ ...common, outcome: row.outcome, error: row.error })
 }
 
@@ -86,11 +93,14 @@ const readPage = (request: AuditRequest) =>
     const vault = yield* nameKey("vault", request.vault)
     const label = yield* nameKey("label", request.label)
     const limit = request.limit ?? auditLimit.default
+
     const matches = (row: AuditRow) =>
       (vault === undefined || row.vaults.some(sameName(vault))) &&
       (label === undefined || (row.token_label !== null && sameName(label)(row.token_label)))
+
     const found: Array<AuditRow> = []
     let below = request.before ?? Number.MAX_SAFE_INTEGER
+
     while (found.length <= limit) {
       const batch = yield* Database.rows(
         AuditRow,
@@ -98,14 +108,18 @@ const readPage = (request: AuditRequest) =>
           SELECT id, at, last_at, count, actor, token_label, action, vaults, refs, detail, outcome, error, peer
           FROM audit WHERE id < ${below} AND last_at >= ${request.since ?? ""} ORDER BY id DESC LIMIT ${limit + 1}`,
       )
+
       found.push(...batch.filter(matches))
       const last = batch.at(-1)
+
       if (last === undefined || batch.length <= limit) break
       below = last.id
     }
+
     const entries = yield* Effect.forEach(found.slice(0, limit), entryOf)
     const next = found.length > limit ? entries.at(-1)?.id : undefined
     const result: AuditPage = { entries, ...(next === undefined ? {} : { next }) }
+
     return result
   })
 

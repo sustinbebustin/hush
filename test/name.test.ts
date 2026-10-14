@@ -68,9 +68,11 @@ describe("Name.parse", () => {
       fc.integer({ min: 0, max: 0x1f }).map(char),
       fc.integer({ min: 0x7f, max: 0x9f }).map(char),
     )
+
     fc.assert(
       fc.property(validName, forbidden, fc.nat(), (text, bad, at) => {
         const index = at % (text.length + 1)
+
         return Result.isFailure(Name.parse(text.slice(0, index) + bad + text.slice(index)))
       }),
     )

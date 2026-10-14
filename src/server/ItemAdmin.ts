@@ -45,6 +45,7 @@ const VaultRow = Schema.Struct({
   key_nonce: Schema.Uint8Array,
   key_wrapped: Schema.Uint8Array,
 })
+
 const ItemRow = Schema.Struct({ id: Schema.Number, title: Name.schema, kind: Schema.String })
 const IdRow = Schema.Struct({ id: Schema.Number })
 const LabelRow = Schema.Struct({ label: Name.schema })
@@ -72,10 +73,12 @@ const findVault = (input: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const vault = yield* Effect.fromResult(parseName("vault", input))
+
     const [found] = yield* rows(
       VaultRow,
       sql`SELECT id, name, key_nonce, key_wrapped FROM vaults WHERE name_key = ${Name.key(vault)}`,
     )
+
     return found ?? (yield* new VaultNotFound({ vault }))
   })
 
@@ -85,11 +88,14 @@ const locate = (vaultInput: string, itemInput: string) =>
     const sql = yield* SqlClient.SqlClient
     const vault = yield* findVault(vaultInput)
     const title = yield* Effect.fromResult(parseName("title", itemInput))
+
     const [item] = yield* rows(
       ItemRow,
       sql`SELECT id, title, kind FROM items WHERE vault_id = ${vault.id} AND title_key = ${Name.key(title)}`,
     )
+
     if (item === undefined) return yield* new ItemNotFound({ vault: vault.name, item: title })
+
     return { vault, item }
   })
 
@@ -106,6 +112,7 @@ const ofKind = (vault: VaultFound, item: ItemFound): Effect.Effect<ItemOfKind, I
 const specFor = (kind: Kind, label: string): Result.Result<FieldSpec, UnknownField> => {
   const name = Name.parse(label)
   const spec = Result.isSuccess(name) ? Kind.spec(kind, Name.key(name.success)) : undefined
+
   return spec === undefined
     ? Result.fail(new UnknownField({ kind, field: label, allowed: Kind.fields(kind).map((field) => field.label) }))
     : Result.succeed(spec)
@@ -134,18 +141,23 @@ const setField = (input: {
     const { vault, item } = input
     const spec = yield* Effect.fromResult(specFor(item.kind, input.label))
     const problem = Value.problem(Redacted.value(input.value))
+
     if (problem !== undefined) return yield* new InvalidValue({ field: spec.label, reason: problem })
     const labelKey = Name.key(spec.label)
+
     const [existing] = yield* rows(
       IdRow,
       sql`SELECT id FROM fields WHERE item_id = ${item.id} AND label_key = ${labelKey}`,
     )
+
     const fieldId = existing?.id ?? (yield* Database.nextId("fields"))
     const reference = Reference.format({ vault: vault.name, item: item.title, field: spec.label })
+
     const key = yield* Keys.vaultKeyFromMaster(input.master, vault.id, {
       nonce: new Uint8Array(vault.key_nonce),
       wrapped: new Uint8Array(vault.key_wrapped),
     }).pipe(Effect.mapError(() => new IntegrityCheckFailed({ damaged: { what: "vault-key", vault: vault.name } })))
+
     const location: Keys.FieldLocation = { vaultId: vault.id, itemId: item.id, fieldId, kind: item.kind, labelKey }
     const sealed = yield* input.sealer.sealField(key, location, Redacted.value(input.value))
     yield* (
@@ -159,11 +171,14 @@ const setField = (input: {
     ).pipe(Effect.orDie)
     const damaged = new IntegrityCheckFailed({ damaged: { what: "field", reference } })
     const [stored] = yield* rows(SealedRow, sql`SELECT nonce, sealed FROM fields WHERE id = ${fieldId}`)
+
     if (stored === undefined) return yield* damaged
+
     const opened = yield* Keys.openField(key, location, {
       nonce: new Uint8Array(stored.nonce),
       wrapped: new Uint8Array(stored.sealed),
     }).pipe(Effect.mapError(() => damaged))
+
     if (opened !== Redacted.value(input.value)) return yield* damaged
   })
 
@@ -172,11 +187,14 @@ const removeField = (vault: VaultFound, item: ItemOfKind, label: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const spec = yield* Effect.fromResult(specFor(item.kind, label))
+
     if (spec.role === "primary") return yield* new FieldRequired({ kind: item.kind, field: spec.label })
+
     const removed = yield* rows(
       IdRow,
       sql`DELETE FROM fields WHERE item_id = ${item.id} AND label_key = ${Name.key(spec.label)} RETURNING id`,
     )
+
     if (removed.length === 0)
       return yield* new FieldNotFound({ vault: vault.name, item: item.title, field: spec.label })
   })
@@ -185,9 +203,12 @@ const removeField = (vault: VaultFound, item: ItemOfKind, label: string) =>
 const changeDetail = (change: ItemChange): Audit.Detail => {
   if ("set" in change) {
     const set = nameOf(change.set.label)
+
     return set === undefined ? {} : { set }
   }
+
   const removed = nameOf(change.remove)
+
   return removed === undefined ? {} : { removed }
 }
 
@@ -195,6 +216,7 @@ const changeDetail = (change: ItemChange): Audit.Detail => {
 export const edit = (request: ItemEditRequest, peer: string | null, sealer: Sealer = Keys) => {
   const title = nameOf(request.item)
   const detail: Audit.Detail = { ...(title === undefined ? {} : { title }), ...changeDetail(request.change) }
+
   return Passphrase.audited({
     passphrase: request.passphrase,
     action: "item.edit",
@@ -211,6 +233,7 @@ export const edit = (request: ItemEditRequest, peer: string | null, sealer: Seal
         const item = yield* ofKind(vault, located.item)
         const at = yield* Audit.now
         const { change } = request
+
         if ("set" in change)
           yield* setField({
             master: unlocked,
@@ -224,6 +247,7 @@ export const edit = (request: ItemEditRequest, peer: string | null, sealer: Seal
         else yield* removeField(vault, item, change.remove)
         yield* sql`UPDATE items SET updated_at = ${at} WHERE id = ${item.id}`.pipe(Effect.orDie)
         const labels = yield* rows(LabelRow, sql`SELECT label FROM fields WHERE item_id = ${item.id}`)
+
         const receipt: ItemEditReceipt = {
           vault: vault.name,
           title: item.title,
@@ -235,6 +259,7 @@ export const edit = (request: ItemEditRequest, peer: string | null, sealer: Seal
           updatedAt: at,
           verified: true,
         }
+
         return receipt
       }),
     recorded: (receipt) => ({ vaults: [receipt.vault], detail: { ...detail, title: receipt.title } }),
@@ -256,10 +281,12 @@ const retire = (vaultId: number, title: Name) =>
 const unretire = (vaultId: number, title: Name) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
+
     const released = yield* rows(
       Items.RetiredRow,
       sql`DELETE FROM retired_titles WHERE vault_id = ${vaultId} AND title_key = ${Name.key(title)} RETURNING title_key`,
     )
+
     return released.length > 0
   })
 
@@ -269,6 +296,7 @@ const unretire = (vaultId: number, title: Name) =>
 export const rename = (request: ItemRenameRequest, peer: string | null) => {
   const from = nameOf(request.item)
   const to = nameOf(request.newTitle)
+
   return Passphrase.audited({
     passphrase: request.passphrase,
     action: "item.rename",
@@ -294,11 +322,14 @@ export const rename = (request: ItemRenameRequest, peer: string | null) => {
           ),
           Effect.catchTag("SqlError", Effect.die),
         )
+
         if (Name.key(newTitle) !== Name.key(item.title)) {
           yield* retire(vault.id, item.title)
           yield* unretire(vault.id, newTitle)
         }
+
         const labels = yield* rows(LabelRow, sql`SELECT label FROM fields WHERE item_id = ${item.id}`)
+
         const renamed: ItemRenamed = {
           vault: vault.name,
           from: item.title,
@@ -308,6 +339,7 @@ export const rename = (request: ItemRenameRequest, peer: string | null) => {
             new: Reference.format({ vault: vault.name, item: newTitle, field: spec.label }),
           })),
         }
+
         return renamed
       }),
     recorded: (renamed) => ({ vaults: [renamed.vault], detail: { from: renamed.from, to: renamed.to } }),
@@ -318,6 +350,7 @@ export const rename = (request: ItemRenameRequest, peer: string | null) => {
 // the sealed values leave the files.
 export const remove = (request: ItemRequest, peer: string | null) => {
   const title = nameOf(request.item)
+
   return Passphrase.audited({
     passphrase: request.passphrase,
     action: "item.delete",
@@ -333,6 +366,7 @@ export const remove = (request: ItemRequest, peer: string | null) => {
         yield* sql`DELETE FROM items WHERE id = ${item.id}`.pipe(Effect.orDie)
         yield* retire(vault.id, item.title)
         const deleted: ItemDeleted = { deleted: true, vault: vault.name, title: item.title }
+
         return deleted
       }),
     recorded: (deleted) => ({ vaults: [deleted.vault], detail: { title: deleted.title } }),
@@ -342,6 +376,7 @@ export const remove = (request: ItemRequest, peer: string | null) => {
 // `items/release`: a Retired title becomes free for Tokens again.
 export const releaseTitle = (request: ItemReleaseRequest, peer: string | null) => {
   const title = nameOf(request.title)
+
   return Passphrase.audited({
     passphrase: request.passphrase,
     action: "item.release",
@@ -354,8 +389,10 @@ export const releaseTitle = (request: ItemReleaseRequest, peer: string | null) =
       Effect.gen(function* () {
         const vault = yield* findVault(request.vault)
         const parsed = yield* Effect.fromResult(parseName("title", request.title))
+
         if (!(yield* unretire(vault.id, parsed))) return yield* new TitleNotRetired({ vault: vault.name, item: parsed })
         const released: ItemReleased = { released: true, vault: vault.name, title: parsed }
+
         return released
       }),
     recorded: (released) => ({ vaults: [released.vault], detail: { title: released.title } }),

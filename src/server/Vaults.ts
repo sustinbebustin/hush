@@ -20,6 +20,7 @@ const { rows } = Database
 // The one row of an aggregate query; none is a broken store.
 const single = <A>(found: ReadonlyArray<A>): Effect.Effect<A> => {
   const [row] = found
+
   return row === undefined ? Effect.die(new Error("an aggregate query returned no row")) : Effect.succeed(row)
 }
 
@@ -51,6 +52,7 @@ export const create = (request: VaultRequest, peer: string | null) =>
           Effect.catchTag("SqlError", Effect.die),
         )
         const receipt: VaultReceipt = { vault, createdAt: at }
+
         return receipt
       }),
   })
@@ -76,6 +78,7 @@ export const list = (request: PassphraseOnly, peer: string | null) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         const at = yield* Audit.now
+
         const found = yield* rows(
           ListRow,
           sql`
@@ -86,6 +89,7 @@ export const list = (request: PassphraseOnly, peer: string | null) =>
                 AS active_tokens
             FROM vaults v ORDER BY v.name_key, v.name`,
         )
+
         const listed: VaultList = {
           vaults: found.map((row) => ({
             vault: row.name,
@@ -94,6 +98,7 @@ export const list = (request: PassphraseOnly, peer: string | null) =>
             createdAt: row.created_at,
           })),
         }
+
         return listed
       }),
   })
@@ -118,11 +123,14 @@ export const remove = (request: VaultRequest, peer: string | null) =>
         const sql = yield* SqlClient.SqlClient
         const vault = yield* parse(request.vault)
         const [found] = yield* rows(VaultRow, sql`SELECT id, name FROM vaults WHERE name_key = ${Name.key(vault)}`)
+
         if (found === undefined) return yield* new VaultNotFound({ vault })
+
         const items = yield* Effect.flatMap(
           rows(Count, sql`SELECT count(*) AS count FROM items WHERE vault_id = ${found.id}`),
           single,
         )
+
         const tokens = yield* Effect.flatMap(
           rows(
             Count,
@@ -132,11 +140,14 @@ export const remove = (request: VaultRequest, peer: string | null) =>
           ),
           single,
         )
+
         const counts = { items: items.count, activeTokens: tokens.count }
+
         if (counts.items > 0 || counts.activeTokens > 0)
           return yield* new VaultNotEmpty({ vault: found.name, ...counts })
         yield* sql`DELETE FROM vaults WHERE id = ${found.id}`.pipe(Effect.orDie)
         const receipt: VaultDeleted = { deleted: true, vault: found.name }
+
         return receipt
       }),
   })

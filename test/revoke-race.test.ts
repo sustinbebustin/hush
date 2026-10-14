@@ -25,6 +25,7 @@ const withStore = <A, E>(test: Effect.Effect<A, E, SqlClient.SqlClient>) =>
         const stateDir = join(root, "state")
         yield* StateDir.prepare(stateDir)
         const sql = yield* Database.open(stateDir)
+
         return yield* Effect.provideService(test, SqlClient.SqlClient, sql)
       }).pipe(Effect.scoped),
     (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
@@ -42,10 +43,12 @@ const seed = Effect.gen(function* () {
   yield* sql`
     INSERT INTO tokens (id, hash, wrap_salt, label, label_key, created_at)
     VALUES (1, ${issued.hash}, ${issued.salt}, 'agent', 'agent', '2026-01-01T00:00:00.000Z')`
+
   for (const grant of issued.wraps)
     yield* sql`
       INSERT INTO token_vaults (token_id, vault_id, access, key_nonce, key_wrapped)
       VALUES (1, ${grant.vaultId}, ${grant.access}, ${grant.wrap.nonce}, ${grant.wrap.wrapped})`
+
   return issued.token
 })
 
@@ -71,9 +74,11 @@ describe("the Revoke race", () => {
           yield* sql`UPDATE tokens SET revoked_at = '2026-01-02T00:00:00.000Z' WHERE id = 1`
 
           const created = yield* Effect.flip(Items.create(authenticated, request("After"), null))
+
           const resolved = yield* Effect.flip(
             Items.resolve(authenticated, { references: ["hush://Work/Before/credential"] }, null),
           )
+
           const revoked = { reason: "revoked", label: "agent", at: "2026-01-02T00:00:00.000Z" } as const
           assert.strictEqual(created._tag, "TokenRejected")
           assert.deepStrictEqual(created._tag === "TokenRejected" ? created.rejection : undefined, revoked)

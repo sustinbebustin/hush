@@ -15,6 +15,7 @@ class Echo extends HttpApiGroup.make("echo").add(
     success: Schema.Struct({ ok: Schema.Boolean }),
   }),
 ) {}
+
 class TestApi extends HttpApi.make("test").add(Echo) {}
 
 const withStub = <A, E>(
@@ -34,9 +35,11 @@ const echo = (target: Target) =>
 describe("Client.request", () => {
   it.effect("sends a POST body with exactly Content-Type: application/json", () => {
     const seen: Array<string | null> = []
+
     return withStub(
       (request) => {
         seen.push(request.headers.get("content-type"))
+
         return Response.json({ ok: true })
       },
       (target) =>
@@ -60,9 +63,11 @@ describe("Client.request", () => {
 
   it.effect("maps an empty 400 to UnexpectedResponse with its status, and sends the request once", () => {
     let requests = 0
+
     return withStub(
       () => {
         requests += 1
+
         return new Response(null, { status: 400 })
       },
       (target) =>

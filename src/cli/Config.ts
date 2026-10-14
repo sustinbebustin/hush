@@ -14,6 +14,7 @@ export const File = Schema.Struct({
   server: Schema.optionalKey(Schema.String),
   proxy: Schema.optionalKey(Schema.String),
 })
+
 export type File = typeof File.Type
 
 export interface Loaded {
@@ -27,6 +28,7 @@ export const path = (env: EnvVars) => PrivateFile.path(env, "config.json")
 export const load = (env: EnvVars): Effect.Effect<Loaded, ConfigInvalid> =>
   Effect.gen(function* () {
     const file = path(env)
+
     const text = yield* Effect.tryPromise({
       try: () => readFile(file, "utf8"),
       catch: (cause) => PlatformCause.codeOrUnknown(cause),
@@ -38,19 +40,24 @@ export const load = (env: EnvVars): Effect.Effect<Loaded, ConfigInvalid> =>
           : Effect.fail(new ConfigInvalid({ problem: { reason: "unreadable", path: file, code } })),
       ),
     )
+
     if (text === undefined) return { path: file, file: {} }
+
     const json = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
       Effect.mapError(() => new ConfigInvalid({ problem: { reason: "not-json", path: file } })),
     )
+
     const decoded = yield* Schema.decodeUnknownEffect(File)(json).pipe(
       Effect.mapError(() => new ConfigInvalid({ problem: { reason: "invalid", path: file } })),
     )
+
     return { path: file, file: decoded }
   })
 
 // Writes `loaded` with `change` applied, keeping the other key as it was.
 export const set = (loaded: Loaded, change: File): Effect.Effect<File, FileWriteFailed> => {
   const next: File = { ...loaded.file, ...change }
+
   return PrivateFile.write(loaded.path, `${JSON.stringify(next, null, 2)}\n`).pipe(
     Effect.mapError(({ code }) => new FileWriteFailed({ path: loaded.path, code, consequence: "config" })),
     Effect.as(next),

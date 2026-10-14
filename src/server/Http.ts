@@ -34,6 +34,7 @@ const PublicLive = HttpApiBuilder.group(Api, "public", (handlers) =>
   handlers.handle("status", () =>
     Effect.gen(function* () {
       const state = yield* Ref.get(yield* ServerState.Current)
+
       return { state: ServerState.wire(state), version: Version.current, api: Version.api }
     }),
   ),
@@ -100,6 +101,7 @@ const TokenAuthLive = Layer.effect(
   TokenAuth,
   Effect.gen(function* () {
     const context = yield* Effect.context<SqlClient.SqlClient>()
+
     return {
       bearer: (handler, { credential, endpoint }) =>
         Effect.gen(function* () {
@@ -109,6 +111,7 @@ const TokenAuthLive = Layer.effect(
           const action = tokenActions[endpoint.identifier]
           const peer = yield* Audit.peer
           const token = yield* Tokens.authenticate(credential, action, peer).pipe(Effect.provideContext(context))
+
           return yield* Effect.provideService(handler, CurrentToken, token)
         }),
     }
@@ -121,9 +124,12 @@ const requestLog = HttpMiddleware.make((app) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const exit = yield* Effect.exit(app)
+
     const status =
       exit._tag === "Success" ? exit.value.status : HttpServerError.causeResponseStripped(exit.cause)[0].status
+
     yield* Log.write({ event: "request", method: request.method, path: Guard.pathOf(request.url), status })
+
     return yield* exit
   }),
 )
@@ -142,8 +148,10 @@ const backupRoute = (stateDir: string) =>
       const payload = yield* Effect.flatMap(request.json, Schema.decodeUnknownEffect(PassphraseOnly)).pipe(
         Effect.option,
       )
+
       // Undecodable, as the `HttpApi` answers a malformed body.
       if (Option.isNone(payload)) return HttpServerResponse.empty({ status: 400 })
+
       const snapshot = yield* Passphrase.audited({
         passphrase: payload.value.passphrase,
         action: "backup",
@@ -155,6 +163,7 @@ const backupRoute = (stateDir: string) =>
         unlock: Keys.fromPassphrase,
         operation: () => Backup.snapshot(stateDir).pipe(Effect.orDie),
       })
+
       return HttpServerResponse.stream(Backup.bytes(snapshot), {
         contentType: "application/octet-stream",
         contentLength: snapshot.bytes,

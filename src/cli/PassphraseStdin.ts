@@ -17,8 +17,10 @@ export type Pair = readonly [string, string]
 const takeLine = (text: string): { readonly line: string; readonly rest: string } | undefined => {
   if (text === "") return undefined
   const end = text.indexOf("\n")
+
   if (end === -1) return { line: text, rest: "" }
   const line = text.slice(0, end)
+
   return { line: line.endsWith("\r") ? line.slice(0, -1) : line, rest: text.slice(end + 1) }
 }
 
@@ -31,6 +33,7 @@ export const frame = (
   Result.flatMap(PrivateInput.decode(input, wording), (text) => {
     const first = takeLine(text)
     const second = first === undefined ? undefined : takeLine(first.rest)
+
     return first === undefined || second === undefined || second.rest !== ""
       ? Result.fail(new StdinFramingInvalid({ command, expected: lines }))
       : Result.succeed([first.line, second.line] as const)
@@ -43,6 +46,7 @@ export const frameOne = (
 ): Result.Result<string, InvalidValue | StdinFramingInvalid> =>
   Result.flatMap(PrivateInput.decode(input, wording), (text) => {
     const only = takeLine(text)
+
     return only === undefined || only.rest !== ""
       ? Result.fail(new StdinFramingInvalid({ command, expected: ["the Passphrase"] }))
       : Result.succeed(only.line)
@@ -56,6 +60,7 @@ export const frameWithValue = (
 ): Result.Result<{ readonly passphrase: string; readonly value: string }, InvalidValue | StdinFramingInvalid> =>
   Result.flatMap(PrivateInput.decode(input, wording), (text) => {
     const first = takeLine(text)
+
     return first === undefined
       ? Result.fail(new StdinFramingInvalid({ command, expected: ["the Passphrase", "the value"] }))
       : Result.succeed({ passphrase: first.line, value: first.rest })

@@ -22,6 +22,7 @@ export interface Receipt {
 // The body into `temp`, synced to disk; a size or hash that differs from the headers is `BackupCorrupt`.
 const receive = (file: string, temp: string, download: Client.Download) => {
   const writeFailed = OutputFile.writeFailed(file)
+
   return Effect.acquireUseRelease(
     Effect.tryPromise({ try: () => open(temp, "r+"), catch: writeFailed }),
     (handle) =>
@@ -40,7 +41,9 @@ const receive = (file: string, temp: string, download: Client.Download) => {
         )
         yield* Effect.tryPromise({ try: () => handle.sync(), catch: writeFailed })
         const sha256 = hash.digest("hex")
+
         if (bytes !== download.bytes || sha256 !== download.sha256) return yield* new BackupCorrupt()
+
         return { bytes, sha256 }
       }),
     (handle) => Effect.promise(() => handle.close()),
@@ -49,6 +52,7 @@ const receive = (file: string, temp: string, download: Client.Download) => {
 
 export const run = (input: { readonly target: Target; readonly source: SecretSource; readonly file: string }) => {
   const file = resolve(input.file)
+
   return Admin.passphraseCommand({
     command: "backup",
     source: input.source,

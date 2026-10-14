@@ -42,6 +42,7 @@ export class ListenFailed extends Schema.TaggedError<ListenFailed>()("ListenFail
 
 // A file's owner, or the identity the Server runs as.
 export const Owner = Schema.Struct({ uid: Schema.Number, gid: Schema.Number })
+
 export type Owner = typeof Owner.Type
 
 export class StateFileNotOwned extends Schema.TaggedError<StateFileNotOwned>()("StateFileNotOwned", {

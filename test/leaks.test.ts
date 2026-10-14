@@ -13,6 +13,7 @@ describe("leak scan", () => {
       ],
       [valueSentinel],
     )
+
     assert.deepStrictEqual(
       leaks.map(({ target }) => target),
       ["cli", "server"],
@@ -28,6 +29,7 @@ describe("leak scan", () => {
       [{ target: "tokenFile", text: `${token.text} ${passphraseSentinel.text}` }],
       [token, passphraseSentinel],
     )
+
     assert.deepStrictEqual(leaks, [{ target: "tokenFile", sentinel: passphraseSentinel }])
   })
 

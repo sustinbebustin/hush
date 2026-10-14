@@ -20,6 +20,7 @@ export interface WriteFailure {
 // leaves either the old file or the new one.
 export const write = (file: string, text: string): Effect.Effect<void, WriteFailure> => {
   const temp = `${file}.${Buffer.from(crypto.getRandomValues(new Uint8Array(8))).toString("hex")}.tmp`
+
   return Effect.tryPromise({
     try: async () => {
       await mkdir(dirname(file), { recursive: true, mode: 0o700 })

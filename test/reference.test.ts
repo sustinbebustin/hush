@@ -67,6 +67,7 @@ describe("Reference.format", () => {
     fc.assert(
       fc.property(validName, validName, validName, (vault, item, field) => {
         const formatted = roundTrip(`hush://${vault}/${item}/${field}`)
+
         return formatted !== undefined && roundTrip(formatted) === formatted
       }),
     )

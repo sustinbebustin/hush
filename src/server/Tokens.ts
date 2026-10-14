@@ -41,6 +41,7 @@ const TokenRow = Schema.Struct({
   expires_at: Schema.NullOr(Schema.String),
   revoked_at: Schema.NullOr(Schema.String),
 })
+
 type TokenRow = typeof TokenRow.Type
 
 const GrantRow = Schema.Struct({ vault_id: Schema.Number, name: Name.schema, access: Schema.Literals(Access.all) })
@@ -49,8 +50,10 @@ const GrantRow = Schema.Struct({ vault_id: Schema.Number, name: Name.schema, acc
 const inactive = (row: TokenRow, at: string): TokenRejected | undefined => {
   if (row.revoked_at !== null)
     return new TokenRejected({ rejection: { reason: "revoked", label: row.label, at: row.revoked_at } })
+
   if (row.expires_at !== null && row.expires_at <= at)
     return new TokenRejected({ rejection: { reason: "expired", label: row.label, at: row.expires_at } })
+
   return undefined
 }
 
@@ -65,17 +68,22 @@ export const authenticate = (
 ): Effect.Effect<AuthenticatedToken, TokenRejected | AuditUnavailable, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const presented = Redacted.value(credential)
+
     if (presented === "") return yield* refused("missing")
     const parsed = Token.parse(presented)
+
     if (Result.isFailure(parsed)) return yield* refused("malformed")
     const token = parsed.success
     const sql = yield* SqlClient.SqlClient
+
     const [row] = yield* Schema.decodeUnknownEffect(Schema.Array(TokenRow))(
       yield* sql`SELECT id, label, wrap_salt, expires_at, revoked_at FROM tokens WHERE hash = ${Keys.authHash(token)}`,
     ).pipe(Effect.orDie)
+
     if (row === undefined) return yield* refused("unknown")
     const at = yield* Audit.now
     const rejection = inactive(row, at)
+
     if (rejection !== undefined) {
       yield* sql
         .withTransaction(
@@ -90,13 +98,16 @@ export const authenticate = (
           }),
         )
         .pipe(Effect.catchTag("SqlError", Effect.die))
+
       return yield* rejection
     }
+
     const grants = yield* Schema.decodeUnknownEffect(Schema.Array(GrantRow))(
       yield* sql`
         SELECT tv.vault_id, v.name, tv.access FROM token_vaults tv JOIN vaults v ON v.id = tv.vault_id
         WHERE tv.token_id = ${row.id} ORDER BY v.name`,
     ).pipe(Effect.orDie)
+
     return {
       id: row.id,
       label: row.label,
@@ -124,6 +135,7 @@ export const activeWraps = (
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const at = yield* Audit.now
+
     const rows = yield* Schema.decodeUnknownEffect(Schema.Array(WrapRow))(
       yield* sql`
         SELECT tv.vault_id, tv.access, tv.key_nonce, tv.key_wrapped FROM token_vaults tv
@@ -131,7 +143,9 @@ export const activeWraps = (
         WHERE tv.token_id = ${token.id} AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > ${at})
           AND ${sql.in("tv.vault_id", vaultIds)}`,
     ).pipe(Effect.orDie)
+
     const wraps = new Map<number, Keys.GrantWrap>()
+
     for (const row of rows)
       if (row.key_nonce !== null && row.key_wrapped !== null)
         wraps.set(row.vault_id, {
@@ -139,15 +153,20 @@ export const activeWraps = (
           access: row.access,
           wrap: { nonce: new Uint8Array(row.key_nonce), wrapped: new Uint8Array(row.key_wrapped) },
         })
+
     if (vaultIds.every((id) => wraps.has(id))) return wraps
+
     // Which of the two: the row says, read again only on this path. Tokens are never deleted, and an active
     // Token has a wrap per Grant, so anything else is a broken store.
     const [state] = yield* Schema.decodeUnknownEffect(Schema.Array(TokenRow))(
       yield* sql`SELECT id, label, wrap_salt, expires_at, revoked_at FROM tokens WHERE id = ${token.id}`,
     ).pipe(Effect.orDie)
+
     const rejection = state === undefined ? undefined : inactive(state, at)
+
     if (rejection === undefined)
       return yield* Effect.die(new Error(`Token ${token.id} is active but lacks a Grant wrap for a granted Vault`))
+
     return yield* rejection
   }).pipe(Effect.catchTag("SqlError", Effect.die))
 
@@ -178,6 +197,7 @@ export const audited = <A, E extends ApiError>(request: {
     const { token, action, peer, scope, operation } = request
     const sql = yield* SqlClient.SqlClient
     const at = yield* Audit.now
+
     const record = (result: Audit.Outcome) =>
       Audit.write({
         at,
@@ -189,6 +209,7 @@ export const audited = <A, E extends ApiError>(request: {
         result,
         peer,
       })
+
     return yield* sql.withTransaction(Effect.tap(operation, () => record({ outcome: "ok" }))).pipe(
       Effect.catchIf(
         (error): error is Exclude<E, AuditUnavailable> => error._tag !== "AuditUnavailable",
@@ -210,6 +231,7 @@ const ListedGrantRow = Schema.Struct({ token_id: Schema.Number, ...GrantRow.fiel
 
 const stateOf = (row: typeof InfoRow.Type, at: string): TokenState => {
   if (row.revoked_at !== null) return "revoked"
+
   return row.expires_at !== null && row.expires_at <= at ? "expired" : "active"
 }
 
@@ -227,16 +249,19 @@ export const list = (request: PassphraseOnly, peer: string | null) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         const at = yield* Audit.now
+
         const tokens = yield* Database.rows(
           InfoRow,
           sql`SELECT id, label, created_at, expires_at, revoked_at, last_used_at FROM tokens ORDER BY id DESC`,
         )
+
         const grants = yield* Database.rows(
           ListedGrantRow,
           sql`
             SELECT tv.token_id, tv.vault_id, v.name, tv.access FROM token_vaults tv JOIN vaults v ON v.id = tv.vault_id
             ORDER BY v.name_key, v.name`,
         )
+
         const listed: TokenList = {
           tokens: tokens.map((row) => ({
             label: row.label,
@@ -250,6 +275,7 @@ export const list = (request: PassphraseOnly, peer: string | null) =>
             state: stateOf(row, at),
           })),
         }
+
         return listed
       }),
   })
@@ -262,14 +288,17 @@ const LabelRow = Schema.Struct({ id: Schema.Number, label: Schema.String })
 export const revokeLabelled = (label: Name): Effect.Effect<TokenRevoked, TokenNotFound, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
+
     const [found] = yield* Database.rows(
       LabelRow,
       sql`SELECT id, label FROM tokens WHERE label_key = ${Name.key(label)} AND revoked_at IS NULL`,
     )
+
     if (found === undefined) return yield* new TokenNotFound({ label })
     const at = yield* Audit.now
     yield* sql`UPDATE tokens SET revoked_at = ${at} WHERE id = ${found.id}`.pipe(Effect.orDie)
     const receipt: TokenRevoked = { label: found.label, revoked: true, revokedAt: at }
+
     return receipt
   })
 
@@ -277,6 +306,7 @@ export const revokeLabelled = (label: Name): Effect.Effect<TokenRevoked, TokenNo
 // wraps leave the files.
 export const revoke = (request: TokenRevokeRequest, peer: string | null) => {
   const [label] = Audit.named(request.label)
+
   return Passphrase.audited({
     passphrase: request.passphrase,
     action: "token.revoke",
@@ -302,18 +332,22 @@ export const describe = (token: AuthenticatedToken, peer: string | null) =>
     scope: { vaults: [], references: [] },
     operation: Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
+
       const [row] = yield* Database.rows(
         DescribedRow,
         sql`SELECT created_at, expires_at FROM tokens WHERE id = ${token.id}`,
       )
+
       // Tokens are never deleted, so an authenticated Token without its row is a broken store.
       if (row === undefined) return yield* Effect.die(new Error(`Token ${token.id} has no row`))
+
       const described: TokenDescription = {
         label: token.label,
         grants: token.grants.map(({ vault, access }) => ({ vault, access })),
         createdAt: row.created_at,
         expiresAt: row.expires_at,
       }
+
       return described
     }),
   })
@@ -328,6 +362,7 @@ const VaultKeyRow = Schema.Struct({
   key_nonce: Schema.Uint8Array,
   key_wrapped: Schema.Uint8Array,
 })
+
 type VaultKeyRow = typeof VaultKeyRow.Type
 
 const KeptRow = Schema.Struct({ ...VaultKeyRow.fields, access: Schema.Literals(Access.all) })
@@ -346,6 +381,7 @@ const parse = (what: string, input: string) => Effect.fromResult(parseName(what,
 // after it.
 export const issue = (request: TokenIssueRequest, peer: string | null) => {
   const [label] = Audit.named(request.label)
+
   return Passphrase.audited({
     passphrase: request.passphrase,
     action: "token.issue",
@@ -378,21 +414,28 @@ const issueUnder = (master: Keys.MasterKey, request: TokenIssueRequest) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const label = yield* parse("label", request.label)
+
     // Before any Vault lookup, so 65 Grants is `LimitExceeded` whatever they name; kept Grants are counted below.
     if (request.grants.length > maxGrants) return yield* new LimitExceeded({ what: "grants", max: maxGrants })
+
     const explicit = yield* Effect.forEach(request.grants, (grant) =>
       Effect.gen(function* () {
         const vault = yield* parse("vault", grant.vault)
+
         const [found] = yield* Database.rows(
           VaultKeyRow,
           sql`SELECT id, name, key_nonce, key_wrapped FROM vaults WHERE name_key = ${Name.key(vault)}`,
         )
+
         if (found === undefined) return yield* new VaultNotFound({ vault })
         const issued: IssueGrant = { vault: found, access: grant.access }
+
         return issued
       }),
     )
+
     const at = yield* Audit.now
+
     const [replaced] =
       request.replaces === true
         ? yield* Database.rows(
@@ -400,7 +443,9 @@ const issueUnder = (master: Keys.MasterKey, request: TokenIssueRequest) =>
             sql`SELECT id FROM tokens WHERE label_key = ${Name.key(label)} AND revoked_at IS NULL`,
           )
         : []
+
     if (replaced === undefined && request.keepGrants === true) return yield* new TokenNotFound({ label })
+
     const kept: ReadonlyArray<IssueGrant> =
       replaced === undefined || request.keepGrants !== true
         ? []
@@ -410,19 +455,24 @@ const issueUnder = (master: Keys.MasterKey, request: TokenIssueRequest) =>
               SELECT v.id, v.name, v.key_nonce, v.key_wrapped, tv.access FROM token_vaults tv
               JOIN vaults v ON v.id = tv.vault_id WHERE tv.token_id = ${replaced.id}`,
           )).map(({ access, ...vault }) => ({ vault, access }))
+
     if (replaced !== undefined)
       yield* sql`UPDATE tokens SET revoked_at = ${at} WHERE id = ${replaced.id}`.pipe(Effect.orDie)
+
     // Explicit Access wins per Vault.
     const grants = [
       ...explicit,
       ...kept.filter(({ vault }) => !explicit.some((grant) => grant.vault.id === vault.id)),
     ].toSorted((a, b) => Name.key(a.vault.name).localeCompare(Name.key(b.vault.name)))
+
     if (grants.length > maxGrants) return yield* new LimitExceeded({ what: "grants", max: maxGrants })
+
     // The request schema demands a Grant or `keepGrants`, and an unrevoked Token keeps its Grants (a Vault with one
     // cannot be deleted), so none here is a broken store; a Token without Grants is never issued.
     if (grants.length === 0) return yield* Effect.die(new Error(`Token ${label} to replace has no Grants to keep`))
 
     const tokenId = yield* Database.nextId("tokens")
+
     const issued = yield* Keys.newToken(
       master,
       tokenId,
@@ -434,13 +484,16 @@ const issueUnder = (master: Keys.MasterKey, request: TokenIssueRequest) =>
     ).pipe(
       Effect.catchTag("GrantKeyOpenFailed", ({ vaultId }) => {
         const vault = grants.find((grant) => grant.vault.id === vaultId)?.vault.name
+
         return vault === undefined
           ? Effect.die(new Error(`newToken failed for Vault ${vaultId}, which it was not given`))
           : Effect.fail(new IntegrityCheckFailed({ damaged: { what: "vault-key", vault } }))
       }),
     )
+
     const expiresAt =
       request.ttlSeconds === undefined ? null : new Date(Date.parse(at) + request.ttlSeconds * 1000).toISOString()
+
     yield* sql`
       INSERT INTO tokens (id, hash, wrap_salt, label, label_key, created_at, expires_at)
       VALUES (${tokenId}, ${issued.hash}, ${issued.salt}, ${label}, ${Name.key(label)}, ${at}, ${expiresAt})`.pipe(
@@ -450,12 +503,14 @@ const issueUnder = (master: Keys.MasterKey, request: TokenIssueRequest) =>
       ),
       Effect.catchTag("SqlError", Effect.die),
     )
+
     for (const grant of issued.wraps)
       yield* sql`
         INSERT INTO token_vaults (token_id, vault_id, access, key_nonce, key_wrapped)
         VALUES (${tokenId}, ${grant.vaultId}, ${grant.access}, ${grant.wrap.nonce}, ${grant.wrap.wrapped})`.pipe(
         Effect.orDie,
       )
+
     const receipt: TokenIssueReceipt = {
       token: issued.token,
       label,
@@ -464,6 +519,7 @@ const issueUnder = (master: Keys.MasterKey, request: TokenIssueRequest) =>
       expiresAt,
       replaced: replaced !== undefined,
     }
+
     return receipt
   })
 

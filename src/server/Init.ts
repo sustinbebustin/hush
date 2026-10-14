@@ -26,16 +26,21 @@ export const run = (request: InitRequest, peer: string | null) =>
     const locks = yield* Locks.Service
     const current = yield* ServerState.Current
     const sql = yield* SqlClient.SqlClient
+
     return yield* locks.meta.withPermit(
       Effect.gen(function* () {
         const state = yield* Ref.get(current)
+
         if (state._tag === "Ready") return yield* new AlreadyInitialised()
+
         if (!InitCode.matches(Redacted.value(request.initCode), state.initCodeDigest))
           return yield* new InitCodeInvalid()
         const entered = Redacted.value(request.passphrase)
+
         // JSON can carry a lone surrogate, which has no UTF-8 form to derive the KEK from.
         if (!entered.isWellFormed()) return yield* new InvalidValue({ field: "passphrase", reason: "not-utf8" })
         const passphrase = yield* Effect.fromResult(Passphrase.policy(entered))
+
         const first =
           request.first === undefined
             ? undefined
@@ -43,8 +48,10 @@ export const run = (request: InitRequest, peer: string | null) =>
                 vault: yield* parse("vault", request.first.vault),
                 label: yield* parse("label", request.first.label),
               }
+
         const master = yield* locks.argon2.withPermit(Keys.newMaster(passphrase))
         const at = yield* Audit.now
+
         const issued = yield* sql
           .withTransaction(
             Effect.gen(function* () {
@@ -67,18 +74,21 @@ export const run = (request: InitRequest, peer: string | null) =>
                 result: { outcome: "ok" },
                 peer,
               })
+
               return created
             }),
           )
           // BEGIN, COMMIT or an insert failing is not an expected outcome: an empty 500, nothing committed. The
           // master key opens the wrap it just made, so `GrantKeyOpenFailed` cannot happen here either.
           .pipe(Effect.catchTag(["SqlError", "GrantKeyOpenFailed"], Effect.die))
+
         yield* Ref.set(current, { _tag: "Ready" })
         // Init has committed, so a file that cannot be deleted is logged, not reported; a Ready start retries.
         yield* InitCode.remove(state.initCodeFile).pipe(
           Effect.catch((error) => Log.write({ event: "init-code-delete-failed", path: error.path, code: error.code })),
         )
         const receipt: InitReceipt = issued === undefined ? { state: "ready" } : { state: "ready", first: issued }
+
         return receipt
       }),
     )
@@ -104,10 +114,12 @@ const createFirst = (
     yield* sql`
       INSERT INTO tokens (id, hash, wrap_salt, label, label_key, created_at)
       VALUES (${tokenId}, ${issued.hash}, ${issued.salt}, ${first.label}, ${Name.key(first.label)}, ${at})`
+
     for (const grant of issued.wraps)
       yield* sql`
         INSERT INTO token_vaults (token_id, vault_id, access, key_nonce, key_wrapped)
         VALUES (${tokenId}, ${grant.vaultId}, ${grant.access}, ${grant.wrap.nonce}, ${grant.wrap.wrapped})`
+
     return {
       vault: first.vault,
       label: first.label,

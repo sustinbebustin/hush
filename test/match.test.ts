@@ -40,6 +40,7 @@ describe("Match.suggest", () => {
     const candidates = ["Stripe Key E", "Stripe Key D", "Stripe Key C", "Stripe Key B", "Stripe"].map((title) => ({
       title,
     }))
+
     assert.deepStrictEqual(
       Match.suggest(Match.terms("strpe"), candidates).map(({ title }) => title),
       ["Stripe", "Stripe Key B", "Stripe Key C"],
@@ -58,6 +59,7 @@ const meta = (title: string, kind: "api-credential" | "login" | "database") => (
     { label: "notes", concealed: false },
   ],
 })
+
 const listing = {
   vaults: [
     { vault: "Personal", access: "read+create", items: [meta("Cloud API", "api-credential")] },
@@ -126,6 +128,7 @@ describe("Match.closeness", () => {
     fc.assert(
       fc.property(fc.array(fc.string({ minLength: 1 })), fc.string(), (terms, title) => {
         const score = Match.closeness(terms, title)
+
         return score >= 0 && score <= 1
       }),
     )

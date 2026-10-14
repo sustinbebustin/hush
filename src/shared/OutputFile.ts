@@ -46,6 +46,7 @@ export const createPrivate = (directory: string, name: (suffix: string) => strin
       const handle = await open(path, "wx", 0o600)
       await handle.close()
       await chmod(path, 0o600)
+
       return path
     },
     catch: (cause) => cause,
@@ -62,6 +63,7 @@ export const place = <A, E, R>(
 ): Effect.Effect<A, E | OutputExists | FileWriteFailed, R> =>
   Effect.gen(function* () {
     yield* checkAbsent(target)
+
     return yield* Effect.acquireUseRelease(
       createPrivate(dirname(target), (suffix) => `.hush-backup-${suffix}.tmp`).pipe(
         Effect.mapError(writeFailed(target)),
@@ -74,6 +76,7 @@ export const place = <A, E, R>(
               PlatformCause.code(cause) === "EEXIST" ? new OutputExists({ path: target }) : writeFailed(target)(cause),
             ),
           )
+
           return written
         }),
       remove,

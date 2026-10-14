@@ -7,6 +7,7 @@ import { scan, type Sentinel, valueSentinel } from "./leaks.js"
 import { sandbox, type Sandbox, seedPassphrase } from "./sandbox.js"
 
 const value = valueSentinel.text
+
 // A plain Field's value: sealed like any value, and never shown by `find` or `inventory` either.
 const plainSentinel: Sentinel = { kind: "value", text: "fictional-plain-username-4Rk" }
 
@@ -15,6 +16,7 @@ const plainSentinel: Sentinel = { kind: "value", text: "fictional-plain-username
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, plainSentinel, { kind: "passphrase", text: seedPassphrase }]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -30,14 +32,18 @@ const listed = [call("/v1/items/list", 200)]
 // `Cloud Login`, Work holds `Database` and the empty Vault `Empty` is granted too.
 const seedListing = async (box: Sandbox, seen: (sentinel: Sentinel) => void) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
+
   const seeded = await box.seed({
     items: [
       { kind: "api-credential", title: "Cloud API", value },
       { kind: "login", title: "Cloud Login", value, plain: { username: plainSentinel.text } },
     ],
   })
+
   seen({ kind: "token", text: seeded.token })
+
   for (const vault of ["Work", "Empty"]) await admin(box, ["vault", "create", vault])
   await admin(box, [
     "token",
@@ -52,15 +58,18 @@ const seedListing = async (box: Sandbox, seen: (sentinel: Sentinel) => void) => 
     "--replace",
   ])
   seen({ kind: "token", text: await savedToken(box) })
+
   const created = await box.run(["create", "database", "--title", "Database", "--vault", "Work", "--stdin"], {
     input: `${value}\n`,
   })
+
   assert.strictEqual(created.code, 0, created.stderr)
 }
 
 const admin = async (box: Sandbox, args: ReadonlyArray<string>) => {
   const result = await box.run([...args, "--passphrase-stdin"], { input: `${seedPassphrase}\n` })
   assert.strictEqual(result.code, 0, result.stderr)
+
   return result
 }
 
@@ -266,7 +275,9 @@ describe("hush inventory", () => {
   it("marks exactly one Field of a three-Field login concealed", () =>
     withSandbox(async (box, seen) => {
       const code = await box.server.initCode()
+
       if (code !== undefined) seen({ kind: "initCode", text: code })
+
       const seeded = await box.seed({
         items: [
           {
@@ -277,10 +288,12 @@ describe("hush inventory", () => {
           },
         ],
       })
+
       seen({ kind: "token", text: seeded.token })
       seen({ kind: "value", text: "fictional-notes-8Hq" })
       const result = await box.run(["inventory"])
       assert.strictEqual(result.code, 0, result.stderr)
+
       const [item] = Schema.decodeUnknownSync(
         Schema.fromJsonString(
           Schema.Struct({
@@ -292,6 +305,7 @@ describe("hush inventory", () => {
           }),
         ),
       )(result.stdout).items
+
       assert.deepStrictEqual(item?.fields, [
         { label: "password", concealed: true },
         { label: "username", concealed: false },
@@ -302,6 +316,7 @@ describe("hush inventory", () => {
   it("narrows both lists to one Vault with --vault", () =>
     withSandbox(async (box, seen) => {
       await seedListing(box, seen)
+
       for (const [vault, expected] of [
         ["EMPTY", { vaults: [{ vault: "Empty", access: "read" }], items: [] }],
         ["Work", { vaults: [{ vault: "Work", access: "read+create" }], items: ["Database"] }],
@@ -317,6 +332,7 @@ describe("hush inventory", () => {
   it("refuses an invalid --vault name with InvalidName before any request", () =>
     withSandbox(async (box, seen) => {
       await seedListing(box, seen)
+
       for (const command of [["inventory"], ["find", "cloud"]])
         await assertRefused(
           box,
@@ -331,11 +347,13 @@ describe("items/list errors", () => {
     withSandbox(async (box, seen) => {
       await seedListing(box, seen)
       const before = await snapshot(box)
+
       const response = await box.fetch("/v1/items/list", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${await savedToken(box)}` },
         body: JSON.stringify({ vaults: ["Work", "a/b"] }),
       })
+
       assert.strictEqual(response.status, 400)
       assert.deepStrictEqual(await response.json(), { _tag: "InvalidName", what: "vault", reason: "slash" })
       assert.deepStrictEqual(await snapshot(box), before)
@@ -356,6 +374,7 @@ describe("items/list errors", () => {
       await seedListing(box, seen)
       await box.inspect((db) => db.prepare("UPDATE items SET kind = 'note' WHERE title = 'Database'").run())
       const before = await snapshot(box)
+
       for (const command of [["inventory"], ["find", "cloud"]]) {
         const result = await box.run(command)
         assert.strictEqual(result.code, 1)
@@ -366,6 +385,7 @@ describe("items/list errors", () => {
         )
         assert.deepStrictEqual(result.calls, [call("/v1/items/list", 500)])
       }
+
       assert.deepStrictEqual(await snapshot(box), before)
       assert.deepStrictEqual(await lastAudit(box), {
         actor: "token",
@@ -383,6 +403,7 @@ describe("the Init-saved Token", () => {
   it("runs find and inventory with no Passphrase", () =>
     withSandbox(async (box, seen) => {
       const code = await box.server.initCode()
+
       if (code !== undefined) seen({ kind: "initCode", text: code })
       const seeded = await box.seed({ items: [{ kind: "api-credential", title: "Stripe", value }] })
       seen({ kind: "token", text: seeded.token })

@@ -6,7 +6,9 @@ import { Backoff } from "../src/server/Backoff.js"
 // Reserves `n` attempts at `nowMs`, as `n` wrong Passphrases arriving at once would.
 const reserveTimes = (n: number, nowMs: number) => {
   let state = Backoff.initial
+
   for (let attempt = 0; attempt < n; attempt += 1) state = Result.getOrThrow(Backoff.reserve(state, nowMs))
+
   return state
 }
 

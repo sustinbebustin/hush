@@ -17,9 +17,12 @@ const maxCodePoints = 1024
 export const policy = (passphrase: string): Result.Result<string, PassphraseInvalid> => {
   const nfc = passphrase.normalize("NFC")
   const codePoints = [...nfc].length
+
   if (codePoints < minCodePoints) return Result.fail(new PassphraseInvalid({ reason: "too-short" }))
+
   if (codePoints > maxCodePoints || Utf8.byteLength(nfc) > maxBytes)
     return Result.fail(new PassphraseInvalid({ reason: "too-long" }))
+
   return Result.succeed(nfc)
 }
 

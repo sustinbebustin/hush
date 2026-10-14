@@ -66,6 +66,7 @@ describe("Env.parse", () => {
       SENTINEL,
       "=no-name",
     ].join("\r\n")
+
     assert.deepStrictEqual(
       Env.parse(content),
       Result.succeed([
@@ -98,6 +99,7 @@ describe("Env.parse", () => {
       [`TOKEN=hush://Work/-${SENTINEL}/credential`, "reference-leading-dash"],
       [`TOKEN=hush://Work/${SENTINEL}\u0085/credential`, "reference-control"],
     ] as const
+
     for (const [line, reason] of cases) {
       const result = Env.parse(["# ok", "PLAIN=value", line].join("\n"))
       assert.deepStrictEqual(result, Result.fail(new Env.LineInvalid({ line: 3, reason })))
@@ -136,12 +138,14 @@ describe("Env.resolve", () => {
   it.effect("resolves duplicate references once", () =>
     Effect.gen(function* () {
       let calls = 0
+
       const result = yield* Env.resolve(
         ["FIRST=hush://Personal/Shared/credential", "SECOND=hush://Personal/Shared/credential"].join("\n"),
         (references) =>
           Effect.sync(() => {
             calls += 1
             assert.deepStrictEqual(references, ["hush://Personal/Shared/credential"])
+
             return ["secret"]
           }),
       )
@@ -164,6 +168,7 @@ describe("Env.resolve", () => {
       const error = yield* Env.resolve(["A=hush://v/i/f", "B=op://v/i/f"].join("\n"), () =>
         Effect.die("the resolver must not be called"),
       ).pipe(Effect.flip)
+
       assert.deepStrictEqual(error, new Env.LineInvalid({ line: 2, reason: "op-reference" }))
     }),
   )

@@ -23,6 +23,7 @@ export const reserve = (
   if (nowMs < state.notBeforeMs)
     return Result.fail({ retryAfterSeconds: Math.ceil((state.notBeforeMs - nowMs) / 1000) })
   const failures = state.failures + 1
+
   return Result.succeed({ failures, notBeforeMs: nowMs + delaySeconds(failures) * 1000 })
 }
 

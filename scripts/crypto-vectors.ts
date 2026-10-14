@@ -12,5 +12,7 @@ const failed = await Effect.runPromise(
 )
 
 for (const failure of failed) console.error(`crypto-vectors: ${failure}`)
+
 console.log(`crypto-vectors: ${vectors.length - failed.length} of ${vectors.length} passed`)
+
 process.exitCode = failed.length === 0 ? 0 : 1

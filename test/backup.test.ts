@@ -19,6 +19,7 @@ const value = valueSentinel.text
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, passphraseSentinel]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -30,9 +31,11 @@ const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => vo
 // `seed`, with its Token and the Init code it used registered as sentinels.
 const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void, spec?: Parameters<Sandbox["seed"]>[0]) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
   const result = await box.seed(spec)
   seen({ kind: "token", text: result.token })
+
   return result
 }
 
@@ -50,11 +53,14 @@ const Count = Schema.decodeUnknownSync(Schema.Struct({ n: Schema.Number }))
 // The schema and the row count of every table, read from `path` alone.
 const shape = (path: string) => {
   const db = new Database(path, { readonly: true })
+
   try {
     const schema = db.query("SELECT type, name, sql FROM sqlite_master ORDER BY name").all()
+
     const counts = Object.fromEntries(
       tables.map((table) => [table, Count(db.query(`SELECT count(*) AS n FROM ${table}`).get()).n]),
     )
+
     return { schema, counts }
   } finally {
     db.close()
@@ -154,9 +160,11 @@ describe("hush backup refusals", () => {
   it("fails PassphraseIncorrect with exit 1 for a wrong Passphrase, taking no snapshot", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const result = await box.run(["backup", join(box.backupDir, "hush.db"), "--passphrase-stdin"], {
         input: "not the passphrase\n",
       })
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(
@@ -234,6 +242,7 @@ const wrongPassphrase = async (box: Sandbox) => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ passphrase: "wrong passphrase guess" }),
   })
+
   return WrongPassphraseAnswer(await response.json())
 }
 
@@ -244,9 +253,12 @@ const wait = (seconds: number) => new Promise((resolve) => setTimeout(resolve, s
 const pinBackoff = async (box: Sandbox, seconds: number) => {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const answer = await wrongPassphrase(box)
+
     if (answer._tag === "PassphraseIncorrect" && answer.retryAfterSeconds >= seconds) return
+
     if (answer._tag === "BackoffActive") await wait(answer.retryAfterSeconds)
   }
+
   throw new Error(`the backoff did not pin for ${seconds} s after 20 wrong Passphrases`)
 }
 
@@ -260,9 +272,11 @@ describe("hush server revoke", () => {
     withSandbox(async (box, seen) => {
       const first = await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
       await pinBackoff(box, 16)
+
       const refused = await box.run(["token", "revoke", first.label, "--passphrase-stdin"], {
         input: `${passphraseSentinel.text}\n`,
       })
+
       assert.strictEqual(refused.code, 1)
       assert.include(refused.stderr, "Too many incorrect Passphrase attempts")
 
@@ -303,10 +317,12 @@ describe("hush server revoke", () => {
   it("fails TokenNotFound with exit 1 for a Label with no unrevoked Token, changing nothing", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const before = {
         tokens: await rows(box, "SELECT * FROM tokens"),
         audit: await rows(box, "SELECT * FROM audit"),
       }
+
       const result = await hostRevoke(box, "nobody")
       assert.strictEqual(result.code, 1)
       assert.strictEqual(result.stdout, "")
@@ -325,7 +341,9 @@ describe("hush server revoke", () => {
 // on any read beside a running Server) and every file in the backup directory, raw.
 const files = async (box: Sandbox) => {
   const backups: Record<string, Buffer> = {}
+
   for (const name of await readdir(box.backupDir)) backups[name] = await readFile(join(box.backupDir, name))
+
   return {
     rows: await box.inspect((db) => tables.map((table) => db.query(`SELECT * FROM ${table}`).all())),
     stateDir: (await readdir(box.server.stateDir)).toSorted(),
@@ -340,6 +358,7 @@ describe("host command refusals", () => {
       await box.server.stop()
       await box.inspect((db) => db.run("DELETE FROM effect_sql_migrations"))
       const before = await files(box)
+
       for (const args of [
         ["revoke", "agent on box"],
         ["backup", join(box.backupDir, "hush.db")],
@@ -353,6 +372,7 @@ describe("host command refusals", () => {
           "hush: The database schema is older than this hush binary; nothing was changed. Start the Server once (it migrates), then run the command again.\n",
         )
       }
+
       assert.deepStrictEqual(await files(box), before)
     }))
 
@@ -393,10 +413,12 @@ describe("host command refusals", () => {
 const restore = async (backupFile: string) => {
   const box = await sandbox()
   await box.server.stop()
+
   for (const name of await readdir(box.server.stateDir)) await rm(join(box.server.stateDir, name))
   await copyFile(backupFile, join(box.server.stateDir, "hush.db"))
   await chmod(join(box.server.stateDir, "hush.db"), 0o600)
   await box.server.restart()
+
   return box
 }
 
@@ -421,9 +443,11 @@ describe("restore", () => {
       assert.strictEqual((await backup(box, file)).code, 0)
       const changed = "a fictional new passphrase 9Kz"
       seen({ kind: "passphrase", text: changed })
+
       const change = await box.run(["passphrase", "change", "--passphrase-stdin"], {
         input: `${passphraseSentinel.text}\n${changed}\n`,
       })
+
       assert.strictEqual(change.code, 0, change.stderr)
 
       const copy = await restore(file)
@@ -462,7 +486,9 @@ describe("restore", () => {
 // A directory on another filesystem than the backup directory's, where the runner has one.
 const otherFilesystem = (() => {
   const shm = "/dev/shm"
+
   if (!existsSync(shm)) return undefined
+
   return statSync(shm).dev === statSync(tmpdir()).dev ? undefined : shm
 })()
 
@@ -473,6 +499,7 @@ describe("hush server backup to another filesystem (skipped where /dev/shm is ab
       withSandbox(async (box, seen) => {
         await seeded(box, seen)
         const directory = await mkdtemp(join(otherFilesystem ?? "", "hush-backup-"))
+
         try {
           const target = join(directory, "hush.db")
           const result = await hostBackup(box, target)
@@ -498,16 +525,22 @@ describe("host commands and stale snapshots", () => {
       assert.strictEqual((await hostBackup(box, killed)).code, 0)
       // What an API backup killed mid-stream leaves in the state directory.
       await copyFile(killed, join(box.server.stateDir, "backup-killed.db"))
+
       const [wrap] = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ key_wrapped: Schema.Uint8Array })))(
         await rows(box, "SELECT key_wrapped FROM token_vaults"),
       )
+
       if (wrap === undefined) throw new Error("the seeded Token has no wrap")
+
       const holding = async () => {
         const held: Array<string> = []
+
         for (const name of await readdir(box.server.stateDir))
           if ((await readFile(join(box.server.stateDir, name))).includes(Buffer.from(wrap.key_wrapped))) held.push(name)
+
         return held.toSorted()
       }
+
       assert.include(await holding(), "backup-killed.db")
       assert.strictEqual((await hostRevoke(box, first.label)).code, 0)
       assert.deepStrictEqual(await holding(), [])

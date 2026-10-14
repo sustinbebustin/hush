@@ -7,6 +7,7 @@ import { passphraseSentinel, scan, valueSentinel } from "./leaks.js"
 import { sandbox, type Sandbox } from "./sandbox.js"
 
 const ready: ServerState = { _tag: "Ready" }
+
 const uninitialised: ServerState = {
   _tag: "Uninitialised",
   initCodeDigest: new Uint8Array(32),
@@ -24,6 +25,7 @@ const refusal = (
     allowedHosts,
     state,
   )
+
   return Result.isFailure(result) ? result.failure : undefined
 }
 
@@ -40,6 +42,7 @@ describe("Guard.check", () => {
 
   it("refuses a missing Host or one that is not an IP literal, localhost or an allowed host with HostNotAllowed", () => {
     assert.deepStrictEqual(refusal({ headers: { "content-type": "application/json" } })?._tag, "HostNotAllowed")
+
     for (const host of [
       "evil.test",
       "evil.test:7787",
@@ -54,6 +57,7 @@ describe("Guard.check", () => {
       const error = refusal({ headers: { ...json, host } })
       assert.deepStrictEqual(error?._tag === "HostNotAllowed" ? error.host : error, host, host)
     }
+
     const missing = refusal({ headers: {} })
     assert.deepStrictEqual(missing?._tag === "HostNotAllowed" ? missing.host : missing, null)
   })
@@ -78,10 +82,12 @@ describe("Guard.check", () => {
   it("refuses a POST whose trimmed, lowercased media type is not exactly application/json", () => {
     for (const contentType of [" Application/JSON ", "application/json"])
       assert.isUndefined(refusal({ headers: { ...json, "content-type": contentType } }), contentType)
+
     for (const contentType of ["application/json; charset=utf-8", "text/plain", "application/jsonx", ""]) {
       const error = refusal({ headers: { ...json, "content-type": contentType } })
       assert.deepStrictEqual(error?._tag === "UnsupportedContentType" ? error.received : error, contentType)
     }
+
     const missing = refusal({ headers: { host: "127.0.0.1" } })
     assert.deepStrictEqual(missing?._tag === "UnsupportedContentType" ? missing.received : missing, null)
   })
@@ -104,6 +110,7 @@ describe("Guard.check", () => {
       origin: "null",
       "content-type": "text/plain",
     }
+
     const options = { state: uninitialised }
     assert.strictEqual(refusal({ headers: everything }, options)?._tag, "HostNotAllowed")
     assert.strictEqual(refusal({ headers: { host: "evil.test", origin: "null" } })?._tag, "HostNotAllowed")
@@ -119,6 +126,7 @@ describe("Guard.check", () => {
 
 const withSandbox = async (test: (box: Sandbox) => Promise<void>) => {
   const box = await sandbox()
+
   try {
     await test(box)
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel]), [])
@@ -146,8 +154,10 @@ describe("the guard on a running Server", () => {
       const { token, references } = await box.seed({
         items: [{ kind: "api-credential", title: "Example", value: valueSentinel.text }],
       })
+
       const reference = references[0] ?? ""
       const before = await auditCount(box)
+
       const cases: ReadonlyArray<readonly [Record<string, string>, number, unknown]> = [
         [{ origin: "http://127.0.0.1:1" }, 403, { _tag: "BrowserRequestRefused" }],
         [{ host: "evil.test" }, 403, { _tag: "HostNotAllowed", host: "evil.test" }],
@@ -160,23 +170,27 @@ describe("the guard on a running Server", () => {
           { _tag: "UnsupportedContentType", received: "application/json; charset=utf-8" },
         ],
       ]
+
       for (const [headers, status, body] of cases) {
         const response = await resolve(box, token, reference, headers)
         assert.strictEqual(response.status, status, JSON.stringify(headers))
         assert.deepStrictEqual(await response.json(), body)
         assert.deepStrictEqual(corsHeaders(response), [])
       }
+
       const untyped = await box.fetch("/v1/secrets/resolve", {
         method: "POST",
         headers: { authorization: `Bearer ${token}` },
         body: JSON.stringify({ references: [reference] }),
       })
+
       assert.strictEqual(untyped.status, 415)
       assert.deepStrictEqual(await untyped.json(), { _tag: "UnsupportedContentType", received: null })
       assert.deepStrictEqual(await auditCount(box), before)
       // The request log holds method, path and status only for every refusal.
       const refused = (await box.calls()).filter(({ status }) => status === 403 || status === 415)
       assert.strictEqual(refused.length, cases.length + 1)
+
       for (const call of refused) assert.deepStrictEqual(call.path, "/v1/secrets/resolve")
     }))
 
@@ -202,14 +216,17 @@ describe("the guard on a running Server", () => {
           headers: { "content-type": "application/json", host },
           body: "x".repeat(1_048_577),
         })
+
         assert.strictEqual(response.status, 413, host)
         assert.strictEqual(await response.text(), "")
       }
+
       const exact = await box.fetch("/v1/admin/init", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "x".repeat(1_048_576),
       })
+
       assert.strictEqual(exact.status, 400)
     }))
 })

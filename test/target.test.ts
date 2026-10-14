@@ -11,16 +11,19 @@ const withFile = (file: Config.File): Config.Loaded => ({ path, file })
 
 const failure = (env: Record<string, string>, config: Config.Loaded = noFile) => {
   const result = Target.resolve(env, config)
+
   return Result.isFailure(result) ? result.failure : undefined
 }
 
 const reason = (env: Record<string, string>, config?: Config.Loaded) => {
   const error = failure(env, config)
+
   return error?._tag === "ServerUrlInvalid" ? error.reason : undefined
 }
 
 const problemOf = (env: Record<string, string>, config?: Config.Loaded) => {
   const error = failure(env, config)
+
   return error?._tag === "ConfigInvalid" ? error.problem : error
 }
 
@@ -70,10 +73,13 @@ describe("Target.resolve", () => {
 
   it("takes the proxy mode from HUSH_PROXY, then the config file, then auto", () => {
     const proxy = { HTTP_PROXY: "http://127.0.0.1:3128" }
+
     const routeOf = (env: Record<string, string>, config: Config.Loaded = noFile) => {
       const result = Target.resolve({ ...proxy, ...env }, config)
+
       return Result.isSuccess(result) ? Route.view(result.success.route) : undefined
     }
+
     assert.deepStrictEqual(routeOf({}), { _tag: "Proxy", proxy: "127.0.0.1:3128" })
     assert.deepStrictEqual(routeOf({ HUSH_PROXY: "direct" }), { _tag: "Direct", unused: "disabled" })
     assert.deepStrictEqual(routeOf({}, withFile({ proxy: "direct" })), { _tag: "Direct", unused: "disabled" })

@@ -9,6 +9,7 @@ import { onPty, sandbox, type Sandbox, type Seeded, type Tty } from "./sandbox.j
 
 const passphrase = passphraseSentinel.text
 const value = valueSentinel.text
+
 // The account the CLI runs as, which its rendered `hush token issue` commands name. Bun takes the user
 // name from `USER`, which the seam leaves unset unless a run passes `account`.
 const user = "agent"
@@ -20,6 +21,7 @@ const host = hostname()
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, passphraseSentinel]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -31,9 +33,11 @@ const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => vo
 // `seed`, with its Token and the Init code it used registered as sentinels.
 const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void, spec?: Parameters<Sandbox["seed"]>[0]) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
   const result = await box.seed(spec)
   seen({ kind: "token", text: result.token })
+
   return result
 }
 
@@ -47,8 +51,10 @@ const itemCount = async (box: Sandbox) => (await rows(box, "SELECT id FROM items
 
 const initVault = async (box: Sandbox, seen: (sentinel: Sentinel) => void, args: ReadonlyArray<string> = []) => {
   const code = await box.server.initCode()
+
   if (code === undefined) throw new Error("the Uninitialised Server wrote no init-code file")
   seen({ kind: "initCode", text: code })
+
   return box.run(["init", "--vault", "Personal", "--passphrase-stdin", ...args], {
     input: `${code}\n${passphrase}\n`,
     secretStdout: args.includes("--print"),
@@ -176,10 +182,12 @@ describe("hush init --vault", () => {
   it("refuses an already saved Token with TokenAlreadySaved before reading stdin or sending anything", () =>
     withSandbox(async (box, seen) => {
       await mkdir(configDir(box), { recursive: true, mode: 0o700 })
+
       const existing = {
         version: 1,
         tokens: [{ server: box.server.url, label: "old", token: `hush_${"A".repeat(43)}` }],
       }
+
       await writeFile(tokenFile(box), JSON.stringify(existing), { mode: 0o600 })
       const before = await snapshot(box)
       const code = await box.server.initCode()
@@ -201,6 +209,7 @@ describe("hush init --vault", () => {
     () =>
       withSandbox(async (box, seen) => {
         await chmod(box.home, 0o500)
+
         try {
           const before = await snapshot(box)
           const result = await initVault(box, seen)
@@ -221,11 +230,14 @@ describe("hush init --vault", () => {
   it("refuses an invalid Vault name with InvalidName before any request", () =>
     withSandbox(async (box, seen) => {
       const code = await box.server.initCode()
+
       if (code === undefined) throw new Error("no init-code file")
       seen({ kind: "initCode", text: code })
+
       const result = await box.run(["init", "--vault", "a/b", "--passphrase-stdin"], {
         input: `${code}\n${passphrase}\n`,
       })
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(
         result.stderr,
@@ -248,6 +260,7 @@ describe("hush create", () => {
   it("creates a three-Field login whose every Field resolves, in one create and one read-back", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const created = await box.run(
         [
           "create",
@@ -264,6 +277,7 @@ describe("hush create", () => {
         ],
         { input: `${value}\r\n` },
       )
+
       assert.strictEqual(created.code, 0, created.stderr)
       assert.deepStrictEqual(JSON.parse(created.stdout), {
         title: "GitHub",
@@ -274,6 +288,7 @@ describe("hush create", () => {
         verified: true,
       })
       assert.deepStrictEqual(created.calls, [call("/v1/items/create", 200), call("/v1/secrets/resolve", 200)])
+
       for (const [field, expected] of [
         ["password", value],
         ["username", "octo"],
@@ -282,6 +297,7 @@ describe("hush create", () => {
         const read = await box.run(["read", `hush://Personal/GitHub/${field}`], { secretStdout: true })
         assert.strictEqual(read.stdout, expected, field)
       }
+
       // Kind order, ids from nextIds, every sealed length a multiple of 64 plus 16: values are padded before sealing.
       assert.deepStrictEqual(await rows(box, "SELECT id, label, length(sealed) % 64 AS tail FROM fields ORDER BY id"), [
         { id: 1, label: "password", tail: 16 },
@@ -295,11 +311,14 @@ describe("hush create", () => {
       const { label, references } = await seeded(box, seen, {
         items: [{ kind: "api-credential", title: "Key", value, plain: { notes: "n" } }],
       })
+
       await box.run(["read", "hush://personal/key/credential"], { secretStdout: true })
+
       const audit = await rows(
         box,
         "SELECT actor, token_id, token_label, action, vaults, refs, detail, outcome, error, peer FROM audit WHERE actor = 'token' ORDER BY id",
       )
+
       const token = { actor: "token", token_id: 1, token_label: label, outcome: "ok", error: null, peer: "127.0.0.1" }
       assert.deepStrictEqual(audit, [
         {
@@ -349,10 +368,12 @@ describe("hush create", () => {
   it("leaves exactly one Item when two creates of one title race", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const results = await Promise.all([
         createStdin(box, apiCredential("Race"), "first value\n"),
         createStdin(box, apiCredential("race"), "second value\n"),
       ])
+
       assert.deepStrictEqual(results.map(({ code }) => code).toSorted(), [0, 1])
       assert.strictEqual(await itemCount(box), 1)
     }))
@@ -510,9 +531,11 @@ describe.skipIf(!onPty)("hush create at a terminal", () => {
       // One line, as a prompt takes; registered so the pty output is scanned for it.
       const typed = "fictional typed sentinel é✓ 9Zk"
       seen({ kind: "value", text: typed })
+
       const created = await box.run(["create", ...apiCredential("Typed"), "--prompt"], {
         tty: { keys: [{ after: "Value for credential: ", keys: `${typed}\r` }] },
       })
+
       assert.strictEqual(created.code, 0, created.stdout)
       assert.include(created.stdout, '"verified": true')
       assert.deepStrictEqual(
@@ -694,6 +717,7 @@ describe("errors refused by the Server", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       const before = await snapshot(box)
+
       for (const [token, reason] of [
         [undefined, "missing"],
         ["hush_short", "malformed"],
@@ -702,6 +726,7 @@ describe("errors refused by the Server", () => {
         assert.strictEqual(response.status, 401)
         assert.deepStrictEqual(await response.json(), { _tag: "TokenRejected", rejection: { reason } })
       }
+
       assert.deepStrictEqual(await snapshot(box), before)
     }))
 
@@ -790,6 +815,7 @@ describe("stored data that fails its integrity check, and an Audit Log that cann
         relabel.run("password", "password", "username")
         relabel.run("username", "username", "swap")
       })
+
       for (const field of ["password", "username"])
         await assertRefused(
           box,
@@ -806,8 +832,10 @@ describe("stored data that fails its integrity check, and an Audit Log that cann
       await box.inspect((db) =>
         db.run("CREATE TRIGGER t BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT, 'test'); END"),
       )
+
       const message =
         "The hush Server could not write its Audit Log, so it refused the request and returned nothing. Check its disk space and logs (`journalctl -u hush` or `docker logs`)."
+
       await assertRefused(box, () => box.run(["read", references[0] ?? ""]), message, [
         call("/v1/secrets/resolve", 503),
       ])
@@ -821,6 +849,7 @@ describe("stored data that fails its integrity check, and an Audit Log that cann
 // A create sent through the test proxy in `fault` mode, with the seeded Token (saved Tokens are keyed by origin).
 const viaProxy = async (box: Sandbox, seed: Seeded, fault: "drop-response" | "corrupt-response") => {
   box.proxy.mode(fault)
+
   return createStdin(box, apiCredential("K"), `${value}\n`, { HUSH_SERVER: box.proxy.url, HUSH_TOKEN: seed.token })
 }
 

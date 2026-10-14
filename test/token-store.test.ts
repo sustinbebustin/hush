@@ -78,9 +78,11 @@ describe("TokenStore.current", () => {
     withHome((home) =>
       Effect.gen(function* () {
         yield* writeTokens(home, entries)
+
         for (const value of ["", "  "]) {
           const choice = yield* TokenStore.current(target, { HOME: home, HUSH_TOKEN: value })
           assert.strictEqual(choice._tag, "Saved")
+
           if (choice._tag !== "Saved") return
           assert.strictEqual(choice.label, "me on box")
           assert.strictEqual(Redacted.value(choice.token), token(1))

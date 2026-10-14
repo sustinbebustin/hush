@@ -18,6 +18,7 @@ const rotatedSentinel: Sentinel = { kind: "value", text: rotated }
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, passphraseSentinel, rotatedSentinel]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -30,14 +31,18 @@ const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => vo
 // sentinels.
 const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
+
   const result = await box.seed({
     items: [
       { kind: "api-credential", title: "Stripe", value },
       { kind: "login", title: "GitHub", value },
     ],
   })
+
   seen({ kind: "token", text: result.token })
+
   return result
 }
 
@@ -54,11 +59,13 @@ describe("hush item edit --field", () => {
   it("replaces the concealed value, verified: the new value resolves and the old one no longer does", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const result = await admin(
         box,
         ["item", "edit", "personal", "stripe", "--field", "credential", "--stdin"],
         `${rotated}\n`,
       )
+
       assert.strictEqual(result.code, 0, result.stderr)
       const receipt = JSON.parse(result.stdout)
       assert.deepStrictEqual(Object.keys(receipt), ["vault", "title", "kind", "fields", "updatedAt", "verified"])
@@ -83,12 +90,14 @@ describe("hush item edit --field", () => {
   it("adds an absent plain Field to a login with its own id, and it resolves beside the password", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       // Everything after the Passphrase line is the value, newlines included; one trailing newline is stripped.
       const result = await admin(
         box,
         ["item", "edit", "Personal", "GitHub", "--field", "Notes", "--stdin"],
         `${value}\n`,
       )
+
       assert.strictEqual(result.code, 0, result.stderr)
       assert.deepStrictEqual(JSON.parse(result.stdout).fields, [
         { label: "password", concealed: true, ref: "hush://Personal/GitHub/password" },
@@ -111,6 +120,7 @@ const items = async (box: Sandbox) => ({
 })
 
 const rows = (box: Sandbox, query: string) => box.inspect((db) => db.query(query).all())
+
 const lastAudit = async (box: Sandbox) =>
   (await rows(box, "SELECT actor, action, vaults, refs, detail, outcome, error FROM audit ORDER BY id")).at(-1)
 
@@ -196,6 +206,7 @@ describe("a refused item edit changes nothing", () => {
   it("EditFlagsInvalid for both --field and --remove, or a value source with --remove, before any prompt or request", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       for (const flags of [
         ["--field", "notes", "--remove", "notes", "--stdin"],
         ["--remove", "notes", "--stdin"],
@@ -435,18 +446,23 @@ const sealedOf = (box: Sandbox, title: string, label: string) =>
     const row = db
       .query("SELECT f.sealed FROM fields f JOIN items i ON i.id = f.item_id WHERE i.title = ? AND f.label = ?")
       .get(title, label)
+
     if (typeof row !== "object" || row === null || !("sealed" in row) || !(row.sealed instanceof Uint8Array))
       throw new Error(`no sealed value for ${title}/${label}`)
+
     return Buffer.from(row.sealed)
   })
 
 // The database files that hold `bytes`, read raw.
 const stateFilesHolding = async (box: Sandbox, bytes: Buffer) => {
   const holding: Array<string> = []
+
   for (const name of ["hush.db", "hush.db-wal"]) {
     const content = await readFile(join(box.server.stateDir, name)).catch(() => Buffer.alloc(0))
+
     if (content.includes(bytes)) holding.push(name)
   }
+
   return holding
 }
 
@@ -458,11 +474,13 @@ describe("the WAL purge after Item writes: old sealed bytes are in neither hush.
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       const oldSeal = await sealedOf(box, "Stripe", "credential")
+
       const edited = await admin(
         box,
         ["item", "edit", "Personal", "Stripe", "--field", "credential", "--stdin"],
         rotated,
       )
+
       assert.strictEqual(edited.code, 0, edited.stderr)
       assert.deepStrictEqual(await stateFilesHolding(box, oldSeal), [])
       assert.strictEqual(await walBytes(box), 0)
@@ -484,10 +502,12 @@ describe("an Item write whose answer is lost", () => {
     withSandbox(async (box, seen) => {
       const seed = await seeded(box, seen)
       box.proxy.mode("drop-response")
+
       const result = await box.run(["item", "delete", "Personal", "Stripe", "--passphrase-stdin"], {
         input: `${passphrase}\n`,
         env: { HUSH_SERVER: box.proxy.url, HUSH_TOKEN: seed.token },
       })
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(
@@ -503,6 +523,7 @@ describe("item edit at a terminal", () => {
   it.skipIf(!onPty)("reads the Passphrase, then the value at `Value for credential: `", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
+
       const result = await box.run(["item", "edit", "Personal", "Stripe", "--field", "credential", "--prompt"], {
         tty: {
           keys: [
@@ -511,6 +532,7 @@ describe("item edit at a terminal", () => {
           ],
         },
       })
+
       assert.strictEqual(result.code, 0, result.stdout)
       assert.include(result.stdout, '"verified": true')
       assert.strictEqual((await read(box, "hush://Personal/Stripe/credential")).stdout, rotated)

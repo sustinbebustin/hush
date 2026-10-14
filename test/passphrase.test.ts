@@ -36,6 +36,7 @@ describe("Passphrase.policy", () => {
         const nfd = outcome(text.normalize("NFD"))
         assert.deepStrictEqual(outcome(text.normalize("NFC")), nfd)
         assert.deepStrictEqual(outcome(text.normalize("NFKC").normalize("NFD")), outcome(text.normalize("NFKC")))
+
         if (typeof nfd !== "string") assert.strictEqual(nfd.nfc, text.normalize("NFC"))
       }),
     )

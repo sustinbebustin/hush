@@ -69,6 +69,7 @@ export class ConfigInvalid extends Schema.TaggedError<ConfigInvalid>()("ConfigIn
 
 // What a refused command leaves untouched, as the catalogue words it: "nothing was <outcome>".
 export const Outcome = Schema.Literals(["created", "changed", "saved"])
+
 export type Outcome = typeof Outcome.Type
 
 // Private input that cannot be sent: not strict UTF-8, holding a NUL, or over 64 KiB.
@@ -105,6 +106,7 @@ export const AssignmentReason = Schema.Literals([
   "op-reference",
   ...Reference.invalidReasons.map((reason) => `reference-${reason}` as const),
 ])
+
 export type AssignmentReason = typeof AssignmentReason.Type
 
 // An assignment argument refused before any request. `position` is its 1-based place among the assignments; the
@@ -158,6 +160,7 @@ export const IssueProblem = Schema.Union([
   Schema.Struct({ reason: Schema.Literals(["no-grants", "keep-grants-needs-replace"]) }),
   Schema.Struct({ reason: Schema.Literal("ttl"), ttl: Schema.String }),
 ])
+
 export type IssueProblem = typeof IssueProblem.Type
 
 export class IssueFlagsInvalid extends Schema.TaggedError<IssueFlagsInvalid>()("IssueFlagsInvalid", {
@@ -169,6 +172,7 @@ export const AuditProblem = Schema.Struct({
   flag: Schema.Literals(["since", "limit", "before"]),
   input: Schema.String,
 })
+
 export type AuditProblem = typeof AuditProblem.Type
 
 export class AuditFlagsInvalid extends Schema.TaggedError<AuditFlagsInvalid>()("AuditFlagsInvalid", {
@@ -385,6 +389,7 @@ export interface TokenContext {
 // from another account.
 const replacementCommand = (issue: string, token: TokenContext | undefined): string => {
   if (token === undefined) return `\`${issue}\``
+
   switch (token.source) {
     case "env":
       return `\`${issue} --print\`, then put the printed Token in \`HUSH_TOKEN\``
@@ -397,6 +402,7 @@ const replacementCommand = (issue: string, token: TokenContext | undefined): str
 // With `replace`, it overwrites the Token saved there. Without a user name there is no `sudo -u` target to give.
 const savedFor = (issue: string, account: Account, replace: boolean) => {
   const save = `hush token save --stdin${replace ? " --replace" : ""}`
+
   return account.user === undefined
     ? `\`${issue} --print\`, then pipe the printed Token to \`${save}\` run as ${accountName(account)}`
     : `\`${issue} --print | sudo -u ${account.user} ${save}\``
@@ -470,6 +476,7 @@ const unreachableText = ({ url, address, route, reason }: ServerUnreachable): st
   const failed = `Could not reach the hush Server at ${url}`
   const nothing = "nothing was read or changed"
   const doctor = "`hush doctor` shows the route."
+
   switch (route._tag) {
     case "Direct":
       return `${failed} directly (${reason}); ${nothing}. Check ${directCheck}.${route.unused === "disabled" ? ` ${proxyDisabled}` : ""} ${doctor}`
@@ -538,10 +545,13 @@ export const render = (error: CliError, token?: TokenContext): string => {
       return `${error.input} is not a hush Reference (${error.reason}); nothing was read or run. References look like \`hush://Vault/Item/field\`.`
     case "NoToken": {
       const missing = `No hush Token is available for ${error.server} (\`HUSH_TOKEN\` unset, none saved for this Server); nothing was read.`
+
       if (token === undefined) return `${missing} A human can run \`hush token issue\`, or set \`HUSH_TOKEN\`.`
       const issue = `hush token issue --label "${accountLabel(token.account)}" ${token.flag} ${error.vault ?? "<vault>"}`
+
       return `${missing} A human can run \`${issue}\` as ${accountName(token.account)} on ${token.account.hostname} (the Token is saved to that account's token file), or from another account ${savedFor(issue, token.account, false)}, or set \`HUSH_TOKEN\`.`
     }
+
     case "IssueFlagsInvalid":
       return `${issueText(error)}; nothing was issued and no prompt was shown. See \`hush token issue --help\`.`
     case "AuditFlagsInvalid":

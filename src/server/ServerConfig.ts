@@ -65,8 +65,10 @@ const decodeStateDir = (text: string | undefined): string | undefined =>
 // A comma-separated env list, each item trimmed. Empty or unset is no list.
 const envList = (env: Env, name: string): Result.Result<ReadonlyArray<string>, ConfigInvalid> => {
   const text = env[name]
+
   if (text === undefined || text === "") return Result.succeed([])
   const items = text.split(",").map((item) => item.trim())
+
   return items.includes("")
     ? Result.fail(new ConfigInvalid({ source: name, reason: "the comma-separated list has an empty item" }))
     : Result.succeed(items)
@@ -93,6 +95,7 @@ const decodeAllowedHosts = (flags: ServerFlags, env: Env): Result.Result<Readonl
     Result.all(
       items.map((item) => {
         const host = item.toLowerCase()
+
         return hostnamePattern.test(host)
           ? Result.succeed(host)
           : Result.fail(
@@ -104,6 +107,7 @@ const decodeAllowedHosts = (flags: ServerFlags, env: Env): Result.Result<Readonl
 
 const decodeAllowAnyListen = (flags: ServerFlags, env: Env): Result.Result<boolean, ConfigInvalid> => {
   if (flags.allowAnyListen || env.HUSH_ALLOW_ANY_LISTEN === undefined) return Result.succeed(flags.allowAnyListen)
+
   return Result.mapError(
     Schema.decodeUnknownResult(AllowAnyListen)(env.HUSH_ALLOW_ANY_LISTEN),
     () => new ConfigInvalid({ source: "HUSH_ALLOW_ANY_LISTEN", reason: "expected true or false" }),
@@ -113,25 +117,30 @@ const decodeAllowAnyListen = (flags: ServerFlags, env: Env): Result.Result<boole
 // `--state-dir`, else `HUSH_STATE_DIR`, made absolute; the Server and the host commands both need it.
 const stateDir = (flag: string | undefined, env: Env): Result.Result<string, StateDirRequired> => {
   const given = decodeStateDir(flag) ?? decodeStateDir(env.HUSH_STATE_DIR)
+
   return given === undefined ? Result.fail(new StateDirRequired()) : Result.succeed(resolve(given))
 }
 
 const parse = (flags: ServerFlags, env: Env): Result.Result<ServerConfig, ConfigError> =>
   Result.gen(function* () {
     const directory = yield* stateDir(flags.stateDir, env)
+
     const port =
       flags.port !== undefined
         ? yield* decodePort("--port", flags.port)
         : env.HUSH_PORT !== undefined
           ? yield* decodePort("HUSH_PORT", env.HUSH_PORT)
           : defaultPort
+
     const listen = yield* decodeListen(flags, env)
     const allowAnyListen = yield* decodeAllowAnyListen(flags, env)
     const allowedHosts = yield* decodeAllowedHosts(flags, env)
     // The first address outside the allowed ranges, unless the Deployer opted in, so a LAN or
     // public bind is never accidental.
     const refused = allowAnyListen ? undefined : listen.find((address) => !Listen.allowed(address))
+
     if (refused !== undefined) return yield* Result.fail(new ListenNotAllowed({ ip: refused.ip }))
+
     return { stateDir: directory, port, listen, allowAnyListen, allowedHosts }
   })
 

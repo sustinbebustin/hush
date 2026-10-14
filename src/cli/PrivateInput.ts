@@ -48,7 +48,9 @@ export const source = (
   outcome: Outcome,
 ): Result.Result<PrivateSource, InputSourceRequired | InputSourceConflict> => {
   const [only, ...rest] = sources.filter((name) => flags[name])
+
   if (only === undefined) return Result.fail(new InputSourceRequired({ outcome }))
+
   return rest.length === 0 ? Result.succeed(only) : Result.fail(new InputSourceConflict({ outcome }))
 }
 
@@ -58,8 +60,10 @@ export const value = (
   { noun, outcome }: Wording,
 ): Result.Result<Redacted.Redacted<string>, InputEmpty | InvalidValue> => {
   const stripped = text.replace(/\r?\n$/, "")
+
   if (stripped.trim() === "") return Result.fail(new InputEmpty({ noun, outcome }))
   const problem = Value.problem(stripped)
+
   switch (problem) {
     case undefined:
       return Result.succeed(Redacted.make(stripped))
@@ -76,6 +80,7 @@ export const value = (
 export const stdin = (flag: "--stdin" | "--passphrase-stdin", { noun, outcome }: Wording) =>
   Effect.gen(function* () {
     if (process.stdin.isTTY) return yield* new StdinIsTerminal({ flag, outcome })
+
     return yield* Effect.tryPromise({
       try: () => Bun.stdin.bytes(),
       catch: () => new InputUnreadable({ noun, outcome }),
@@ -87,15 +92,19 @@ export const stdin = (flag: "--stdin" | "--passphrase-stdin", { noun, outcome }:
 const clipboard = ({ noun, outcome }: Wording) =>
   Effect.gen(function* () {
     if (process.platform !== "darwin") return yield* new ClipboardUnsupported({ outcome })
+
     const output = yield* Effect.tryPromise({
       try: async () => {
         const child = Bun.spawn(["pbpaste"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" })
         const [bytes, code] = await Promise.all([new Response(child.stdout).bytes(), child.exited])
+
         return { bytes, code }
       },
       catch: () => new InputUnreadable({ noun, outcome }),
     })
+
     if (output.code !== 0) return yield* new InputUnreadable({ noun, outcome })
+
     return output.bytes
   })
 
@@ -128,6 +137,7 @@ export const read = (request: {
     const { source: from, wording, prompt } = request
     const input = yield* bytesFrom(from, wording, prompt)
     const text = yield* Effect.fromResult(decode(input, wording))
+
     return yield* Effect.fromResult(value(text, wording))
   })
 

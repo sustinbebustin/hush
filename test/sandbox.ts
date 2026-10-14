@@ -162,6 +162,7 @@ const shellQuote = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`
 const underScript = (command: ReadonlyArray<string>, tty: Tty): readonly [string, ...Array<string>] => {
   const line = command.map(shellQuote).join(" ")
   const script = tty.sttyAfter === true ? `${line}; code=$?; ${shellQuote(hostTool("stty"))} -a; exit $code` : line
+
   return [hostTool("script"), "-qec", script, "/dev/null"]
 }
 
@@ -178,6 +179,7 @@ const spawnDetached = ({
 }): Promise<Result> =>
   new Promise((resolve, reject) => {
     const [file, ...args] = options.tty === undefined ? command : underScript(command, options.tty)
+
     // A new session (detached) has no controlling terminal, so `/dev/tty` fails as it does in CI.
     const child = spawn(file, args, {
       cwd: repository,
@@ -186,15 +188,19 @@ const spawnDetached = ({
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     })
+
     let stdout = ""
     let stderr = ""
     // Keystrokes not yet sent, and where in stdout the next one's prompt is looked for.
     let pending = options.tty?.keys ?? []
     let searchFrom = 0
+
     const type = () => {
       let step = pending[0]
+
       while (step !== undefined) {
         const found = stdout.indexOf(step.after, searchFrom)
+
         if (found === -1) return
         searchFrom = found + step.after.length
         child.stdin.write(step.keys)
@@ -202,6 +208,7 @@ const spawnDetached = ({
         step = pending[0]
       }
     }
+
     const chunks: Array<Buffer> = []
     const decoder = new TextDecoder()
     child.stdout.on("data", (chunk: Buffer) => {
@@ -210,18 +217,22 @@ const spawnDetached = ({
       type()
     })
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk))
+
     const timer = setTimeout(() => {
       if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL")
       reject(new Error(`${command.join(" ")} timed out after ${runTimeoutMs} ms\nstdout: ${stdout}`))
     }, runTimeoutMs)
+
     child.on("error", reject)
     child.on("close", (code, signal) => {
       clearTimeout(timer)
+
       if (code === null) reject(new Error(`${command.join(" ")} was killed by ${signal}`))
       else if (pending.length > 0) reject(new Error(`exited before the prompt ${pending[0]?.after}\nstdout: ${stdout}`))
       else resolve({ code, stdout: stdout + decoder.decode(), stdoutBytes: Buffer.concat(chunks), stderr })
     })
     child.stdin.on("error", () => {}) // the CLI may exit before reading input
+
     // On a pty, stdin stays open until the CLI exits: `script` would pass its end on as an end of input.
     if (options.tty === undefined) child.stdin.end(options.input ?? "")
     else child.on("exit", () => child.stdin.end())
@@ -233,7 +244,9 @@ const makeCli = async (): Promise<Cli & { readonly root: string; readonly bin: s
   const bin = join(root, "bin")
   await mkdir(home)
   await mkdir(bin)
+
   for (const command of ["sh", "cat"]) await symlink(`/bin/${command}`, join(bin, command))
+
   return {
     root,
     bin,
@@ -247,6 +260,7 @@ const makeCli = async (): Promise<Cli & { readonly root: string; readonly bin: s
 
 export const cli = async (): Promise<Cli> => {
   const { home, run, shell, tool, close } = await makeCli()
+
   return { home, run, shell, tool, close }
 }
 
@@ -305,15 +319,18 @@ const startServer = ({
 }): Promise<RunningServer> =>
   new Promise((resolve, reject) => {
     const command = ["run", "bin/hush", "server", "--state-dir", stateDir, "--port", String(port), ...args]
+
     const child = spawn(bun, command, {
       cwd: repository,
       env: { HOME: home },
       stdio: ["ignore", "pipe", "pipe"],
     })
+
     let stdout = ""
     let stderr = ""
     let started = false
     const exited = new Promise<void>((done) => child.on("close", () => done()))
+
     const fail = (reason: string) => {
       if (started) return
       started = true
@@ -321,6 +338,7 @@ const startServer = ({
       child.kill("SIGKILL")
       reject(new Error(`hush server did not start: ${reason}\nstdout: ${stdout}\nstderr: ${stderr}`))
     }
+
     const timer = setTimeout(() => fail(`no startup line within ${startTimeoutMs} ms`), startTimeoutMs)
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       stderr += chunk
@@ -329,8 +347,10 @@ const startServer = ({
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk
       record(chunk)
+
       if (started || !stdout.includes("\n")) return
       const line = Schema.decodeUnknownOption(StartupLine)(stdout.slice(0, stdout.indexOf("\n")))
+
       if (Option.isNone(line)) return fail("the first stdout line is not a startup line")
       started = true
       clearTimeout(timer)
@@ -347,6 +367,7 @@ const portBlock = 256
 const portBlocks = Math.floor((32_768 - firstPort) / portBlock)
 const poolId = Number(process.env.VITEST_POOL_ID)
 const blockStart = firstPort + ((Number.isInteger(poolId) ? poolId : 0) % portBlocks) * portBlock
+
 // A random start in the block keeps two suites running at once (agent worktrees) apart most of the time.
 let portsUsed = Math.floor(Math.random() * portBlock)
 
@@ -355,6 +376,7 @@ const startOnFreePort = async (start: (port: number) => Promise<RunningServer>):
   for (let attempt = 1; ; attempt += 1) {
     const port = blockStart + (portsUsed % portBlock)
     portsUsed += 1
+
     try {
       return await start(port)
     } catch (error) {
@@ -378,9 +400,11 @@ export const sandbox = async ({ serverArgs = [], port: requestedPort }: SandboxO
   await mkdir(serverHome)
   await mkdir(backupDir)
   let output = ""
+
   const record = (chunk: string) => {
     output += chunk
   }
+
   // Request logs of earlier Server processes, so `calls()` spans restarts.
   let previousStderr = ""
   const start = (port: number) => startServer({ stateDir, home: serverHome, port, args: serverArgs, record })
@@ -406,10 +430,13 @@ export const sandbox = async ({ serverArgs = [], port: requestedPort }: SandboxO
   // exits proves those lines have reached the log.
   const settledCalls = async (): Promise<ReadonlyArray<Call>> => {
     const running = server
+
     if (running === undefined) return parseCalls(previousStderr)
     const marker = `${syncPrefix}${(syncs += 1)}`
     await fetch(`${url}${marker}`).then((response) => response.body?.cancel())
+
     while (!running.stderr().includes(`"path":"${marker}"`)) await new Promise((wait) => setTimeout(wait, 5))
+
     return parseCalls(previousStderr + running.stderr()).filter(({ path }) => !path.startsWith(syncPrefix))
   }
 
@@ -431,8 +458,10 @@ export const sandbox = async ({ serverArgs = [], port: requestedPort }: SandboxO
             .map((name) => join(stateDir, name)),
           ...(await readdir(backupDir)).map((name) => join(backupDir, name)),
         ]
+
         return Promise.all(files.map(async (path) => ({ target, text: await readFile(path, "utf8") })))
       }
+
       case "proxy":
         return [{ target, text: proxy.log().join("\n") }]
       case "audit":
@@ -444,36 +473,47 @@ export const sandbox = async ({ serverArgs = [], port: requestedPort }: SandboxO
     const before = (await settledCalls()).length
     const result = await base.run(args, { ...options, env: { HUSH_SERVER: url, ...options.env } })
     cliOutput.push(options.secretStdout === true ? "" : result.stdout, result.stderr)
+
     if (args[0] === "audit") auditOutput.push(result.stdout)
+
     return { ...result, calls: (await settledCalls()).slice(before) }
   }
 
   // Each step must succeed: a seed that fails is a broken test setup, reported with the CLI's own message.
   const step = async (args: ReadonlyArray<string>, input: string) => {
     const result = await run(args, { input })
+
     if (result.code !== 0) throw new Error(`seed: hush ${args.join(" ")} failed: ${result.stderr}`)
+
     return result
   }
 
   const seed = async ({ vault = "Personal", label = "agent on box", items = [] }: Seed = {}): Promise<Seeded> => {
     const code = (await fileText(join(stateDir, "init-code")))[0]
+
     if (code === undefined) throw new Error("seed: the Server is not Uninitialised (no init-code file)")
     await step(["init", "--vault", vault, "--label", label, "--passphrase-stdin"], `${code}\n${seedPassphrase}\n`)
     const saved: unknown = JSON.parse((await fileText(join(base.home, ".config", "hush", "tokens.json")))[0] ?? "")
+
     const token = Schema.decodeUnknownSync(
       Schema.Struct({ tokens: Schema.Tuple([Schema.Struct({ server: Schema.Literal(url), token: Schema.String })]) }),
     )(saved).tokens[0].token
+
     const references: Array<string> = []
+
     for (const item of items) {
       const plain = Object.entries(item.plain ?? {}).flatMap(([name, text]) => [`--${name}`, text])
+
       const created = await step(
         ["create", item.kind, "--title", item.title, "--vault", vault, "--stdin", ...plain],
         `${item.value}\n`,
       )
+
       references.push(
         Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({ ref: Schema.String })))(created.stdout).ref,
       )
     }
+
     return { vault, label, token, references }
   }
 
@@ -505,6 +545,7 @@ export const sandbox = async ({ serverArgs = [], port: requestedPort }: SandboxO
       (await Promise.all(targets.map(observe))).flat(),
     inspect: async (f) => {
       const db = new Database(join(stateDir, "hush.db"))
+
       try {
         return f(db)
       } finally {

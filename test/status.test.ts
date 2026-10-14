@@ -6,6 +6,7 @@ import { cli, sandbox, type Sandbox } from "./sandbox.js"
 
 const withSandbox = async (test: (box: Sandbox) => Promise<void>) => {
   const box = await sandbox()
+
   try {
     await test(box)
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel]), [])
@@ -63,15 +64,19 @@ describe("hush status", () => {
   ] as const) {
     it(`fails UnexpectedResponse without echoing the body when the Server answers ${answer}`, async () => {
       let requests = 0
+
       const stub = Bun.serve({
         hostname: "127.0.0.1",
         port: 0,
         fetch: () => {
           requests += 1
+
           return response()
         },
       })
+
       const box = await cli()
+
       try {
         const url = `http://127.0.0.1:${stub.port}`
         const status = response().status
@@ -93,6 +98,7 @@ describe("hush status", () => {
 
   it("fails ServerUrlInvalid with exit 1 and contacts nothing when HUSH_SERVER is not an http origin", async () => {
     const box = await cli()
+
     try {
       const result = await box.run(["status"], { env: { HUSH_SERVER: "https://127.0.0.1:7787/path" } })
       assert.strictEqual(result.code, 1)

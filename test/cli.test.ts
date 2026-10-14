@@ -15,14 +15,18 @@ const isolated = async (args: ReadonlyArray<string>) => {
   listener.on("connection", () => {
     connections += 1
   })
+
   try {
     const config = join(box.home, ".config", "hush")
     await mkdir(config, { recursive: true })
+
     for (const file of ["tokens.json", "config.json"]) execFileSync("mkfifo", [join(config, file)])
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve))
     const address = listener.address()
+
     if (address === null || typeof address === "string") throw new Error("listener has no TCP address")
     const result = await box.run(args, { env: { HUSH_SERVER: `http://127.0.0.1:${address.port}` } })
+
     return { ...result, connections }
   } finally {
     listener.close()
@@ -35,6 +39,7 @@ describe("hush --help and --version", () => {
     const result = await isolated(["--help"])
     assert.strictEqual(result.code, 0)
     assert.strictEqual(result.stderr, "")
+
     for (const command of ["find", "create", "env", "token", "server"]) assert.include(result.stdout, command)
     assert.strictEqual(result.connections, 0)
   })

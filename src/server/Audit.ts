@@ -50,6 +50,7 @@ export const named = (input: string): ReadonlyArray<Name> =>
 // The address the request came from, as the listener saw it.
 export const peer: Effect.Effect<string | null, never, HttpServerRequest.HttpServerRequest> = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest
+
   return Option.getOrNull(request.remoteAddress)
 })
 
@@ -65,12 +66,14 @@ const coalesced = (entry: Entry, tokenId: number) =>
     if (entry.result.outcome !== "denied" || entry.result.error !== "TokenRejected") return false
     const sql = yield* SqlClient.SqlClient
     const since = new Date(Date.parse(entry.at) - coalesceMs).toISOString()
+
     const updated = yield* sql`
       UPDATE audit SET count = count + 1, last_at = ${entry.at}
       WHERE id = (SELECT id FROM audit WHERE token_id = ${tokenId} AND outcome = 'denied' AND error = ${entry.result.error}
         ORDER BY id DESC LIMIT 1)
         AND last_at > ${since}
       RETURNING id`
+
     return updated.length > 0
   })
 
@@ -82,10 +85,13 @@ export const write = (entry: Entry): Effect.Effect<void, AuditUnavailable, SqlCl
     const sql = yield* SqlClient.SqlClient
     const error = entry.result.outcome === "ok" ? null : entry.result.error
     const token = entry.actor.type === "token" ? entry.actor : undefined
+
     if (token !== undefined) {
       yield* sql`UPDATE tokens SET last_used_at = ${entry.at} WHERE id = ${token.id}`
+
       if (yield* coalesced(entry, token.id)) return
     }
+
     const detail = entry.detail === undefined ? null : JSON.stringify(entry.detail)
     yield* sql`
       INSERT INTO audit (at, last_at, actor, token_id, token_label, action, vaults, refs, detail, outcome, error, peer)

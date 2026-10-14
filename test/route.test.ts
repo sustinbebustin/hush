@@ -76,6 +76,7 @@ describe("Route.select", () => {
     const route = Route.select("auto", { HTTP_PROXY: "http://u:p@127.0.0.1:1" })
     assert.deepStrictEqual(view(route), { proxy: "http://u:p@127.0.0.1:1/", display: "127.0.0.1:1" })
     assert.notInclude(JSON.stringify(route), "u:p")
+
     for (const mode of ["direct", "auto"] as const)
       for (const proxy of ["http://u:p@127.0.0.1:1", "http://u:p@192.0.2.1:9"])
         assert.notInclude(JSON.stringify(Route.select(mode, { HTTP_PROXY: proxy })), "u:p")

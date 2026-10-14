@@ -8,6 +8,7 @@ const root = { uid: 0, gid: 0 }
 
 const notOwned = (input: Parameters<typeof StateDir.check>[0]) => {
   const result = StateDir.check(input)
+
   return Result.isFailure(result) ? StartupError.render(result.failure) : "owned"
 }
 

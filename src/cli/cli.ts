@@ -70,6 +70,7 @@ const withTarget = <A, R>(
         Effect.asVoid,
         Effect.catch((error) => {
           const token = flag === undefined ? undefined : TokenStore.context(LaunchEnv.snapshot, flag)
+
           return fail(
             isApiError(error) ? CliError.renderServer(error, target.origin, token) : CliError.render(error, token),
           )
@@ -328,6 +329,7 @@ const trailingCommand = Argument.String("command").pipe(
 
 const childCommand = (command: ReadonlyArray<string>) => {
   const decoded = decodeTrailingArguments(command)
+
   return Arr.isReadonlyArrayNonEmpty(decoded)
     ? Effect.succeed(decoded)
     : Effect.die(new Error("effect/cli passed an empty command despite Argument.atLeast(1)"))

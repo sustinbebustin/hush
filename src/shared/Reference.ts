@@ -19,8 +19,10 @@ export const Reference = {
   parse: (input: string): Result.Result<Reference, { readonly reason: InvalidReferenceReason }> => {
     if (!input.startsWith(SCHEME)) return Result.fail({ reason: "scheme" })
     const parts = input.slice(SCHEME.length).split("/")
+
     if (parts.length !== 3) return Result.fail({ reason: "segments" })
     const [vault = "", item = "", field = ""] = parts
+
     return Result.all({ vault: Name.parse(vault), item: Name.parse(item), field: Name.parse(field) })
   },
   format: (reference: Reference): string => `${SCHEME}${reference.vault}/${reference.item}/${reference.field}`,

@@ -31,8 +31,10 @@ const check: Effect.Effect<void, MetaInvalid | SqlError.SqlError | Schema.Schema
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const [row] = yield* Schema.decodeUnknownEffect(Rows)(yield* sql`SELECT * FROM meta WHERE id = 1`)
+
     if (row === undefined) return yield* new MetaInvalid({ field: "id" })
     const invalid = Object.entries(columns).find(([name, schema]) => !Schema.is(schema)(row[name]))
+
     if (invalid !== undefined) return yield* new MetaInvalid({ field: invalid[0] })
   })
 

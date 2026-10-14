@@ -15,18 +15,23 @@ const deploy = (name: string) => readFileSync(join(import.meta.dirname, "..", "d
 const unit = (text: string): ReadonlyMap<string, ReadonlyArray<readonly [string, string]>> => {
   const sections = new Map<string, Array<readonly [string, string]>>()
   let current: Array<readonly [string, string]> = []
+
   for (const line of text.split("\n").map((raw) => raw.trim())) {
     if (line === "" || line.startsWith("#") || line.startsWith(";")) continue
     const section = /^\[(.+)\]$/.exec(line)
+
     if (section?.[1] !== undefined) {
       current = []
       sections.set(section[1], current)
       continue
     }
+
     const at = line.indexOf("=")
+
     if (at === -1) throw new Error(`not a Key=Value line: ${line}`)
     current.push([line.slice(0, at), line.slice(at + 1)])
   }
+
   return sections
 }
 
@@ -49,6 +54,7 @@ const mountNamespaced = [
 describe("deploy/hush.service", () => {
   it("runs `hush server` as a DynamicUser with a 0700 state dir, no core dumps and restart on failure", () => {
     const directives = service(deploy("hush.service"))
+
     for (const [key, value] of [
       ["ExecStart", "/usr/local/bin/hush server"],
       ["Environment", "HUSH_STATE_DIR=/var/lib/hush"],
@@ -84,6 +90,7 @@ describe("deploy/hush-static-user.conf", () => {
     const dropIn = service(deploy("hush-static-user.conf"))
     const set = mountNamespaced.filter((key) => unitDirectives.has(key))
     assert.deepStrictEqual(set, mountNamespaced)
+
     for (const key of set) assert.strictEqual(dropIn.get(key), "no", key)
     assert.strictEqual(dropIn.get("User"), "hush")
     assert.strictEqual(dropIn.get("Group"), "hush")
@@ -93,6 +100,7 @@ describe("deploy/hush-static-user.conf", () => {
     const extra = [...service(deploy("hush-static-user.conf")).keys()].filter(
       (key) => !mountNamespaced.includes(key) && key !== "User" && key !== "Group",
     )
+
     assert.deepStrictEqual(extra, [])
   })
 })
@@ -119,21 +127,26 @@ const systemdAnalyze = spawnSync("systemd-analyze", ["--version"]).status === 0 
 // executable stand-ins for the commands they run, so it needs no root and installs nothing.
 const verify = (files: ReadonlyArray<readonly [string, string]>, units: ReadonlyArray<string>) => {
   const root = mkdtempSync(join(tmpdir(), "hush-units-"))
+
   try {
     cpSync("/usr/lib/systemd/system", join(root, "usr/lib/systemd/system"), { recursive: true, verbatimSymlinks: true })
+
     // verify only checks that each command is executable.
     for (const command of ["usr/local/bin/hush", "bin/sh", "bin/mkdir"]) {
       mkdirSync(join(root, command, ".."), { recursive: true })
       writeFileSync(join(root, command), "#!/bin/sh\n")
       chmodSync(join(root, command), 0o755)
     }
+
     for (const [path, source] of files) {
       mkdirSync(join(root, "etc/systemd/system", path, ".."), { recursive: true })
       writeFileSync(join(root, "etc/systemd/system", path), deploy(source))
     }
+
     const result = spawnSync("systemd-analyze", ["verify", "--man=no", `--root=${root}`, ...units], {
       encoding: "utf8",
     })
+
     return { status: result.status, output: `${result.stdout}${result.stderr}` }
   } finally {
     rmSync(root, { recursive: true, force: true })

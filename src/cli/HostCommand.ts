@@ -33,6 +33,7 @@ export type BackupOutcome =
 export const backup = (input: Location & { readonly file: string }): Effect.Effect<BackupOutcome, HostCommandError> =>
   Effect.flatMap(stateDir(input), (directory): Effect.Effect<BackupOutcome, Host.HostError> => {
     if (input.file === "-") return Effect.as(Host.backupToStdout(directory), { _tag: "Streamed" })
+
     return Effect.map(Host.backupToFile(directory, resolve(input.file)), (receipt) => ({ _tag: "Written", receipt }))
   })
 

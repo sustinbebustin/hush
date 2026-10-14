@@ -42,6 +42,7 @@ const Entry = Schema.Struct({ server: Schema.String, label: Schema.String, token
 const TokenFile = Schema.Struct({ version: Schema.Literal(1), tokens: Schema.Array(Entry) }).check(
   Schema.makeFilter(({ tokens }) => new Set(tokens.map(({ server }) => server)).size === tokens.length),
 )
+
 type TokenFile = typeof TokenFile.Type
 
 export const path = (env: EnvVars) => PrivateFile.path(env, "tokens.json")
@@ -53,7 +54,9 @@ const load = (file: string): Effect.Effect<TokenFile | undefined, TokenFileInval
       try: async () => {
         const { mode } = await stat(file)
         const bits = mode & 0o777
+
         if ((bits & 0o077) !== 0) return { _tag: "Insecure", mode: bits.toString(8) } as const
+
         return { _tag: "Read", text: await readFile(file, "utf8") } as const
       },
       catch: (cause) => cause,
@@ -69,6 +72,7 @@ const load = (file: string): Effect.Effect<TokenFile | undefined, TokenFileInval
             ),
       ),
     )
+
     switch (read._tag) {
       case "Missing":
         return undefined
@@ -78,6 +82,7 @@ const load = (file: string): Effect.Effect<TokenFile | undefined, TokenFileInval
         const json = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(read.text).pipe(
           Effect.mapError(() => new TokenFileInvalid({ path: file, problem: { reason: "not-json" } })),
         )
+
         return yield* Schema.decodeUnknownEffect(TokenFile)(json).pipe(
           Effect.mapError(() => new TokenFileInvalid({ path: file, problem: { reason: "invalid" } })),
         )
@@ -93,13 +98,16 @@ const loadForSave = (file: string, origin: string, replace: boolean, command: Sa
   Effect.gen(function* () {
     const previous = yield* load(file)
     const existing = previous?.tokens.find(({ server }) => server === origin)?.label
+
     if (existing !== undefined && !replace) return yield* new TokenAlreadySaved({ label: existing, command })
+
     return { previous, existing }
   })
 
 // Trimmed, with empty meaning unset.
 const fromEnv = (env: EnvVars): string | undefined => {
   const value = env.HUSH_TOKEN?.trim()
+
   return value === undefined || value === "" ? undefined : value
 }
 
@@ -131,6 +139,7 @@ export const current = (
 ): Effect.Effect<TokenChoice, NoToken | TokenEnvInvalid | TokenFileInvalid | TokenFileInsecure> =>
   Effect.gen(function* () {
     const variable = fromEnv(env)
+
     if (variable !== undefined)
       return yield* Result.match(Token.parse(variable), {
         onSuccess: (token) => Effect.succeed<TokenChoice>({ _tag: "Env", token: Redacted.make(token) }),
@@ -138,8 +147,10 @@ export const current = (
       })
     const file = path(env)
     const entry = (yield* load(file))?.tokens.find(({ server }) => server === target.origin)
+
     if (entry === undefined)
       return yield* new NoToken({ server: target.origin, ...(vault === undefined ? {} : { vault }) })
+
     return { _tag: "Saved", token: Redacted.make(entry.token), label: entry.label, path: file }
   })
 
@@ -153,10 +164,12 @@ export interface Health {
 
 export const health = (origin: string | undefined, env: EnvVars): Effect.Effect<Health> => {
   if (fromEnv(env) !== undefined) return Effect.succeed({ source: "env", file: "not-read" })
+
   return load(path(env)).pipe(
     Effect.map((file): Health => {
       if (file === undefined) return { source: "none", file: "missing" }
       const saved = file.tokens.some(({ server }) => server === origin)
+
       return { source: saved ? "file" : "none", file: "ok" }
     }),
     Effect.catchTags({
@@ -174,12 +187,16 @@ const writable = (file: string): Effect.Effect<void, FileWriteFailed> =>
         () => true,
         () => false,
       )
+
       if (exists) {
         await access(file, constants.W_OK)
         await access(dirname(file), constants.W_OK | constants.X_OK)
+
         return
       }
+
       let directory = dirname(file)
+
       for (;;) {
         const found = await stat(directory).then(
           () => true,
@@ -188,7 +205,9 @@ const writable = (file: string): Effect.Effect<void, FileWriteFailed> =>
             throw cause
           },
         )
+
         if (found) return await access(directory, constants.W_OK | constants.X_OK)
+
         if (dirname(directory) === directory) return
         directory = dirname(directory)
       }
@@ -219,6 +238,7 @@ export const checkSavable = (
     const file = path(env)
     const { existing } = yield* loadForSave(file, target.origin, replace, "issue")
     yield* writable(file)
+
     return { existing }
   })
 
@@ -235,6 +255,7 @@ export const save = (
   Effect.gen(function* () {
     const file = path(env)
     const { previous, existing: replaced } = yield* loadForSave(file, entry.server, replace, command)
+
     const next: TokenFile = {
       version: 1,
       tokens: [
@@ -242,7 +263,9 @@ export const save = (
         { server: entry.server, label: entry.label, token: Redacted.value(entry.token) },
       ],
     }
+
     yield* write(file, next)
+
     return { replaced, path: file }
   })
 
@@ -263,9 +286,12 @@ export const forget = (
     const file = path(env)
     const previous = yield* load(file)
     const entry = previous?.tokens.find(({ server }) => server === target.origin)
+
     if (previous === undefined || entry === undefined) return undefined
+
     if (label !== undefined && !sameLabel(entry.label, label)) return undefined
     yield* write(file, { version: 1, tokens: previous.tokens.filter((other) => other !== entry) })
+
     return { label: entry.label }
   })
 

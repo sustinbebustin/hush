@@ -41,6 +41,7 @@ const plainField = (kind: Kind, field: { readonly label: string; readonly value:
   Effect.gen(function* () {
     const label = yield* parse("field", field.label)
     const spec = Kind.spec(kind, Name.key(label))
+
     if (spec?.role !== "plain")
       return yield* new UnknownField({
         kind,
@@ -48,7 +49,9 @@ const plainField = (kind: Kind, field: { readonly label: string; readonly value:
         allowed: Kind.fields(kind).flatMap((candidate) => (candidate.role === "plain" ? [candidate.label] : [])),
       })
     const problem = field.value.trim() === "" ? "empty" : Value.problem(field.value)
+
     if (problem !== undefined) return yield* new InvalidValue({ field: spec.label, reason: problem })
+
     return { label: spec.label, value: Redacted.make(field.value) }
   })
 
@@ -60,11 +63,13 @@ export const run = (target: Target, input: CreateInput, env: EnvVars) =>
     const plain = yield* Effect.forEach(input.plain, (field) => plainField(input.kind, field))
     const choice = yield* TokenStore.current(target, env, vault)
     const primary = Kind.primary(input.kind)
+
     const secret = yield* PrivateInput.read({
       source,
       wording: { noun: `value for ${primary.label}`, outcome: "created" },
       prompt: `Value for ${primary.label}: `,
     })
+
     const fields = [{ label: primary.label, value: secret }, ...plain]
 
     const created = yield* Client.request(
@@ -84,6 +89,7 @@ export const run = (target: Target, input: CreateInput, env: EnvVars) =>
     const names = Result.isSuccess(stored) ? stored.success : { vault, item: title }
     const ref = Reference.format({ ...names, field: primary.label })
     const unverified = new CreationUnverified({ title: names.item, vault: names.vault, ref })
+
     if (
       Result.isFailure(stored) ||
       Name.key(names.vault) !== Name.key(vault) ||
@@ -93,23 +99,28 @@ export const run = (target: Target, input: CreateInput, env: EnvVars) =>
       return yield* unverified
 
     const references = fields.map(({ label }) => Reference.format({ ...names, field: label }))
+
     const resolved = yield* Client.request(
       Api,
       target,
       (client) => client.token.resolve({ payload: { references } }),
       choice.token,
     ).pipe(Effect.mapError(() => unverified))
+
     const matches =
       resolved.values.length === fields.length &&
       fields.every((field, index) => {
         const value = resolved.values[index]
+
         return (
           value !== undefined &&
           Redacted.value(value.value) === Redacted.value(field.value) &&
           value.concealed === (field.label === primary.label)
         )
       })
+
     if (!matches) return yield* unverified
+
     const receipt: Receipt = {
       title: names.item,
       vault: names.vault,
@@ -118,6 +129,7 @@ export const run = (target: Target, input: CreateInput, env: EnvVars) =>
       ref,
       verified: true,
     }
+
     return receipt
   })
 

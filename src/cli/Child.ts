@@ -19,18 +19,22 @@ const signalMessage = /^Process interrupted due to receipt of signal: '(SIG[A-Z0
 // code read is a signal death, anything else a generic failure whose details are suppressed.
 export const failure = (command: string, error: PlatformError.PlatformError): ChildError => {
   const { method, cause } = error.reason
+
   if (method === "spawn" && PlatformCause.code(cause) === "ENOENT") return new ChildNotFound({ command })
+
   if (method === "exitCode")
     return new ChildSignalled({
       command,
       signal: signalMessage.exec(PlatformCause.message(cause) ?? "")?.[1] ?? "unknown",
     })
+
   return new ChildFailed({ command })
 }
 
 const masked = <E>(stream: Stream.Stream<Uint8Array, E>, values: ReadonlyArray<string>) =>
   Stream.suspend(() => {
     const mask = Mask.make(values)
+
     return stream.pipe(
       Stream.map(mask.push),
       Stream.concat(Stream.sync(() => mask.end())),
@@ -42,12 +46,14 @@ const masked = <E>(stream: Stream.Stream<Uint8Array, E>, values: ReadonlyArray<s
 // values to mask; `Mask` keeps those of at least 8 bytes.
 export const run = (command: Arr.NonEmptyReadonlyArray<string>, env: Snapshot, conceal: ReadonlyArray<string>) => {
   const [file, ...args] = command
+
   return Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const masking = Mask.masked(conceal).length > 0
     const pipeStdout = masking && !(yield* stdio.stdoutIsTerminal)
     const pipeStderr = masking && !(yield* stdio.stderrIsTerminal)
+
     const handle = yield* spawner.spawn(
       ChildProcess.make(file, args, {
         env: { ...env },
@@ -58,14 +64,17 @@ export const run = (command: Arr.NonEmptyReadonlyArray<string>, env: Snapshot, c
         stderr: pipeStderr ? "pipe" : "inherit",
       }),
     )
+
     // Copies a piped stream to hush's own, masked; an inherited one has nothing to copy.
     const pump = (piped: boolean, from: typeof handle.stdout, to: ReturnType<typeof stdio.stdout>) =>
       Effect.forkScoped(piped ? Stream.run(masked(from, conceal), to) : Effect.void)
+
     const stdout = yield* pump(pipeStdout, handle.stdout, stdio.stdout())
     const stderr = yield* pump(pipeStderr, handle.stderr, stdio.stderr())
     yield* Fiber.join(stdout)
     yield* Fiber.join(stderr)
     const code: number = yield* handle.exitCode
+
     return code
   }).pipe(
     Effect.scoped,

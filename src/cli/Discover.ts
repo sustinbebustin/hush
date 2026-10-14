@@ -59,20 +59,27 @@ const secretsOf = (item: ListedItem): ReadonlyArray<SecretMatch> =>
 // with the queries it answers when several were asked; matches sorted by `ref`.
 export const search = (listing: ItemList, queries: ReadonlyArray<string>): FindResult => {
   const listed = itemsOf(listing)
+
   const searches = [...new Set(queries)].map((query) => {
     const items = listed.filter(({ title }) => Match.matches(query, title))
+
     return { query, items, suggested: items.length > 0 ? [] : Match.suggest(Match.terms(query), listed) }
   })
+
   const matches = new Map<string, SecretMatch & { readonly queries: Array<string> }>()
+
   for (const { query, items } of searches)
     for (const match of items.flatMap(secretsOf)) {
       const existing = matches.get(match.ref)
+
       if (existing === undefined) matches.set(match.ref, { ...match, queries: [query] })
       else existing.queries.push(query)
     }
+
   const suggestions = searches.flatMap(({ query, suggested }) =>
     suggested.flatMap(secretsOf).map((match) => ({ query, ...match })),
   )
+
   return {
     matches: [...matches.values()]
       .map(({ queries: answered, ...match }) => (searches.length === 1 ? match : { ...match, queries: answered }))
@@ -101,6 +108,7 @@ const list = (target: Target, vault: string | undefined, env: EnvVars) =>
   Effect.gen(function* () {
     const name = vault === undefined ? undefined : yield* Effect.fromResult(parseName("vault", vault))
     const choice = yield* TokenStore.current(target, env, name)
+
     return yield* Client.request(
       Api,
       target,

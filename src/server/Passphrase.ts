@@ -40,10 +40,13 @@ const MetaRow = Schema.Struct({
 // store, as is a read failure: both die.
 const storedMaster: Effect.Effect<Keys.StoredMaster, never, SqlClient.SqlClient> = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+
   const [row] = yield* Schema.decodeUnknownEffect(Schema.Array(MetaRow))(
     yield* sql`SELECT kdf_memory_kib, kdf_passes, kdf_parallelism, kdf_salt, mk_nonce, mk_wrapped FROM meta WHERE id = 1`,
   )
+
   if (row === undefined) return yield* Effect.die(new Error("a Passphrase request reached a Server without meta"))
+
   return {
     salt: new Uint8Array(row.kdf_salt),
     params: { memoryKib: row.kdf_memory_kib, passes: row.kdf_passes, parallelism: row.kdf_parallelism },
@@ -83,8 +86,10 @@ export const audited = <U, A, E extends ApiError = never, R = never>(request: {
     const attempts = yield* Attempts
     const nowMs = yield* Clock.currentTimeMillis
     const entered = Redacted.value(request.passphrase)
+
     // JSON can carry a lone surrogate, which has no UTF-8 form; no stored Passphrase has one.
     if (!entered.isWellFormed()) return yield* new InvalidValue({ field: "passphrase", reason: "not-utf8" })
+
     // One synchronous step before any await, so concurrent attempts cannot all take a free slot.
     const reserved = yield* Ref.modify(
       attempts,
@@ -94,12 +99,14 @@ export const audited = <U, A, E extends ApiError = never, R = never>(request: {
           onSuccess: (next) => [Result.succeed(next.failures), next],
         }),
     )
+
     if (Result.isFailure(reserved)) return yield* new BackoffActive(reserved.failure)
     const failures = reserved.success
 
     const locks = yield* Locks.Service
     const sql = yield* SqlClient.SqlClient
     const at = yield* Audit.now
+
     const record = (result: Audit.Outcome, scope: Scope = request.scope) =>
       Audit.write({
         at,
@@ -111,22 +118,28 @@ export const audited = <U, A, E extends ApiError = never, R = never>(request: {
         result,
         peer: request.peer,
       })
+
     // A wrong Passphrase keeps its reservation and is recorded `denied`; any other outcome means MK opened, which
     // clears the backoff.
     const wrong = Effect.gen(function* () {
       const incorrect = new PassphraseIncorrect({ retryAfterSeconds: Backoff.delaySeconds(failures) })
       yield* sql.withTransaction(record({ outcome: "denied", error: incorrect._tag }))
+
       return yield* incorrect
     })
+
     // After the check: the operation and its `ok` row in one transaction, or the failure recorded `error`.
     const afterCheck = (unlocked: U) =>
       Effect.gen(function* () {
         const recordOk = (done: A) => record({ outcome: "ok" }, request.recorded?.(done))
+
         const result =
           request.outsideTransaction === true
             ? yield* Effect.tap(request.operation(unlocked), (done) => sql.withTransaction(recordOk(done)))
             : yield* sql.withTransaction(Effect.tap(request.operation(unlocked), recordOk))
+
         if (request.checkpoint) yield* Database.checkpointCommitted
+
         return result
       }).pipe(
         Effect.catchIf(
@@ -135,14 +148,19 @@ export const audited = <U, A, E extends ApiError = never, R = never>(request: {
             Effect.andThen(sql.withTransaction(record({ outcome: "error", error: error._tag })), Effect.fail(error)),
         ),
       )
+
     const checked = Effect.gen(function* () {
       const stored = yield* storedMaster
+
       const unlocked = yield* locks.argon2
         .withPermit(request.unlock(entered, stored))
         .pipe(Effect.catchTag("KeyOpenFailed", () => wrong))
+
       yield* Ref.set(attempts, Backoff.succeed())
+
       return yield* afterCheck(unlocked)
     })
+
     return yield* request.exclusive ? locks.meta.withPermit(checked) : checked
   }).pipe(Effect.catchTag("SqlError", Effect.die))
 
@@ -165,9 +183,11 @@ export const change = (request: PassphraseChangeRequest, peer: string | null) =>
       stored,
     ): Effect.Effect<Result.Result<Keys.StoredMaster, InvalidValue | PassphraseInvalid>, Keys.KeyOpenFailed> => {
       const next = Redacted.value(request.newPassphrase)
+
       const checked: Result.Result<string, InvalidValue | PassphraseInvalid> = next.isWellFormed()
         ? Policy.policy(next)
         : Result.fail(new InvalidValue({ field: "newPassphrase", reason: "not-utf8" }))
+
       return Result.match(checked, {
         onFailure: (refused) => Effect.as(Keys.fromPassphrase(current, stored), Result.fail(refused)),
         onSuccess: (nfc) => Effect.map(Keys.rewrapMaster(current, nfc, stored), Result.succeed),
@@ -184,6 +204,7 @@ export const change = (request: PassphraseChangeRequest, peer: string | null) =>
             mk_nonce = ${rewrapped.wrap.nonce}, mk_wrapped = ${rewrapped.wrap.wrapped}, passphrase_changed_at = ${at}
           WHERE id = 1`.pipe(Effect.orDie)
         const receipt: PassphraseChangeReceipt = { changed: true }
+
         return receipt
       }),
   })

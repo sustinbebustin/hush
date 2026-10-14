@@ -51,11 +51,13 @@ describe("Kind", () => {
 
   it("lists every plain Field label of any Kind once, as `create` declares its flags", () => {
     assert.deepStrictEqual(Kind.plainLabels, ["username", "host", "port", "database", "notes"])
+
     const fromSpecs = new Set(
       Kind.all.flatMap((kind) =>
         Kind.fields(kind).flatMap((spec) => (spec.role === "plain" ? [String(spec.label)] : [])),
       ),
     )
+
     assert.deepStrictEqual(new Set(Kind.plainLabels), fromSpecs)
   })
 })

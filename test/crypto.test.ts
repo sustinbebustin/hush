@@ -51,6 +51,7 @@ describe("Argon2id", () => {
           `Argon2id derivation: ${elapsed.toFixed(0)} ms, rss +${((process.memoryUsage().rss - rssBefore) / 2 ** 20).toFixed(1)} MiB`,
         )
         assert.isBelow(elapsed, 2000)
+
         const expected = yield* nodeArgon2id({
           // The composed form: deriveKek hashes the NFC Passphrase.
           message: Buffer.from(`${COMPOSED_CAFE} passphrase`),
@@ -60,6 +61,7 @@ describe("Argon2id", () => {
           parallelism: 4,
           tagLength: 32,
         })
+
         const sealed = yield* Crypto.seal(kek, Crypto.lp("aad"), bytes("00".repeat(32)))
         const opened = yield* Crypto.open(yield* rawKey(expected), Crypto.lp("aad"), sealed)
         assert.strictEqual(hex(opened), "00".repeat(32))

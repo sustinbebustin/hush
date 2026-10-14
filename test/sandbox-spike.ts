@@ -51,16 +51,19 @@ const exec = (command: ReadonlyArray<string>, env: Readonly<Record<string, strin
 
 const flag = (args: ReadonlyArray<string>, name: string): string | undefined => {
   const index = args.indexOf(name)
+
   return index === -1 ? undefined : args[index + 1]
 }
 
 const hostTarget = (): string | undefined => {
   const key = `${process.platform}-${process.arch}`
+
   return key === "linux-x64" || key === "linux-arm64" || key === "darwin-arm64" ? key : undefined
 }
 
 const defaultBinary = () => {
   const target = hostTarget()
+
   return target === undefined ? undefined : join(repository, "dist", `hush-${target}`)
 }
 
@@ -89,6 +92,7 @@ interface Started {
 const startServer = async (root: string, name: string, ip: string): Promise<Started> => {
   const listen = ip === "127.0.0.1" ? [] : ["--listen", ip]
   const stateDir = join(root, name)
+
   const child = spawn(
     process.execPath,
     ["run", "bin/hush", "server", "--state-dir", stateDir, "--port", "0", ...listen],
@@ -97,18 +101,23 @@ const startServer = async (root: string, name: string, ip: string): Promise<Star
       stdio: ["ignore", "pipe", "pipe"],
     },
   )
+
   const stop = () => void child.kill("SIGTERM")
   let stderr = ""
   child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")))
+
   const line = await new Promise<string>((resolve, reject) => {
     let stdout = ""
+
     const timer = setTimeout(
       () => reject(new Error(`the ${name} Server printed no startup line within 15 s`)),
       startTimeoutMs,
     )
+
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8")
       const end = stdout.indexOf("\n")
+
       if (end !== -1) {
         clearTimeout(timer)
         resolve(stdout.slice(0, end))
@@ -119,22 +128,28 @@ const startServer = async (root: string, name: string, ip: string): Promise<Star
       reject(new Error(`the ${name} Server exited (${code}) before its startup line:\n${stderr}`))
     })
   })
+
   const startup = Schema.decodeUnknownSync(StartupLine)(line)
   const bound = startup.addresses.find((address) => address.ip === ip)
+
   if (bound === undefined) {
     stop()
     throw new Error(`the ${name} Server did not report a listener on ${ip}: ${line}`)
   }
+
   const url = `http://${hostPort(ip, bound.port)}`
   const home = join(root, `${name}-home`)
   const env = { HOME: home, HUSH_SERVER: url, HUSH_PROXY: "direct" }
   const hush = [process.execPath, "run", "bin/hush"]
+
   const succeeded = (ran: Ran, step: string) => {
     if (ran.code === 0) return ran
     stop()
     throw new Error(`${step} on the ${name} Server failed: ${ran.stderr}`)
   }
+
   const code = (await readFile(startup.initCodeFile, "utf8")).trim()
+
   const init = succeeded(
     await exec(
       [...hush, "init", "--vault", vault, "--label", "sandbox spike", "--print", "--passphrase-stdin"],
@@ -143,6 +158,7 @@ const startServer = async (root: string, name: string, ip: string): Promise<Star
     ),
     "hush init",
   )
+
   const token = Schema.decodeUnknownSync(InitReceipt)(init.stdout).token
   succeeded(
     await exec(
@@ -152,6 +168,7 @@ const startServer = async (root: string, name: string, ip: string): Promise<Star
     ),
     "creating the seed Item",
   )
+
   return { url, allowed: hostPort(ip, bound.port), token, stop }
 }
 
@@ -174,27 +191,37 @@ const exists = (path: string) =>
 
 const setup = async (args: ReadonlyArray<string>) => {
   const tailnet = flag(args, "--tailnet")
+
   if (tailnet !== undefined) {
     const parsed = Listen.parse("--listen", tailnet)
+
     if (Result.isFailure(parsed) || parsed.success.class !== "tailnet")
       throw new Error(`--tailnet ${tailnet} is not a tailnet address (100.64.0.0/10 or fd7a:115c:a1e0::/48)`)
   }
+
   const binary = flag(args, "--binary") ?? defaultBinary()
+
   if (flag(args, "--binary") === undefined) {
     const target = hostTarget()
+
     if (target === undefined) throw new Error(`no build target for ${process.platform}-${process.arch}; pass --binary`)
     console.log(`Building ${binary} ...`)
     const built = await exec(["sh", "scripts/build.sh", target], {})
+
     if (built.code !== 0) throw new Error(`the build failed:\n${built.stderr}`)
   }
+
   const root = await mkdtemp(join(tmpdir(), "hush-spike-"))
   const servers: Array<Started> = []
+
   const cleanup = async () => {
     for (const server of servers) server.stop()
     await rm(root, { recursive: true, force: true })
   }
+
   try {
     servers.push(await startServer(root, "loopback", "127.0.0.1"))
+
     if (tailnet !== undefined) servers.push(await startServer(root, "tailnet", tailnet))
   } catch (error) {
     await cleanup()
@@ -209,6 +236,7 @@ const setup = async (args: ReadonlyArray<string>) => {
     `Token file on this host (${tokenFile}): ${(await exists(tokenFile)) ? "present" : "absent, so `check` cannot tell denied from absent: save the spike Token first with `printf '%s\\n' <HUSH_TOKEN below> | HUSH_SERVER=<its url> hush token save --stdin`, and remove it afterwards with `HUSH_SERVER=<its url> hush token forget`"}`,
     "",
   ]
+
   for (const [index, server] of servers.entries())
     lines.push(
       `Server ${index + 1}: ${server.url}${index === 1 ? " (run `check` from a second tailnet node against this one)" : ""}`,
@@ -275,6 +303,7 @@ const doctor = async (
 ): Promise<{ readonly server: ServerCheck } | { readonly missing: string }> => {
   const ran = await exec([...hush, "doctor"], {})
   const decoded = Schema.decodeUnknownResult(DoctorReport)(ran.stdout)
+
   return Result.isSuccess(decoded) && decoded.success.server !== null
     ? { server: decoded.success.server }
     : { missing: `doctor gave no server report; ${failureReason(ran)}` }
@@ -282,6 +311,7 @@ const doctor = async (
 
 const checkVariant = async (variant: string, hush: ReadonlyArray<string>) => {
   const checked = await doctor(hush)
+
   if (process.env["HUSH_PROXY"] === "direct") {
     // The Server is expected to be unreachable on this route; the finding is the route doctor reports.
     report(
@@ -291,8 +321,10 @@ const checkVariant = async (variant: string, hush: ReadonlyArray<string>) => {
         ? checked.missing
         : `reached the command: doctor shows ${describeRoute(checked.server)}, reachable=${checked.server.reachable}`,
     )
+
     return
   }
+
   if ("missing" in checked) report("FAIL", `${variant} doctor`, checked.missing)
   else {
     const { server } = checked
@@ -301,6 +333,7 @@ const checkVariant = async (variant: string, hush: ReadonlyArray<string>) => {
       `${variant} doctor`,
       `${describeRoute(server)}, reachable=${server.reachable}, state=${server.state ?? "none"}`,
     )
+
     if (server.route !== "proxy")
       report("FAIL", `${variant} route`, `expected the sandbox's loopback proxy, got ${describeRoute(server)}`)
   }
@@ -319,14 +352,17 @@ const checkVariant = async (variant: string, hush: ReadonlyArray<string>) => {
     [...hush, "run", "--env", `SPIKE=${reference}`, "--", "sh", "-c", `test "$SPIKE" = "${seed.value}"`],
     {},
   )
+
   expect("run", ran, "the child saw the seed value")
 
   const title = `Spike ${variant} ${Date.now()}`
+
   const created = await exec(
     [...hush, "create", "api-credential", "--title", title, "--vault", vault, "--stdin"],
     {},
     `hush-spike-${crypto.randomUUID()}\n`,
   )
+
   expect("create --stdin", created, `created "${title}"`)
 }
 
@@ -337,6 +373,7 @@ const checkTokenFile = async () => {
     (bytes) => (bytes.length === 0 ? "reads as empty" : "readable"),
     (error: unknown) => PlatformCause.code(error) ?? "unreadable",
   )
+
   if (outcome === "ENOENT")
     report("INFO", "token file denied", `${tokenFile} is absent here: denied only if setup reported it present`)
   else report(outcome === "readable" ? "FAIL" : "PASS", "token file denied", `${tokenFile}: ${outcome}`)
@@ -345,6 +382,7 @@ const checkTokenFile = async () => {
 const check = async (args: ReadonlyArray<string>) => {
   const server = process.env["HUSH_SERVER"]
   const token = process.env["HUSH_TOKEN"]
+
   if (server === undefined || token === undefined)
     throw new Error("HUSH_SERVER and HUSH_TOKEN must reach this command from the Claude Code settings `env`")
   const proxy = process.env["HTTP_PROXY"] ?? process.env["http_proxy"]
@@ -357,6 +395,7 @@ const check = async (args: ReadonlyArray<string>) => {
 
   await checkVariant("bun", [process.execPath, "run", "bin/hush"])
   const binary = flag(args, "--binary") ?? defaultBinary()
+
   if (binary === undefined || !(await exists(binary)))
     report(
       "FAIL",
@@ -372,6 +411,7 @@ const check = async (args: ReadonlyArray<string>) => {
 
 const [mode, ...rest] = process.argv.slice(2)
 const main = mode === "setup" ? setup : mode === "check" ? check : undefined
+
 if (main === undefined) {
   console.error("usage: bun test/sandbox-spike.ts setup [--tailnet <ip>] [--binary <path>] | check [--binary <path>]")
   process.exitCode = 2

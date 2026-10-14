@@ -31,11 +31,14 @@ const load = (
     const sql = yield* SqlClient.SqlClient
     const [{ count }] = yield* Schema.decodeUnknownEffect(MetaCount)(yield* sql`SELECT count(*) AS count FROM meta`)
     const initCodeFile = InitCode.path(stateDir)
+
     if (count > 0) {
       yield* Meta.check
       yield* InitCode.remove(initCodeFile)
+
       return { _tag: "Ready" }
     }
+
     return { _tag: "Uninitialised", initCodeDigest: yield* InitCode.write(stateDir), initCodeFile }
   })
 

@@ -82,6 +82,7 @@ describe("CliError.render", () => {
 
   describe("the complete `hush token issue` command, by where the Token came from", () => {
     const account = { user: "agent", hostname: "devbox" }
+
     const notGranted = new VaultNotGranted({
       vault: "Work",
       label: "claude on devbox",
@@ -90,6 +91,7 @@ describe("CliError.render", () => {
         { vault: "Shared", access: "read" },
       ],
     })
+
     const readOnly = new CreateNotAllowed({ vault: "Shared", label: "claude on devbox" })
     const server = "http://127.0.0.1:7787"
 
@@ -141,6 +143,7 @@ describe("CliError.render", () => {
 
   describe("TokenRejected, per reason", () => {
     const server = "http://127.0.0.1:7787"
+
     const rejected = (rejection: TokenRejected["rejection"]) =>
       CliError.renderServer(new TokenRejected({ rejection }), server)
 

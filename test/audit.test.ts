@@ -15,6 +15,7 @@ const value = valueSentinel.text
 const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => void) => Promise<void>) => {
   const box = await sandbox()
   const sentinels: Array<Sentinel> = [valueSentinel, passphraseSentinel]
+
   try {
     await test(box, (sentinel) => sentinels.push(sentinel))
     assert.deepStrictEqual(scan(await box.observable(), sentinels), [])
@@ -26,9 +27,11 @@ const withSandbox = async (test: (box: Sandbox, seen: (sentinel: Sentinel) => vo
 // `seed`, with its Token and the Init code it used registered as sentinels.
 const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void, spec?: Parameters<Sandbox["seed"]>[0]) => {
   const code = await box.server.initCode()
+
   if (code !== undefined) seen({ kind: "initCode", text: code })
   const result = await box.seed(spec)
   seen({ kind: "token", text: result.token })
+
   return result
 }
 
@@ -48,6 +51,7 @@ const Entry = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
   peer: Schema.optionalKey(Schema.String),
 })
+
 type Entry = typeof Entry.Type
 
 const Page = Schema.fromJsonString(
@@ -58,6 +62,7 @@ const Page = Schema.fromJsonString(
 const audit = async (box: Sandbox, args: ReadonlyArray<string> = []) => {
   const result = await box.run(["audit", ...args, "--passphrase-stdin"], { input: `${passphrase}\n` })
   assert.strictEqual(result.code, 0, result.stderr)
+
   return { ...result, page: Schema.decodeUnknownSync(Page)(result.stdout) }
 }
 
@@ -69,7 +74,9 @@ const issuePrinted = async (box: Sandbox, args: ReadonlyArray<string>) => {
     input: `${passphrase}\n`,
     secretStdout: true,
   })
+
   assert.strictEqual(result.code, 0, result.stderr)
+
   return Schema.decodeUnknownSync(Printed)(result.stdout)
 }
 
@@ -145,11 +152,14 @@ const twoVaults = async (box: Sandbox, seen: (sentinel: Sentinel) => void) => {
   assert.strictEqual(created.code, 0, created.stderr)
   const { token } = await issuePrinted(box, ["--label", "worker", "--create", "Work"])
   seen({ kind: "token", text: token })
+
   const made = await box.run(["create", "api-credential", "--title", "Deploy", "--vault", "Work", "--stdin"], {
     input: `${value}\n`,
     env: { HUSH_TOKEN: token },
   })
+
   assert.strictEqual(made.code, 0, made.stderr)
+
   return token
 }
 
@@ -241,10 +251,12 @@ describe("hush audit filters and paging", () => {
       const token = await twoVaults(box, seen)
       const revoked = await box.run(["token", "revoke", "worker", "--passphrase-stdin"], { input: `${passphrase}\n` })
       assert.strictEqual(revoked.code, 0, revoked.stderr)
+
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const refused = await box.run(["token", "status"], { env: { HUSH_TOKEN: token } })
         assert.strictEqual(refused.code, 1)
       }
+
       const [newest] = (await audit(box, ["--label", "worker", "--limit", "1"])).page.entries
       assert.isDefined(newest)
       assert.deepStrictEqual(newest === undefined ? undefined : gist(newest), {
@@ -279,6 +291,7 @@ describe("what the Audit Log never records", () => {
   it("records no status, gate refusal or wrong Init code on a fresh Server, then the Init", () =>
     withSandbox(async (box, seen) => {
       const code = await box.server.initCode()
+
       if (code !== undefined) seen({ kind: "initCode", text: code })
       assert.strictEqual((await box.run(["status"])).code, 0)
       const gated = await post(box, "/v1/admin/vaults/list", { passphrase })
@@ -313,6 +326,7 @@ describe("what the Audit Log never records", () => {
 
       // Three free failures, then a delay: the fourth wrong Passphrase is evaluated, the fifth is not.
       const wrong = () => post(box, "/v1/admin/vaults/list", { passphrase: "wrong passphrase guess" })
+
       for (let attempt = 0; attempt < 4; attempt += 1) assert.strictEqual((await wrong()).status, 401)
       assert.strictEqual(await auditRows(box), rows + 4)
       const backoff = await wrong()
@@ -364,6 +378,7 @@ describe("Audit Log outcomes", () => {
       seen({ kind: "token", text: readerToken })
       const { token: briefToken } = await issuePrinted(box, ["--label", "brief", "--read", "Work", "--ttl", "1s"])
       seen({ kind: "token", text: briefToken })
+
       const refused = async (args: ReadonlyArray<string>, options: Parameters<Sandbox["run"]>[1]) =>
         assert.strictEqual((await box.run(args, options)).code, 1)
 
@@ -423,6 +438,7 @@ describe("Audit Log outcomes", () => {
 
 describe("hush audit refusals", () => {
   const nothingRead = "nothing was read and no prompt was shown. See `hush audit --help`."
+
   const flagCases: ReadonlyArray<readonly [ReadonlyArray<string>, string]> = [
     [
       ["--since", "yesterday"],
@@ -444,6 +460,7 @@ describe("hush audit refusals", () => {
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
       const rows = await auditRows(box)
+
       for (const [args, message] of flagCases) {
         const result = await box.run(["audit", ...args, "--passphrase-stdin"], { input: `${passphrase}\n` })
         assert.strictEqual(result.code, 1, args.join(" "))
@@ -451,6 +468,7 @@ describe("hush audit refusals", () => {
         assert.strictEqual(result.stderr, `hush: ${message}\n`)
         assert.deepStrictEqual(result.calls, [])
       }
+
       assert.strictEqual(await auditRows(box), rows)
     }))
 
@@ -477,10 +495,12 @@ describe("Audit Log leak check", () => {
   it("scans every hush audit output as the audit target, and the audit table holds no secret", () =>
     withSandbox(async (box, seen) => {
       const secrets: Array<Sentinel> = [valueSentinel, passphraseSentinel]
+
       const see = (sentinel: Sentinel) => {
         secrets.push(sentinel)
         seen(sentinel)
       }
+
       await seeded(box, see, { items: [{ kind: "login", title: "Mail", value, plain: { username: "me" } }] })
       const issued = await issuePrinted(box, ["--label", "reader", "--read", "Personal"])
       see({ kind: "token", text: issued.token })

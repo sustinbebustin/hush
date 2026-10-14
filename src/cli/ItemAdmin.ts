@@ -30,11 +30,14 @@ const editOf = (
   input: ItemEditInput,
 ): Result.Result<Edit, EditFlagsInvalid | InputSourceRequired | InputSourceConflict> => {
   const { field, remove, sources } = input
+
   if (field !== undefined && remove === undefined)
     return Result.map(PrivateInput.source(sources, "changed"), (from) => ({ _tag: "Set", label: field, from }))
   const anySource = sources.stdin || sources.prompt || sources.clipboard
+
   if (remove !== undefined && field === undefined && !anySource)
     return Result.succeed({ _tag: "Remove", label: remove })
+
   return Result.fail(new EditFlagsInvalid())
 }
 
@@ -44,18 +47,24 @@ const editSecrets = (edit: Edit, label: Name) => (command: string, source: Secre
   Effect.gen(function* () {
     if (edit._tag === "Remove") {
       const change: ItemChange = { remove: label }
+
       return { passphrase: yield* passphraseOnly(command, source), change }
     }
+
     const wording = { noun: `value for ${label}`, outcome: "changed" } as const
+
     if (source === "stdin" && edit.from === "stdin") {
       const piped = yield* PassphraseStdin.readWithValue(command)
       const value = yield* Effect.fromResult(PrivateInput.value(piped.value, wording))
       const change: ItemChange = { set: { label, value } }
+
       return { passphrase: Redacted.make(piped.passphrase), change }
     }
+
     const passphrase = yield* passphraseOnly(command, source)
     const value = yield* PrivateInput.read({ source: edit.from, wording, prompt: `Value for ${label}: ` })
     const change: ItemChange = { set: { label, value } }
+
     return { passphrase, change }
   })
 
@@ -96,6 +105,7 @@ export const itemEdit = (input: ItemEditInput) =>
   Effect.gen(function* () {
     const edit = yield* Effect.fromResult(editOf(input))
     const label = yield* parse("field", edit.label)
+
     return yield* passphraseCommand({
       command: "item edit",
       source: input.source,
@@ -108,12 +118,14 @@ export const itemEdit = (input: ItemEditInput) =>
               client.admin.itemsEdit({ payload: { passphrase, vault, item, change } }),
             ),
           )
+
           const fields = yield* Effect.forEach(edited.fields, (field) =>
             Effect.map(
               referenceOf(input.target, { vault: edited.vault, item: edited.title, field: field.label }),
               (ref) => ({ ...field, ref }),
             ),
           )
+
           return { ...edited, fields }
         }),
     })
@@ -155,13 +167,16 @@ export const itemRename = (input: ItemInput & { readonly newTitle: string }) =>
             client.admin.itemsRename({ payload: { passphrase, ...names } }),
           ),
         )
+
         const from = yield* answered(input.target, renamed.from)
         const to = yield* answered(input.target, renamed.to)
         const retired = Name.key(from) === Name.key(to) ? null : renamed.from
+
         const delivered: Retiring<typeof renamed & { readonly retired: string | null }> = {
           receipt: { ...renamed, retired },
           notices: retired === null ? [] : [retiredNotice(renamed.vault, retired)],
         }
+
         return delivered
       }),
   })
@@ -180,10 +195,12 @@ export const itemDelete = (input: ItemInput) =>
             client.admin.itemsDelete({ payload: { passphrase, ...names } }),
           ),
         )
+
         const delivered: Retiring<typeof deleted & { readonly retired: true }> = {
           receipt: { ...deleted, retired: true },
           notices: [retiredNotice(deleted.vault, deleted.title)],
         }
+
         return delivered
       }),
   })

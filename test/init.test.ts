@@ -9,6 +9,7 @@ import { onPty, sandbox, type Sandbox } from "./sandbox.js"
 const withSandbox = async (test: (box: Sandbox, seen: (code: string) => void) => Promise<void>) => {
   const box = await sandbox()
   const codes: Array<Sentinel> = []
+
   try {
     await test(box, (code) => codes.push({ kind: "initCode", text: code }))
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel, ...codes]), [])
@@ -23,7 +24,9 @@ const auditRows = (box: Sandbox) => box.inspect((db) => db.query("SELECT * FROM 
 
 const currentCode = async (box: Sandbox) => {
   const code = await box.server.initCode()
+
   if (code === undefined) throw new Error("the Uninitialised Server wrote no init-code file")
+
   return code
 }
 
@@ -35,10 +38,12 @@ describe("an Uninitialised Server", () => {
       seen(first)
       assert.match(first, /^[0-9a-f]{32}$/)
       assert.strictEqual(await mode(path), "600")
+
       const startup = box.server
         .output()
         .split("\n")
         .find((line) => line.includes('"listening"'))
+
       assert.strictEqual(JSON.parse(startup ?? "").initCodeFile, path)
       assert.include(box.server.output(), JSON.stringify(`cat ${path}`))
       await box.server.restart()
@@ -58,10 +63,12 @@ describe("an Uninitialised Server", () => {
       )
       await box.server.restart()
       assert.strictEqual(await box.server.initCode(), undefined)
+
       const startup = box.server
         .output()
         .split("\n")
         .findLast((line) => line.includes('"listening"'))
+
       assert.notProperty(JSON.parse(startup ?? ""), "initCodeFile")
       assert.strictEqual(JSON.parse((await box.run(["status"])).stdout).state, "ready")
     }))
@@ -73,6 +80,7 @@ describe("an Uninitialised Server", () => {
         headers: { "content-type": "application/json" },
         body: "{}",
       })
+
       assert.strictEqual(response.status, 409)
       assert.deepStrictEqual(await response.json(), { _tag: "NotInitialised" })
       assert.strictEqual((await box.fetch("/v1/status")).status, 200)
@@ -110,6 +118,7 @@ describe("hush init --passphrase-stdin", () => {
       const result = await box.run(["init", "--passphrase-stdin"], {
         input: ` ${code.toUpperCase()}\t \r\n${passphrase}\n`,
       })
+
       assert.strictEqual(result.code, 0)
       assert.strictEqual(result.stdout, `${JSON.stringify({ state: "ready" }, null, 2)}\n`)
       assert.strictEqual(
@@ -182,11 +191,13 @@ describe("hush init --passphrase-stdin", () => {
     withSandbox(async (box, seen) => {
       const code = await currentCode(box)
       seen(code)
+
       const response = await box.fetch("/v1/admin/init", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ initCode: code, passphrase: "short pass" }),
       })
+
       assert.strictEqual(response.status, 400)
       assert.deepStrictEqual(await response.json(), { _tag: "PassphraseInvalid", reason: "too-short" })
       await assertUninitialised(box, code)
@@ -291,9 +302,11 @@ describe.skipIf(!onPty)("hush init at a terminal", () => {
     withSandbox(async (box, seen) => {
       const code = await currentCode(box)
       seen(code)
+
       const result = await box.run(["init", "--vault", "Personal"], {
         tty: { keys: initKeys(code.toUpperCase(), passphrase, passphrase) },
       })
+
       assert.strictEqual(result.code, 0, result.stdout)
       assert.include(result.stdout, `"saved": ${JSON.stringify(join(box.home, ".config", "hush", "tokens.json"))}`)
       assert.include(result.stdout, "hush: Write the Passphrase down now")
@@ -306,6 +319,7 @@ describe.skipIf(!onPty)("hush init at a terminal", () => {
     withSandbox(async (box, seen) => {
       const code = await currentCode(box)
       seen(code)
+
       const result = await box.run(["init"], {
         tty: {
           keys: [
@@ -315,6 +329,7 @@ describe.skipIf(!onPty)("hush init at a terminal", () => {
           sttyAfter: true,
         },
       })
+
       assert.strictEqual(result.code, 1)
       assert.include(result.stdout, "hush: Cancelled at the prompt; nothing was changed.")
       assert.isTrue(sttySet(result.stdout, "icanon"), result.stdout)
@@ -338,9 +353,11 @@ describe.skipIf(!onPty)("hush init at a terminal", () => {
     withSandbox(async (box, seen) => {
       const code = await currentCode(box)
       seen(code)
+
       const result = await box.run(["init"], {
         tty: { keys: initKeys(code, passphrase, `${passphrase}x`) },
       })
+
       assert.strictEqual(result.code, 1)
       assert.include(result.stdout, "hush: The two new Passphrases differ; nothing was changed.")
       assert.deepStrictEqual(result.calls, [])

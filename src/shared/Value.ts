@@ -13,9 +13,13 @@ export type Problem = (typeof problems)[number]
 
 export const problem = (value: string): Problem | undefined => {
   if (value === "") return "empty"
+
   if (!value.isWellFormed()) return "not-utf8"
+
   if (value.includes("\0")) return "nul"
+
   if (Utf8.byteLength(value) > maxBytes) return "too-long"
+
   return undefined
 }
 

@@ -45,6 +45,7 @@ export const guardErrors = [
   BrowserRequestRefused,
   UnsupportedContentType,
 ] as const
+
 export type GuardError = HostNotAllowed | FunnelRequestRefused | BrowserRequestRefused | UnsupportedContentType
 
 // The Uninitialised gate refused a path other than `status` and `admin/init`.
@@ -105,6 +106,7 @@ export const Rejection = Schema.Union([
   Schema.Struct({ reason: Schema.Literals(["missing", "malformed", "unknown"]) }),
   Schema.Struct({ reason: Schema.Literals(["revoked", "expired"]), label: Schema.String, at: Schema.String }),
 ])
+
 export type Rejection = typeof Rejection.Type
 
 // A Token request refused by `TokenAuth` or by a handler's revocation re-check.
@@ -274,6 +276,7 @@ export const Damaged = Schema.Union([
   Schema.Struct({ what: Schema.Literal("vault-key"), vault: Schema.String }),
   Schema.Struct({ what: Schema.Literal("master-key") }),
 ])
+
 export type Damaged = typeof Damaged.Type
 
 // An AEAD or padding failure under a key that must be right: the file was modified or corrupted.
@@ -316,6 +319,7 @@ const classes = [
 ] as const
 
 export const ApiError = Schema.Union(classes)
+
 export type ApiError = typeof ApiError.Type
 
 // By class, not by shape: the CLI has its own `InvalidValue` and `InvalidReference` with the same tags, and a
@@ -329,5 +333,6 @@ const declaredStatus = SchemaAST.resolveAt<number>("httpApiStatus")
 
 export const httpStatus = (error: ApiError): number => {
   const declared = classes.find((errorClass) => error instanceof errorClass)
+
   return (declared === undefined ? undefined : declaredStatus(declared.ast)) ?? 500
 }

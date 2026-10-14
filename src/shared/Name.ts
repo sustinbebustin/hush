@@ -21,11 +21,17 @@ const makeKey = Brand.nominal<NameKey>()
 
 const invalidReason = (name: string): InvalidNameReason | undefined => {
   if (name === "") return "empty"
+
   if ([...name].length > MAX_CODE_POINTS) return "too-long"
+
   if (name.includes("/")) return "slash"
+
   if (control.test(name)) return "control"
+
   if (edgeWhitespace.test(name)) return "whitespace-edge"
+
   if (name.startsWith("-")) return "leading-dash"
+
   return undefined
 }
 
@@ -39,6 +45,7 @@ export const Name = {
   parse: (input: string): Result.Result<Name, { readonly reason: InvalidNameReason }> => {
     const name = input.normalize("NFC")
     const reason = invalidReason(name)
+
     return reason === undefined ? Result.succeed(makeName(name)) : Result.fail({ reason })
   },
   is,

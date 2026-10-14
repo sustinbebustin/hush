@@ -21,9 +21,11 @@ describe("OutputFile.createPrivate", () => {
     withDirectory((directory) =>
       Effect.gen(function* () {
         const previous = process.umask(0)
+
         const path = yield* OutputFile.createPrivate(directory, (suffix) => `backup-${suffix}.db`).pipe(
           Effect.ensuring(Effect.sync(() => process.umask(previous))),
         )
+
         assert.strictEqual(((yield* Effect.promise(() => stat(path))).mode & 0o777).toString(8), "600")
         assert.match(path, /backup-[0-9a-f]{16}\.db$/)
       }),
@@ -38,6 +40,7 @@ describe("OutputFile.place", () => {
         const failed = yield* OutputFile.place(join(directory, "out.db"), () => Effect.fail("write failed")).pipe(
           Effect.flip,
         )
+
         assert.strictEqual(failed, "write failed")
         assert.deepStrictEqual(yield* Effect.promise(() => readdir(directory)), [])
       }),

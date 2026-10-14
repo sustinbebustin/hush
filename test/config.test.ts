@@ -9,6 +9,7 @@ import { sandbox, type Sandbox } from "./sandbox.js"
 
 const withSandbox = async (test: (box: Sandbox, file: string) => Promise<void>) => {
   const box = await sandbox()
+
   try {
     await test(box, join(box.home, ".config", "hush", "config.json"))
     assert.deepStrictEqual(scan(await box.observable(), [valueSentinel, passphraseSentinel]), [])
@@ -124,6 +125,7 @@ describe("hush config", () => {
     withSandbox(async (box, file) => {
       await mkdir(join(box.home, ".config", "hush"), { recursive: true })
       await writeFile(file, "server = 1")
+
       for (const args of [["status"], ["config", "get"], ["config", "set", "proxy", "direct"]]) {
         const result = await box.run(args)
         assert.strictEqual(result.code, 1)
@@ -134,6 +136,7 @@ describe("hush config", () => {
         )
         assert.deepStrictEqual(result.calls, [])
       }
+
       assert.strictEqual(await text(file), "server = 1")
     }))
 
@@ -176,6 +179,7 @@ describe("hush config", () => {
       const parent = join(box.home, ".config")
       await mkdir(parent)
       await chmod(parent, 0o500)
+
       try {
         const result = await box.run(["config", "set", "proxy", "direct"])
         assert.strictEqual(result.code, 1)
