@@ -15,4 +15,4 @@ One deliberate exception: `hush server revoke` and `hush server backup` run on t
 
 ## Consequences
 
-The Passphrase crosses the wire on every admin request, which is one reason the Server stays on loopback and the tailnet (ADR-0006) and request bodies are never logged.
+The Passphrase crosses the wire on every admin request, which is one reason the Server stays on loopback and the tailnet (ADR-0005) and request bodies are never logged.

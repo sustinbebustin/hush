@@ -71,7 +71,7 @@ Permanently invalidating one Token so that it can open nothing; the normal way a
 _Avoid_: delete, disable
 
 **Audit Log**:
-The permanent record of every Token use and every Passphrase operation on a Server, readable only with the Passphrase and never containing secret values.
+The permanent record of every request made with a known Token, every Passphrase check, Init and every Revoke on the Server host, readable only with the Passphrase and never containing secret values.
 _Avoid_: history, access log, events
 
 ### Server state

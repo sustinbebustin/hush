@@ -2,7 +2,7 @@
 
 The Server keeps everything, the Audit Log included, in one SQLite file. Each Field value is padded and encrypted on its own under its Vault's key, bound to the row it belongs to. Names stay in plaintext, so `find`, case-insensitive uniqueness and the Audit Log work with plain SQL and need no key. One file also lets an Item create commit atomically with its audit row.
 
-A stolen copy of the file reveals every Vault, Item and Field name, every Kind and Token Label, and the whole Audit Log, including the names of deleted Items and when each was used. It also reveals each value's size, rounded up to 64 bytes. It never reveals a value. This is the default of owner call OC-2.
+A stolen copy of the file reveals every Vault, Item and Field name, every Kind and Token Label, and the whole Audit Log, including the names of deleted Items and when each was used. It also reveals each value's size, rounded up to 64 bytes. It never reveals a value.
 
 ## Considered Options
 

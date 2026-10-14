@@ -9,4 +9,4 @@ hush always runs as a Server plus the CLI, also when both share a machine; the C
 
 ## Consequences
 
-A resident process costs about 15-19 MB and starts in a few milliseconds. On Linux a sandboxed agent reaches a same-machine Server only through its sandbox's proxy, so the Server's `IP:port` goes in the sandbox allowlist; the CLI uses a loopback proxy automatically (ADR-0006).
+A resident process costs about 15-19 MB and starts in a few milliseconds. On Linux a sandboxed agent reaches a same-machine Server only through its sandbox's proxy, so the Server's `IP:port` goes in the sandbox allowlist; the CLI uses a loopback proxy automatically (ADR-0005).

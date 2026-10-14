@@ -1,18 +1,18 @@
 # Threat model for v1
 
-v1 names what it defends, what it only bounds, and what it leaves to tools outside hush, so the spec never promises isolation that only a sandbox or a separate OS user provides.
+v1 names what it defends, what it only bounds, and what it leaves to tools outside hush, so hush never promises isolation that only a sandbox or a separate OS user provides.
 
 ## Defended
 
-- **A stolen disk, backup or snapshot of the Server.** Values open only with the Passphrase or a Token (ADR-0002). Names, Kinds, Labels, the Audit Log and approximate value sizes are readable (ADR-0007).
+- **A stolen disk, backup or snapshot of the Server.** Values open only with the Passphrase or a Token (ADR-0002). Names, Kinds, Labels, the Audit Log and approximate value sizes are readable (ADR-0006).
 - **A misused Token, a hijacked agent included.** This is bounded damage, not prevention. The holder can do at most what the Token's Grants allow, can never change or delete existing Items or take a Retired title, can be stopped by Revoke or expiry, and every use is in the Audit Log. Agents are separated only when they hold different Tokens.
 - **Hostile web content and unauthenticated network peers.** A browser page, including one using DNS rebinding, is refused by the Origin, Content-Type and Host checks. A tailnet or LAN device without a credential gets only `status`, cannot Init without the Init code, and is slowed by the Passphrase backoff. Under userspace Tailscale every peer arrives on loopback, so only these checks and a Tailscale ACL protect the Server there.
 - **Accidental echo of a value into an agent transcript**, best effort: `run` and `env run` mask injected values on piped output.
 
 ## Trust boundaries
 
-- The Server host is trusted while it runs. Root there, live memory capture and core dumps are out of scope; such an attacker gets the keys of the requests it observes. Commands run on the Server host act on its files directly (ADR-0005).
-- On the CLI side the boundary is the OS user, not root. Anything running as the user who holds the token file or types the Passphrase, including an agent, can use that saved Token and can capture the Passphrase (through a fake `hush` earlier on PATH or an edited shell rc file). hush ships a tested recipe that separates agents: a per-agent `HUSH_TOKEN` with the token file denied in the agent's sandbox, or a separate Linux user. It is recommended, not required (owner call OC-4).
+- The Server host is trusted while it runs. Root there, live memory capture and core dumps are out of scope; such an attacker gets the keys of the requests it observes. Commands run on the Server host act on its files directly (ADR-0004).
+- On the CLI side the boundary is the OS user, not root. Anything running as the user who holds the token file or types the Passphrase, including an agent, can use that saved Token and can capture the Passphrase (through a fake `hush` earlier on PATH or an edited shell rc file). hush documents a recipe that separates agents (SECURITY.md): a per-agent `HUSH_TOKEN` with the token file denied in the agent's sandbox, or a separate Linux user. It is called supported once it has run in a real agent sandbox, and it is recommended, not required.
 
 ## Not defended in v1
 
