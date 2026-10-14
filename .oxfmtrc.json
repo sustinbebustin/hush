@@ -2,5 +2,5 @@
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "printWidth": 120,
   "semi": false,
-  "ignorePatterns": ["bun.lock", "CLAUDE.md", ".scratch"]
+  "ignorePatterns": ["bun.lock", "CLAUDE.md", ".scratch", "tools/oxlint/anti-slop"]
 }

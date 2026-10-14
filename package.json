@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "4.0.3",
+    "@oxlint/plugins": "1.86.0",
     "@types/bun": "1.4.3",
     "fast-check": "4.10.2",
     "oxfmt": "0.71.0",
