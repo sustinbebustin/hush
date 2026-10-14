@@ -74,7 +74,7 @@ const createStdin = (
   args: ReadonlyArray<string>,
   input: string | Uint8Array,
   env?: Record<string, string>,
-) => box.run(["create", ...args, "--stdin"], { input, ...(env === undefined ? {} : { env }) })
+) => box.run(["create", ...args, "--stdin"], { input, env })
 
 const apiCredential = (title: string, vault = "Personal") => ["api-credential", "--title", title, "--vault", vault]
 
@@ -615,15 +615,13 @@ describe.skipIf(process.platform !== "darwin")("hush create --clipboard on macOS
     }))
 })
 
-const post = (box: Sandbox, path: string, body: unknown, token?: string) =>
-  box.fetch(path, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-    },
-    body: JSON.stringify(body),
-  })
+const post = (box: Sandbox, path: string, body: Schema.Json, token?: string) => {
+  const headers = new Headers({ "content-type": "application/json" })
+
+  if (token !== undefined) headers.set("authorization", `Bearer ${token}`)
+
+  return box.fetch(path, { method: "POST", headers, body: JSON.stringify(body) })
+}
 
 describe("errors refused by the Server", () => {
   it("refuses a Vault outside the Grants with VaultNotGranted, naming the Grants and the closest one, audited denied", () =>
@@ -724,6 +722,7 @@ describe("errors refused by the Server", () => {
       ] as const) {
         const response = await post(box, "/v1/secrets/resolve", { not: "a resolve body" }, token)
         assert.strictEqual(response.status, 401)
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         assert.deepStrictEqual(await response.json(), { _tag: "TokenRejected", rejection: { reason } })
       }
 
@@ -736,6 +735,7 @@ describe("errors refused by the Server", () => {
       "/v1/secrets/resolve",
       { references: ["hush://Personal/Key/credential", "op://x"] },
       400,
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       { _tag: "InvalidReference", reference: "op://x", reason: "scheme" },
     ],
     [
@@ -751,6 +751,7 @@ describe("errors refused by the Server", () => {
         ],
       },
       400,
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       { _tag: "UnknownField", kind: "api-credential", field: "url", allowed: ["credential", "notes"] },
     ],
     [
@@ -758,6 +759,7 @@ describe("errors refused by the Server", () => {
       "/v1/items/create",
       { vault: "Personal", title: "K", kind: "login", fields: [{ label: "username", value: "u" }] },
       400,
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       { _tag: "FieldRequired", kind: "login", field: "password" },
     ],
     [
@@ -765,6 +767,7 @@ describe("errors refused by the Server", () => {
       "/v1/items/create",
       { vault: "Personal", title: "K", kind: "api-credential", fields: [{ label: "credential", value: "" }] },
       400,
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       { _tag: "InvalidValue", field: "credential", reason: "empty" },
     ],
     [
@@ -772,6 +775,7 @@ describe("errors refused by the Server", () => {
       "/v1/items/create",
       { vault: "Personal", title: "K", kind: "api-credential", fields: [{ label: "credential", value: "a\0b" }] },
       400,
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       { _tag: "InvalidValue", field: "credential", reason: "nul" },
     ],
     [
@@ -779,6 +783,7 @@ describe("errors refused by the Server", () => {
       "/v1/items/create",
       { vault: "Personal", title: "K", kind: "api-credential", fields: [{ label: "credential", value: "a\uD800" }] },
       400,
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       { _tag: "InvalidValue", field: "credential", reason: "not-utf8" },
     ],
     [
@@ -786,6 +791,7 @@ describe("errors refused by the Server", () => {
       "/v1/items/create",
       { vault: "Personal", title: "-K", kind: "api-credential", fields: [{ label: "credential", value: "v" }] },
       400,
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       { _tag: "InvalidName", what: "title", reason: "leading-dash" },
     ],
   ] as const)

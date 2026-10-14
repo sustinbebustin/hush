@@ -31,7 +31,7 @@ export const run = (request: InitRequest, peer: string | null) =>
       Effect.gen(function* () {
         const state = yield* Ref.get(current)
 
-        if (state._tag === "Ready") return yield* new AlreadyInitialised()
+        if (ServerState.$is("Ready")(state)) return yield* new AlreadyInitialised()
 
         if (!InitCode.matches(Redacted.value(request.initCode), state.initCodeDigest))
           return yield* new InitCodeInvalid()
@@ -68,9 +68,10 @@ export const run = (request: InitRequest, peer: string | null) =>
                 action: "init",
                 vaults: first === undefined ? [] : [first.vault],
                 references: [],
-                ...(first === undefined
-                  ? {}
-                  : { detail: { label: first.label, grants: [{ vault: first.vault, access: "read+create" }] } }),
+                detail:
+                  first === undefined
+                    ? undefined
+                    : { label: first.label, grants: [{ vault: first.vault, access: "read+create" }] },
                 result: { outcome: "ok" },
                 peer,
               })
@@ -82,7 +83,7 @@ export const run = (request: InitRequest, peer: string | null) =>
           // master key opens the wrap it just made, so `GrantKeyOpenFailed` cannot happen here either.
           .pipe(Effect.catchTag(["SqlError", "GrantKeyOpenFailed"], Effect.die))
 
-        yield* Ref.set(current, { _tag: "Ready" })
+        yield* Ref.set(current, ServerState.Ready())
         // Init has committed, so a file that cannot be deleted is logged, not reported; a Ready start retries.
         yield* InitCode.remove(state.initCodeFile).pipe(
           Effect.catch((error) => Log.write({ event: "init-code-delete-failed", path: error.path, code: error.code })),

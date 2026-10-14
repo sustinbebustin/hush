@@ -2,17 +2,16 @@ import { assert, describe, it } from "@effect/vitest"
 import { Result } from "effect"
 
 import { Guard } from "../src/server/Guard.js"
-import type { ServerState } from "../src/server/ServerState.js"
+import { ServerState } from "../src/server/ServerState.js"
 import { passphraseSentinel, scan, valueSentinel } from "./leaks.js"
 import { sandbox, type Sandbox } from "./sandbox.js"
 
-const ready: ServerState = { _tag: "Ready" }
+const ready = ServerState.Ready()
 
-const uninitialised: ServerState = {
-  _tag: "Uninitialised",
+const uninitialised = ServerState.Uninitialised({
   initCodeDigest: new Uint8Array(32),
   initCodeFile: "/var/lib/hush/init-code",
-}
+})
 
 const json = { host: "127.0.0.1:7787", "content-type": "application/json" }
 
@@ -159,14 +158,20 @@ describe("the guard on a running Server", () => {
       const before = await auditCount(box)
 
       const cases: ReadonlyArray<readonly [Record<string, string>, number, unknown]> = [
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         [{ origin: "http://127.0.0.1:1" }, 403, { _tag: "BrowserRequestRefused" }],
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         [{ host: "evil.test" }, 403, { _tag: "HostNotAllowed", host: "evil.test" }],
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         [{ host: "evil.test", origin: "null" }, 403, { _tag: "HostNotAllowed", host: "evil.test" }],
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         [{ "tailscale-funnel-request": "?1" }, 403, { _tag: "FunnelRequestRefused" }],
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         [{ "content-type": "text/plain" }, 415, { _tag: "UnsupportedContentType", received: "text/plain" }],
         [
           { "content-type": "application/json; charset=utf-8" },
           415,
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
           { _tag: "UnsupportedContentType", received: "application/json; charset=utf-8" },
         ],
       ]
@@ -185,6 +190,7 @@ describe("the guard on a running Server", () => {
       })
 
       assert.strictEqual(untyped.status, 415)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await untyped.json(), { _tag: "UnsupportedContentType", received: null })
       assert.deepStrictEqual(await auditCount(box), before)
       // The request log holds method, path and status only for every refusal.
@@ -198,6 +204,7 @@ describe("the guard on a running Server", () => {
     withSandbox(async (box) => {
       const response = await box.fetch("/nope", { headers: { host: "evil.test" } })
       assert.strictEqual(response.status, 403)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await response.json(), { _tag: "HostNotAllowed", host: "evil.test" })
     }))
 

@@ -355,6 +355,7 @@ describe("items/list errors", () => {
       })
 
       assert.strictEqual(response.status, 400)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await response.json(), { _tag: "InvalidName", what: "vault", reason: "slash" })
       assert.deepStrictEqual(await snapshot(box), before)
       const row = await lastAudit(box)

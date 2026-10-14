@@ -1,17 +1,19 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Redacted } from "effect"
 
-import { Route } from "../src/cli/Route.js"
+import { Route, UnusedProxy } from "../src/cli/Route.js"
 
 // What a route shows and where it sends requests, without the redacted proxy URL.
-const view = (route: Route) => {
-  switch (route._tag) {
-    case "Direct":
-      return route.unused === "none" ? { direct: "none" } : { direct: route.unused, display: route.proxyDisplay }
-    case "Proxy":
-      return { proxy: Redacted.value(route.proxy).href, display: route.proxyDisplay }
-  }
-}
+const view = (route: Route) =>
+  Route.$match(route, {
+    Direct: ({ unused }) =>
+      UnusedProxy.$match(unused, {
+        None: () => ({ direct: "none" }),
+        NotLoopback: ({ proxyDisplay }) => ({ direct: "not-loopback", display: proxyDisplay }),
+        Disabled: ({ proxyDisplay }) => ({ direct: "disabled", display: proxyDisplay }),
+      }),
+    Proxy: ({ proxy, proxyDisplay }) => ({ proxy: Redacted.value(proxy).href, display: proxyDisplay }),
+  })
 
 describe("Route.select", () => {
   it("goes direct with nothing unused when no proxy is set", () => {

@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, type Types } from "effect"
 
 import type { Access } from "../shared/Access.js"
 import { Api, type ItemList } from "../shared/Api.js"
@@ -80,12 +80,15 @@ export const search = (listing: ItemList, queries: ReadonlyArray<string>): FindR
     suggested.flatMap(secretsOf).map((match) => ({ query, ...match })),
   )
 
-  return {
+  const result: Types.Mutable<FindResult> = {
     matches: [...matches.values()]
       .map(({ queries: answered, ...match }) => (searches.length === 1 ? match : { ...match, queries: answered }))
       .toSorted((a, b) => byText(a.ref, b.ref)),
-    ...(suggestions.length === 0 ? {} : { suggestions }),
   }
+
+  if (suggestions.length > 0) result.suggestions = suggestions
+
+  return result
 }
 
 // Every listed Vault with its Access, by name, and every Item with all its Fields, by Vault then title.

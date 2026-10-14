@@ -2,20 +2,20 @@ import { assert, describe, it } from "@effect/vitest"
 import { Result } from "effect"
 import * as fc from "fast-check"
 
+import { InvalidValue, StdinFramingInvalid } from "../src/cli/CliError.js"
 import { PassphraseStdin } from "../src/cli/PassphraseStdin.js"
 
 const initLines = ["the Init code", "the new Passphrase"] as const
 
-const frame = (input: string | Uint8Array): Record<string, unknown> =>
-  Result.match(
-    PassphraseStdin.frame(typeof input === "string" ? new TextEncoder().encode(input) : input, "init", initLines),
-    {
-      onSuccess: (lines) => ({ lines }),
-      onFailure: (error) => ({ ...error }),
-    },
-  )
+// Each outcome as a plain object, so an error compares by its fields.
+const frameBytes = (input: Uint8Array) =>
+  Result.match(PassphraseStdin.frame(input, "init", initLines), {
+    onSuccess: (lines) => ({ lines }),
+    onFailure: (error) => ({ ...error }),
+  })
 
-const framingInvalid = { _tag: "StdinFramingInvalid", command: "init", expected: initLines }
+const frame = (input: string) => frameBytes(new TextEncoder().encode(input))
+const framingInvalid = { ...new StdinFramingInvalid({ command: "init", expected: initLines }) }
 
 describe("PassphraseStdin.frame", () => {
   it("reads one secret per line, stripping one \\n or \\r\\n from each", () => {
@@ -42,11 +42,8 @@ describe("PassphraseStdin.frame", () => {
   })
 
   it("is InvalidValue not-utf8 for bytes that are not UTF-8, before framing", () => {
-    assert.deepStrictEqual(frame(new Uint8Array([0x63, 0x0a, 0xff, 0x0a])), {
-      _tag: "InvalidValue",
-      noun: "input on stdin",
-      reason: "not-utf8",
-      outcome: "changed",
+    assert.deepStrictEqual(frameBytes(new Uint8Array([0x63, 0x0a, 0xff, 0x0a])), {
+      ...new InvalidValue({ noun: "input on stdin", reason: "not-utf8", outcome: "changed" }),
     })
   })
 
@@ -67,14 +64,14 @@ describe("PassphraseStdin.frame", () => {
   })
 })
 
-const frameOne = (input: string): Record<string, unknown> =>
+const frameOne = (input: string) =>
   Result.match(PassphraseStdin.frameOne(new TextEncoder().encode(input), "vault list"), {
     onSuccess: (line) => ({ line }),
     onFailure: (error) => ({ ...error }),
   })
 
 describe("PassphraseStdin.frameOne", () => {
-  const oneInvalid = { _tag: "StdinFramingInvalid", command: "vault list", expected: ["the Passphrase"] }
+  const oneInvalid = { ...new StdinFramingInvalid({ command: "vault list", expected: ["the Passphrase"] }) }
 
   it("reads the Passphrase as the one line, with or without its line ending", () => {
     assert.deepStrictEqual(frameOne("pass phrase\r\n"), { line: "pass phrase" })
@@ -88,7 +85,7 @@ describe("PassphraseStdin.frameOne", () => {
   })
 })
 
-const frameWithValue = (input: string): Record<string, unknown> =>
+const frameWithValue = (input: string) =>
   Result.match(PassphraseStdin.frameWithValue(new TextEncoder().encode(input), "item edit"), {
     onSuccess: (framed) => ({ ...framed }),
     onFailure: (error) => ({ ...error }),
@@ -105,9 +102,7 @@ describe("PassphraseStdin.frameWithValue", () => {
 
   it("is StdinFramingInvalid, naming the Passphrase and the value, for empty stdin", () => {
     assert.deepStrictEqual(frameWithValue(""), {
-      _tag: "StdinFramingInvalid",
-      command: "item edit",
-      expected: ["the Passphrase", "the value"],
+      ...new StdinFramingInvalid({ command: "item edit", expected: ["the Passphrase", "the value"] }),
     })
   })
 })

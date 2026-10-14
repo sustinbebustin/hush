@@ -1,4 +1,4 @@
-import { Effect, Redacted, Result, Schema } from "effect"
+import { Effect, Match, Predicate, Redacted, Result, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 
 import { Access } from "../shared/Access.js"
@@ -179,9 +179,14 @@ export interface Scope {
 
 // Refusals about what the Token may do are `denied`; every other failure after authentication is `error`.
 const outcomeOf = (error: ApiError): Audit.Outcome =>
-  error._tag === "TokenRejected" || error._tag === "VaultNotGranted" || error._tag === "CreateNotAllowed"
-    ? { outcome: "denied", error: error._tag }
-    : { outcome: "error", error: error._tag }
+  Match.value(error).pipe(
+    Match.withReturnType<Audit.Outcome>(),
+    Match.tag("TokenRejected", "VaultNotGranted", "CreateNotAllowed", ({ _tag }) => ({
+      outcome: "denied",
+      error: _tag,
+    })),
+    Match.orElse(({ _tag }) => ({ outcome: "error", error: _tag })),
+  )
 
 // Runs `operation` in one transaction that commits with its `ok` audit row and `last_used_at`, so a result is
 // returned only once it is recorded. A failure is recorded in a transaction of its own, then returned; if
@@ -205,14 +210,14 @@ export const audited = <A, E extends ApiError>(request: {
         action,
         vaults: scope.vaults,
         references: scope.references,
-        ...(scope.detail === undefined ? {} : { detail: scope.detail }),
+        detail: scope.detail,
         result,
         peer,
       })
 
     return yield* sql.withTransaction(Effect.tap(operation, () => record({ outcome: "ok" }))).pipe(
       Effect.catchIf(
-        (error): error is Exclude<E, AuditUnavailable> => error._tag !== "AuditUnavailable",
+        (error): error is Exclude<E, AuditUnavailable> => !Predicate.isTagged(error, "AuditUnavailable"),
         (error) => Effect.andThen(sql.withTransaction(record(outcomeOf(error))), Effect.fail(error)),
       ),
     )
@@ -311,7 +316,7 @@ export const revoke = (request: TokenRevokeRequest, peer: string | null) => {
     passphrase: request.passphrase,
     action: "token.revoke",
     peer,
-    scope: { vaults: [], ...(label === undefined ? {} : { detail: { label } }) },
+    scope: { vaults: [], detail: label === undefined ? undefined : { label } },
     exclusive: false,
     checkpoint: true,
     unlock: Keys.fromPassphrase,
@@ -388,7 +393,7 @@ export const issue = (request: TokenIssueRequest, peer: string | null) => {
     peer,
     scope: {
       vaults: request.grants.flatMap(({ vault }) => Audit.named(vault)),
-      ...(label === undefined ? {} : { detail: { label } }),
+      detail: label === undefined ? undefined : { label },
     },
     exclusive: false,
     checkpoint: request.replaces === true,
@@ -400,8 +405,9 @@ export const issue = (request: TokenIssueRequest, peer: string | null) => {
         label: receipt.label,
         grants: receipt.grants,
         expiresAt: receipt.expiresAt,
-        // `AuditDetail.replaced` is a Label: the replaced Token had this one.
-        ...(receipt.replaced ? { replaced: receipt.label } : {}),
+        // `AuditDetail.replaced` is a Label: the replaced Token had this one. `undefined` is dropped when the
+        // detail is stored as JSON.
+        replaced: receipt.replaced ? receipt.label : undefined,
       },
     }),
   })
@@ -497,10 +503,7 @@ const issueUnder = (master: Keys.MasterKey, request: TokenIssueRequest) =>
     yield* sql`
       INSERT INTO tokens (id, hash, wrap_salt, label, label_key, created_at, expires_at)
       VALUES (${tokenId}, ${issued.hash}, ${issued.salt}, ${label}, ${Name.key(label)}, ${at}, ${expiresAt})`.pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "UniqueViolation",
-        () => Effect.fail(new TokenLabelExists({ label })),
-      ),
+      Effect.catchReason("SqlError", "UniqueViolation", () => Effect.fail(new TokenLabelExists({ label }))),
       Effect.catchTag("SqlError", Effect.die),
     )
 

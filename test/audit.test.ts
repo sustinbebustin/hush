@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Schema } from "effect"
+import { Schema, type Types } from "effect"
 
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
 import { sandbox, type Sandbox } from "./sandbox.js"
@@ -81,16 +81,17 @@ const issuePrinted = async (box: Sandbox, args: ReadonlyArray<string>) => {
 }
 
 // What an entry says, without its id and times.
-const gist = ({ actor, action, vaults, references, detail, outcome, error, count }: Entry) => ({
-  actor,
-  action,
-  vaults,
-  references,
-  ...(detail === undefined ? {} : { detail }),
-  outcome,
-  ...(error === undefined ? {} : { error }),
-  count,
-})
+const gist = ({ actor, action, vaults, references, detail, outcome, error, count }: Entry) => {
+  const said: Types.Mutable<
+    Pick<Entry, "actor" | "action" | "vaults" | "references" | "detail" | "outcome" | "error" | "count">
+  > = { actor, action, vaults, references, outcome, count }
+
+  if (detail !== undefined) said.detail = detail
+
+  if (error !== undefined) said.error = error
+
+  return said
+}
 
 describe("hush audit", () => {
   it("lists entries newest first under the Passphrase, its own read recorded as audit.read", () =>
@@ -277,7 +278,7 @@ const auditRows = (box: Sandbox) =>
     .inspect((db) => db.query("SELECT count(*) AS n FROM audit").get())
     .then((row) => Schema.decodeUnknownSync(Schema.Struct({ n: Schema.Number }))(row).n)
 
-const post = (box: Sandbox, path: string, body: unknown, headers: Record<string, string> = {}) =>
+const post = (box: Sandbox, path: string, body: Schema.Json, headers: Record<string, string> = {}) =>
   box.fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
@@ -477,6 +478,7 @@ describe("hush audit refusals", () => {
       await seeded(box, seen)
       const response = await post(box, "/v1/admin/audit", { passphrase, label: "a/b" })
       assert.strictEqual(response.status, 400)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await response.json(), { _tag: "InvalidName", what: "label", reason: "slash" })
       const [newest] = (await audit(box, ["--limit", "1"])).page.entries
       assert.deepStrictEqual(newest === undefined ? undefined : gist(newest), {

@@ -88,8 +88,10 @@ export const suggest = <A extends { readonly title: string }>(
   }: { readonly max?: number; readonly threshold?: number } = {},
 ): ReadonlyArray<A> =>
   candidates
+    .values()
     .map((candidate) => ({ candidate, score: closeness(queryTerms, candidate.title) }))
     .filter(({ score }) => score >= threshold)
+    .toArray()
     .toSorted((a, b) => b.score - a.score || a.candidate.title.localeCompare(b.candidate.title))
     .slice(0, max)
     .map(({ candidate }) => candidate)

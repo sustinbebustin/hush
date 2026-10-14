@@ -7,11 +7,16 @@ import { join } from "node:path"
 
 import { Admin } from "../src/cli/Admin.js"
 import { CliError } from "../src/cli/CliError.js"
+import { Route, UnusedProxy } from "../src/cli/Route.js"
 import type { Target } from "../src/cli/Target.js"
 import { Name } from "../src/shared/Name.js"
 import { Token } from "../src/shared/Token.js"
 
-const target: Target = { origin: "http://127.0.0.1:7787", source: "default", route: { _tag: "Direct", unused: "none" } }
+const target: Target = {
+  origin: "http://127.0.0.1:7787",
+  source: "default",
+  route: Route.Direct({ unused: UnusedProxy.None() }),
+}
 
 describe("Admin.tokenInput", () => {
   const anyToken = fc.uint8Array({ minLength: 32, maxLength: 32 }).map(Token.format)
@@ -171,7 +176,7 @@ describe("Admin.deliverIssued", () => {
                   replaced: false,
                 },
                 label: Result.getOrThrow(Name.parse("work agent")),
-                delivery: { _tag: "Save", replace: false },
+                delivery: Admin.Delivery.Save({ replace: false }),
                 env: { HOME: home },
               }),
             )

@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Schema } from "effect"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
@@ -42,7 +43,7 @@ const withItem = (box: Sandbox, seen: (sentinel: Sentinel) => void) =>
   seeded(box, seen, { items: [{ kind: "api-credential", title: "Stripe", value: valueSentinel.text }] })
 
 const call = (path: string, status: number) => ({ method: "POST", path, status })
-const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
+const json = (value: Schema.Json) => `${JSON.stringify(value, null, 2)}\n`
 const isoTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 // A Passphrase command with `lines` piped to `--passphrase-stdin`, the Passphrase alone by default.
@@ -50,7 +51,7 @@ const admin = (box: Sandbox, args: ReadonlyArray<string>, lines: ReadonlyArray<s
   box.run([...args, "--passphrase-stdin"], { input: lines.map((line) => `${line}\n`).join("") })
 
 // A raw JSON POST, as a client that is not the CLI would send it.
-const post = (box: Sandbox, path: string, body: unknown) =>
+const post = (box: Sandbox, path: string, body: Schema.Json) =>
   box.fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
 
 const rows = (box: Sandbox, query: string) => box.inspect((db) => db.query(query).all())
@@ -81,10 +82,18 @@ const passphraseRow = (action: string, vaults: ReadonlyArray<string>, outcome: s
 const incorrectNow =
   "hush: The Passphrase is incorrect; nothing was changed. You can try again now; repeated failures slow every Passphrase operation on this Server.\n"
 
+const VaultListing = Schema.fromJsonString(
+  Schema.Struct({
+    vaults: Schema.Array(Schema.Struct({ vault: Schema.String, items: Schema.Number, activeTokens: Schema.Number })),
+  }),
+)
+
 const listed = (stdout: string) =>
-  (JSON.parse(stdout).vaults as ReadonlyArray<{ vault: string; items: number; activeTokens: number }>).map(
-    ({ vault, items, activeTokens }) => ({ vault, items, activeTokens }),
-  )
+  Schema.decodeUnknownSync(VaultListing)(stdout).vaults.map(({ vault, items, activeTokens }) => ({
+    vault,
+    items,
+    activeTokens,
+  }))
 
 describe("hush vault create and vault list", () => {
   it("creates a Vault and lists every Vault by name with its Item count, active Tokens and creation time", () =>
@@ -167,6 +176,7 @@ describe("hush vault create and vault list", () => {
       const response = await post(box, "/v1/admin/vaults/create", { passphrase, vault: " Work" })
       assert.strictEqual(response.status, 400)
       assert.deepStrictEqual(await response.json(), {
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         _tag: "InvalidName",
         what: "vault",
         reason: "whitespace-edge",
@@ -219,15 +229,7 @@ describe("hush vault delete", () => {
       const wrap = await box.inspect((db) => {
         const row = db.query("SELECT key_wrapped FROM vaults WHERE name = 'Work'").get()
 
-        if (
-          typeof row !== "object" ||
-          row === null ||
-          !("key_wrapped" in row) ||
-          !(row.key_wrapped instanceof Uint8Array)
-        )
-          throw new Error("no wrap for Work")
-
-        return Buffer.from(row.key_wrapped)
+        return Buffer.from(Schema.decodeUnknownSync(Schema.Struct({ key_wrapped: Schema.Uint8Array }))(row).key_wrapped)
       })
 
       const result = await admin(box, ["vault", "delete", "work"])
@@ -258,10 +260,7 @@ const mkWrapped = (box: Sandbox) =>
   box.inspect((db) => {
     const row = db.query("SELECT mk_wrapped FROM meta").get()
 
-    if (typeof row !== "object" || row === null || !("mk_wrapped" in row) || !(row.mk_wrapped instanceof Uint8Array))
-      throw new Error("no meta row")
-
-    return Buffer.from(row.mk_wrapped)
+    return Buffer.from(Schema.decodeUnknownSync(Schema.Struct({ mk_wrapped: Schema.Uint8Array }))(row).mk_wrapped)
   })
 
 describe("hush passphrase change", () => {
@@ -336,9 +335,11 @@ describe("hush passphrase change", () => {
       })
 
       assert.strictEqual(wrong.status, 401)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await wrong.json(), { _tag: "PassphraseIncorrect", retryAfterSeconds: 0 })
       const response = await post(box, "/v1/admin/passphrase/change", { passphrase, newPassphrase: "short pass" })
       assert.strictEqual(response.status, 400)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await response.json(), { _tag: "PassphraseInvalid", reason: "too-short" })
       assert.deepStrictEqual(await state(box), before)
       assert.deepStrictEqual((await auditRows(box)).slice(-2), [
@@ -491,6 +492,7 @@ describe("the Passphrase backoff", () => {
       for (const { body } of active) assert.strictEqual(body._tag, "BackoffActive")
       assert.deepStrictEqual(
         incorrect.map(({ body }) => body).toSorted((a, b) => a.retryAfterSeconds - b.retryAfterSeconds),
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
         [0, 0, 0, 1].map((retryAfterSeconds) => ({ _tag: "PassphraseIncorrect", retryAfterSeconds })),
       )
       const added = (await auditRows(box)).slice(before)
@@ -519,6 +521,7 @@ describe("the Passphrase backoff", () => {
 
       assert.strictEqual((await auditRows(box)).length, before)
       const [fourth] = await wrongLists(box, 1)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(fourth, { status: 401, body: { _tag: "PassphraseIncorrect", retryAfterSeconds: 1 } })
     }))
 
@@ -531,6 +534,7 @@ describe("the Passphrase backoff", () => {
       await wrongLists(box, 1)
       await wait(2)
       const [sixth] = await wrongLists(box, 1)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(sixth, { status: 401, body: { _tag: "PassphraseIncorrect", retryAfterSeconds: 4 } })
       const before = { state: await state(box), audit: await auditRows(box) }
 

@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { Result } from "effect"
 
 import type { Config } from "../src/cli/Config.js"
-import { Route } from "../src/cli/Route.js"
+import { Route, RouteView, UnusedProxy } from "../src/cli/Route.js"
 import { Target } from "../src/cli/Target.js"
 
 const path = "/home/me/.config/hush/config.json"
@@ -27,7 +27,8 @@ const problemOf = (env: Record<string, string>, config?: Config.Loaded) => {
   return error?._tag === "ConfigInvalid" ? error.problem : error
 }
 
-const direct = { _tag: "Direct", unused: "none" } as const
+const direct = Route.Direct({ unused: UnusedProxy.None() })
+const [DirectView, ProxyView] = RouteView.members
 
 describe("Target.resolve", () => {
   it("defaults to the loopback Server on port 7787, direct", () => {
@@ -80,13 +81,13 @@ describe("Target.resolve", () => {
       return Result.isSuccess(result) ? Route.view(result.success.route) : undefined
     }
 
-    assert.deepStrictEqual(routeOf({}), { _tag: "Proxy", proxy: "127.0.0.1:3128" })
-    assert.deepStrictEqual(routeOf({ HUSH_PROXY: "direct" }), { _tag: "Direct", unused: "disabled" })
-    assert.deepStrictEqual(routeOf({}, withFile({ proxy: "direct" })), { _tag: "Direct", unused: "disabled" })
-    assert.deepStrictEqual(routeOf({ HUSH_PROXY: "auto" }, withFile({ proxy: "direct" })), {
-      _tag: "Proxy",
-      proxy: "127.0.0.1:3128",
-    })
+    assert.deepStrictEqual(routeOf({}), ProxyView.make({ proxy: "127.0.0.1:3128" }))
+    assert.deepStrictEqual(routeOf({ HUSH_PROXY: "direct" }), DirectView.make({ unused: "disabled" }))
+    assert.deepStrictEqual(routeOf({}, withFile({ proxy: "direct" })), DirectView.make({ unused: "disabled" }))
+    assert.deepStrictEqual(
+      routeOf({ HUSH_PROXY: "auto" }, withFile({ proxy: "direct" })),
+      ProxyView.make({ proxy: "127.0.0.1:3128" }),
+    )
   })
 
   it("refuses a proxy mode other than auto or direct, naming where it came from", () => {

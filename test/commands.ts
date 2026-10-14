@@ -91,11 +91,11 @@ const commandArgs = (all: ReadonlyArray<string>): ReadonlyArray<ReadonlyArray<st
 export const invocations = (markdown: string): ReadonlyArray<Invocation> =>
   snippets(markdown).flatMap((snippet) => commandArgs(words(snippet)).map((args) => ({ snippet, args })))
 
-type FlagShape = "switch" | "valued"
+type FlagArity = "switch" | "valued"
 
 interface Help {
   readonly subcommands: ReadonlyArray<string>
-  readonly flags: ReadonlyMap<string, FlagShape>
+  readonly flags: ReadonlyMap<string, FlagArity>
 }
 
 // The names in the `SUBCOMMANDS` section and the leading `--flag` of each line of `FLAGS` and `GLOBAL FLAGS` in
@@ -110,7 +110,7 @@ const parseHelp = (text: string): Help => {
   return {
     subcommands: section("SUBCOMMANDS").flatMap((line) => /^ {2}(\S+)/.exec(line)?.[1] ?? []),
     flags: new Map(
-      [...section("FLAGS"), ...section("GLOBAL FLAGS")].flatMap((line): ReadonlyArray<[string, FlagShape]> => {
+      [...section("FLAGS"), ...section("GLOBAL FLAGS")].flatMap((line): ReadonlyArray<[string, FlagArity]> => {
         const match = /^ {2}(--[a-z-]+)(?:, -[a-z])?( [a-z]+)? {2}/.exec(line)
 
         return match?.[1] === undefined ? [] : [[match[1], match[2] === undefined ? "switch" : "valued"]]
@@ -160,10 +160,10 @@ export const checkInvocations = async (markdown: string): Promise<ReadonlyArray<
         const { subcommands, flags } = await help(path)
 
         if (arg.startsWith("--")) {
-          const shape = flags.get(flagName(arg))
-          assert.isDefined(shape, `\`${snippet}\`: \`hush ${path.join(" ")}\` has no flag ${flagName(arg)}`)
+          const arity = flags.get(flagName(arg))
+          assert.isDefined(arity, `\`${snippet}\`: \`hush ${path.join(" ")}\` has no flag ${flagName(arg)}`)
 
-          if (shape === "valued" && !arg.includes("=")) index += 1
+          if (arity === "valued" && !arg.includes("=")) index += 1
         } else if (isPositional(arg) && subcommands.length > 0) {
           assert.include(subcommands, arg, `\`${snippet}\`: \`hush ${path.join(" ")}\` has no subcommand ${arg}`)
           path.push(arg)

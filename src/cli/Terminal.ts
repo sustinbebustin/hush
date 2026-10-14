@@ -1,4 +1,4 @@
-import { Effect, Redacted } from "effect"
+import { Data, Effect, Redacted } from "effect"
 import { closeSync, openSync, writeSync } from "node:fs"
 import { ReadStream } from "node:tty"
 
@@ -9,12 +9,14 @@ import { NoTerminal, PromptCancelled } from "./CliError.js"
 
 // One line being typed at a hidden prompt, as raw bytes: decoding is left to the caller, so an invalid UTF-8
 // sequence is refused rather than silently replaced.
-export type Line =
-  | { readonly _tag: "Reading"; readonly bytes: Uint8Array }
-  | { readonly _tag: "Entered"; readonly bytes: Uint8Array }
-  | { readonly _tag: "Cancelled" }
+export type Line = Data.TaggedEnum<{
+  Reading: { readonly bytes: Uint8Array }
+  Entered: { readonly bytes: Uint8Array }
+  Cancelled: {}
+}>
 
-export const empty: Line = { _tag: "Reading", bytes: new Uint8Array() }
+export const Line = Data.taggedEnum<Line>()
+export const empty: Line = Line.Reading({ bytes: new Uint8Array() })
 
 const ctrlC = 0x03
 const ctrlD = 0x04
@@ -49,16 +51,16 @@ const key = (bytes: Uint8Array, byte: number): Line => {
   switch (byte) {
     case carriageReturn:
     case newline:
-      return { _tag: "Entered", bytes }
+      return Line.Entered({ bytes })
     case ctrlC:
-      return { _tag: "Cancelled" }
+      return Line.Cancelled()
     case ctrlD:
-      return bytes.length === 0 ? { _tag: "Cancelled" } : { _tag: "Reading", bytes }
+      return bytes.length === 0 ? Line.Cancelled() : Line.Reading({ bytes })
     case del:
     case backspace:
-      return { _tag: "Reading", bytes: eraseLast(bytes) }
+      return Line.Reading({ bytes: eraseLast(bytes) })
     default:
-      return { _tag: "Reading", bytes: append(bytes, byte) }
+      return Line.Reading({ bytes: append(bytes, byte) })
   }
 }
 
@@ -67,7 +69,7 @@ export const feed = (line: Line, chunk: Uint8Array): Line => {
   let current = line
 
   for (const byte of chunk) {
-    if (current._tag !== "Reading") return current
+    if (!Line.$is("Reading")(current)) return current
     current = key(current.bytes, byte)
   }
 
@@ -116,8 +118,11 @@ const readLine = ({ stream }: Opened, unavailable: Unavailable) =>
     const onData = (chunk: Uint8Array) => {
       line = feed(line, chunk)
 
-      if (line._tag === "Reading") return
-      resume(line._tag === "Entered" ? Effect.succeed(line.bytes) : Effect.fail(new PromptCancelled()))
+      Line.$match(line, {
+        Reading: () => {},
+        Entered: ({ bytes }) => resume(Effect.succeed(bytes)),
+        Cancelled: () => resume(Effect.fail(new PromptCancelled())),
+      })
     }
 
     const onEnd = () => resume(Effect.fail(new PromptCancelled()))

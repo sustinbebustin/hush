@@ -3,6 +3,8 @@ import { Effect, Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 
 import { Client } from "../src/cli/Client.js"
+import { ServerUnreachable, UnexpectedResponse } from "../src/cli/CliError.js"
+import { Route, UnusedProxy } from "../src/cli/Route.js"
 import type { Target } from "../src/cli/Target.js"
 import { Api } from "../src/shared/Api.js"
 import { HostNotAllowed } from "../src/shared/ApiError.js"
@@ -18,14 +20,15 @@ class Echo extends HttpApiGroup.make("echo").add(
 
 class TestApi extends HttpApi.make("test").add(Echo) {}
 
+const direct = Route.Direct({ unused: UnusedProxy.None() })
+
 const withStub = <A, E>(
   respond: (request: Request) => Response | Promise<Response>,
   test: (target: Target) => Effect.Effect<A, E>,
 ) =>
   Effect.acquireUseRelease(
     Effect.sync(() => Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: respond })),
-    (stub) =>
-      test({ origin: `http://127.0.0.1:${stub.port}`, source: "env", route: { _tag: "Direct", unused: "none" } }),
+    (stub) => test({ origin: `http://127.0.0.1:${stub.port}`, source: "env", route: direct }),
     (stub) => Effect.promise(() => stub.stop(true)),
   )
 
@@ -73,10 +76,7 @@ describe("Client.request", () => {
       (target) =>
         Effect.gen(function* () {
           const error = yield* Effect.flip(echo(target))
-          assert.deepStrictEqual(
-            error._tag === "UnexpectedResponse" ? { url: error.url, status: error.status } : error,
-            { url: target.origin, status: 400 },
-          )
+          assert.deepStrictEqual(error, new UnexpectedResponse({ url: target.origin, status: 400 }))
           assert.strictEqual(requests, 1)
         }),
     )
@@ -84,6 +84,7 @@ describe("Client.request", () => {
 
   it.effect("decodes a guard refusal on any endpoint of the real Api, status included", () =>
     withStub(
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       () => Response.json({ _tag: "HostNotAllowed", host: "evil.test" }, { status: 403 }),
       (target) =>
         Effect.gen(function* () {
@@ -95,12 +96,17 @@ describe("Client.request", () => {
 
   it.effect("maps a refused connection to ServerUnreachable (refused)", () =>
     Effect.gen(function* () {
-      const target: Target = { origin: "http://127.0.0.1:1", source: "env", route: { _tag: "Direct", unused: "none" } }
+      const target: Target = { origin: "http://127.0.0.1:1", source: "env", route: direct }
       const error = yield* Effect.flip(echo(target))
-      assert.deepStrictEqual(error._tag === "ServerUnreachable" ? { url: error.url, reason: error.reason } : error, {
-        url: target.origin,
-        reason: "refused",
-      })
+      assert.deepStrictEqual(
+        error,
+        new ServerUnreachable({
+          url: target.origin,
+          address: "127.0.0.1:1",
+          route: Route.view(direct),
+          reason: "refused",
+        }),
+      )
     }),
   )
 })

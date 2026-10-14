@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Redacted, Result } from "effect"
+import { Effect, Predicate, Redacted, Result } from "effect"
 import { execFileSync } from "node:child_process"
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -8,9 +8,15 @@ import { join } from "node:path"
 import { Name } from "../src/shared/Name.js"
 import { Token } from "../src/shared/Token.js"
 import { TokenStore } from "../src/cli/TokenStore.js"
+import { Route, UnusedProxy } from "../src/cli/Route.js"
 import type { Target } from "../src/cli/Target.js"
 
-const target: Target = { origin: "http://127.0.0.1:7787", source: "default", route: { _tag: "Direct", unused: "none" } }
+const target: Target = {
+  origin: "http://127.0.0.1:7787",
+  source: "default",
+  route: Route.Direct({ unused: UnusedProxy.None() }),
+}
+
 const other = "http://100.64.0.1:7787"
 const token = (fill: number) => Token.format(new Uint8Array(32).fill(fill))
 const label = (text: string) => Result.getOrThrow(Name.parse(text))
@@ -25,21 +31,21 @@ const withHome = <A, E>(test: (home: string) => Effect.Effect<A, E>) =>
 const dir = (home: string) => join(home, ".config", "hush")
 const file = (home: string) => join(dir(home), "tokens.json")
 
-const writeTokens = (home: string, content: unknown, mode = 0o600) =>
+const writeTokens = (home: string, text: string, mode = 0o600) =>
   Effect.promise(async () => {
     await mkdir(dir(home), { recursive: true, mode: 0o700 })
-    await writeFile(file(home), typeof content === "string" ? content : JSON.stringify(content), { mode })
+    await writeFile(file(home), text, { mode })
     await chmod(file(home), mode)
   })
 
 // Another origin's entry, then this origin's.
-const entries = {
+const entries = JSON.stringify({
   version: 1,
   tokens: [
     { server: other, label: "elsewhere", token: token(2) },
     { server: target.origin, label: "me on box", token: token(1) },
   ],
-} as const
+})
 
 const tag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
   Effect.map(Effect.flip(effect), (error) => error._tag)
@@ -83,7 +89,7 @@ describe("TokenStore.current", () => {
           const choice = yield* TokenStore.current(target, { HOME: home, HUSH_TOKEN: value })
           assert.strictEqual(choice._tag, "Saved")
 
-          if (choice._tag !== "Saved") return
+          if (!TokenStore.TokenChoice.$is("Saved")(choice)) return
           assert.strictEqual(choice.label, "me on box")
           assert.strictEqual(Redacted.value(choice.token), token(1))
         }
@@ -95,7 +101,10 @@ describe("TokenStore.current", () => {
     withHome((home) =>
       Effect.gen(function* () {
         assert.strictEqual(yield* tag(TokenStore.current(target, { HOME: home })), "NoToken")
-        yield* writeTokens(home, { version: 1, tokens: [{ server: other, label: "x", token: token(2) }] })
+        yield* writeTokens(
+          home,
+          JSON.stringify({ version: 1, tokens: [{ server: other, label: "x", token: token(2) }] }),
+        )
         assert.strictEqual(yield* tag(TokenStore.current(target, { HOME: home })), "NoToken")
       }),
     ),
@@ -103,20 +112,20 @@ describe("TokenStore.current", () => {
 
   for (const [name, content] of [
     ["not JSON", "{"],
-    ["another version", { version: 2, tokens: [] }],
+    ["another version", JSON.stringify({ version: 2, tokens: [] })],
     [
       "an entry with a malformed Token",
-      { version: 1, tokens: [{ server: target.origin, label: "x", token: "hush_x" }] },
+      JSON.stringify({ version: 1, tokens: [{ server: target.origin, label: "x", token: "hush_x" }] }),
     ],
     [
       "two entries for one origin",
-      {
+      JSON.stringify({
         version: 1,
         tokens: [
           { server: target.origin, label: "a", token: token(1) },
           { server: target.origin, label: "b", token: token(2) },
         ],
-      },
+      }),
     ],
   ] as const)
     it.effect(`is TokenFileInvalid for a file holding ${name}`, () =>
@@ -142,7 +151,8 @@ describe("TokenStore.current", () => {
       Effect.gen(function* () {
         yield* writeTokens(home, entries, 0o640)
         const error = yield* Effect.flip(TokenStore.current(target, { HOME: home }))
-        assert.deepInclude(error, { _tag: "TokenFileInsecure", path: file(home), mode: "640" })
+        assert.isTrue(Predicate.isTagged(error, "TokenFileInsecure"))
+        assert.deepInclude(error, { path: file(home), mode: "640" })
       }),
     ),
   )
@@ -175,9 +185,11 @@ describe("TokenStore.checkSavable and save", () => {
       Effect.gen(function* () {
         yield* writeTokens(home, entries)
         const refused = yield* Effect.flip(TokenStore.checkSavable(target, false, { HOME: home }))
-        assert.deepInclude(refused, { _tag: "TokenAlreadySaved", label: "me on box", command: "issue" })
+        assert.isTrue(Predicate.isTagged(refused, "TokenAlreadySaved"))
+        assert.deepInclude(refused, { label: "me on box", command: "issue" })
         const given = yield* Effect.flip(TokenStore.save(entry, false, { HOME: home }, "save"))
-        assert.deepInclude(given, { _tag: "TokenAlreadySaved", label: "me on box", command: "save" })
+        assert.isTrue(Predicate.isTagged(given, "TokenAlreadySaved"))
+        assert.deepInclude(given, { label: "me on box", command: "save" })
         assert.deepStrictEqual(yield* TokenStore.checkSavable(target, true, { HOME: home }), { existing: "me on box" })
         assert.deepStrictEqual(yield* TokenStore.save(entry, true, { HOME: home }, "issue"), {
           replaced: "me on box",
@@ -201,7 +213,8 @@ describe("TokenStore.checkSavable and save", () => {
         Effect.gen(function* () {
           yield* Effect.promise(() => chmod(home, 0o500))
           const error = yield* Effect.flip(TokenStore.checkSavable(target, false, { HOME: home }))
-          assert.deepInclude(error, { _tag: "FileWriteFailed", path: file(home) })
+          assert.isTrue(Predicate.isTagged(error, "FileWriteFailed"))
+          assert.deepInclude(error, { path: file(home) })
           assert.deepStrictEqual(yield* Effect.promise(() => readdir(home)), [])
         }),
       ),

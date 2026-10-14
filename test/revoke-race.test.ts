@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Redacted } from "effect"
+import { Effect, Predicate, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -81,9 +81,12 @@ describe("the Revoke race", () => {
 
           const revoked = { reason: "revoked", label: "agent", at: "2026-01-02T00:00:00.000Z" } as const
           assert.strictEqual(created._tag, "TokenRejected")
-          assert.deepStrictEqual(created._tag === "TokenRejected" ? created.rejection : undefined, revoked)
+          assert.deepStrictEqual(Predicate.isTagged(created, "TokenRejected") ? created.rejection : undefined, revoked)
           assert.strictEqual(resolved._tag, "TokenRejected")
-          assert.deepStrictEqual(resolved._tag === "TokenRejected" ? resolved.rejection : undefined, revoked)
+          assert.deepStrictEqual(
+            Predicate.isTagged(resolved, "TokenRejected") ? resolved.rejection : undefined,
+            revoked,
+          )
           assert.deepStrictEqual(yield* sql`SELECT title FROM items`, [{ title: "Before" }])
           // Denials of one revoked Token within a minute are coalesced into one audit row.
           assert.deepStrictEqual(yield* sql`SELECT action, count, outcome, error FROM audit ORDER BY id`, [

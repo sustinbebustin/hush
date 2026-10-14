@@ -1,4 +1,4 @@
-import { Duration, Effect, Result } from "effect"
+import { Data, Duration, Effect, Match, Predicate, Result } from "effect"
 
 import { Api, type Status } from "../shared/Api.js"
 import type { GuardError } from "../shared/ApiError.js"
@@ -6,7 +6,7 @@ import { Version } from "../shared/Version.js"
 import { Client } from "./Client.js"
 import { CliError } from "./CliError.js"
 import type { EnvVars } from "./LaunchEnv.js"
-import type { Route, Unused } from "./Route.js"
+import { Route, type Unused, UnusedProxy } from "./Route.js"
 import { type Source, Target } from "./Target.js"
 import { TokenStore } from "./TokenStore.js"
 
@@ -42,14 +42,17 @@ export const report = (input: {
   readonly server: ServerCheck | null
   readonly token: TokenCheck
   readonly notes: ReadonlyArray<string>
-}): Report => ({
-  hush: input.version,
-  platform: `${process.platform}-${process.arch}`,
-  bun: Bun.version,
-  server: input.server,
-  token: input.token,
-  ...(input.notes.length === 0 ? {} : { notes: input.notes }),
-})
+}): Report => {
+  const checked = {
+    hush: input.version,
+    platform: `${process.platform}-${process.arch}`,
+    bun: Bun.version,
+    server: input.server,
+    token: input.token,
+  }
+
+  return input.notes.length === 0 ? checked : { ...checked, notes: input.notes }
+}
 
 const statusTimeout = Duration.seconds(5)
 
@@ -80,56 +83,52 @@ const note = {
 } as const
 
 // What the status request found, and the note for a failure.
-type Probe =
-  | { readonly _tag: "Answered"; readonly status: Status }
-  | { readonly _tag: "Refused"; readonly note: string }
-  | { readonly _tag: "Unreachable"; readonly note: string }
+type Probe = Data.TaggedEnum<{
+  Answered: { readonly status: Status }
+  Refused: { readonly note: string }
+  Unreachable: { readonly note: string }
+}>
 
-const probe = (target: Target): Effect.Effect<Probe> =>
-  Client.request(Api, target, (client) => client.public.status(), undefined, statusTimeout).pipe(
-    Effect.map((status): Probe => ({ _tag: "Answered", status })),
-    Effect.catch((error): Effect.Effect<Probe> => {
-      switch (error._tag) {
-        case "ServerUnreachable":
-          return Effect.succeed({
-            _tag: "Unreachable",
-            note:
-              error.route._tag === "Proxy"
-                ? note.unreachableProxy(error.route.proxy, error.reason)
-                : note.unreachableDirect(error.reason),
-          })
-        case "UnexpectedResponse":
-          return Effect.succeed({ _tag: "Refused", note: note.unexpected(error.status) })
-        case "RequestTooLarge":
-          return Effect.succeed({ _tag: "Refused", note: note.unexpected(413) })
-        case "HostNotAllowed":
-        case "FunnelRequestRefused":
-        case "BrowserRequestRefused":
-        case "UnsupportedContentType":
-          return Effect.succeed({ _tag: "Refused", note: refusedNote(error) })
-      }
-    }),
-  )
+const Probe = Data.taggedEnum<Probe>()
 
 // A guard refusal of `status`; the Host itself is never shown, as it is part of the Server URL.
 const refusedNote = (error: GuardError): string =>
-  error._tag === "HostNotAllowed" ? note.hostNotAllowed : CliError.renderServer(error, "the Server")
+  Predicate.isTagged(error, "HostNotAllowed") ? note.hostNotAllowed : CliError.renderServer(error, "the Server")
 
-const routeNotes = (route: Route): ReadonlyArray<string> => {
-  switch (route._tag) {
-    case "Proxy":
-      return [note.proxyInUse(route.proxyDisplay)]
-    case "Direct":
-      switch (route.unused) {
-        case "none":
-          return []
-        case "not-loopback":
-          return [note.notLoopback]
-        case "disabled":
-          return [note.disabled]
-      }
-  }
-}
+const refused = (error: GuardError) => Effect.succeed(Probe.Refused({ note: refusedNote(error) }))
+
+const probe = (target: Target): Effect.Effect<Probe> =>
+  Client.request(Api, target, (client) => client.public.status(), undefined, statusTimeout).pipe(
+    Effect.map((status) => Probe.Answered({ status })),
+    Effect.catchTags({
+      ServerUnreachable: (error) =>
+        Effect.succeed(
+          Probe.Unreachable({
+            note: Match.valueTags(error.route, {
+              Proxy: ({ proxy }) => note.unreachableProxy(proxy, error.reason),
+              Direct: () => note.unreachableDirect(error.reason),
+            }),
+          }),
+        ),
+      UnexpectedResponse: (error) => Effect.succeed(Probe.Refused({ note: note.unexpected(error.status) })),
+      RequestTooLarge: () => Effect.succeed(Probe.Refused({ note: note.unexpected(413) })),
+      HostNotAllowed: refused,
+      FunnelRequestRefused: refused,
+      BrowserRequestRefused: refused,
+      UnsupportedContentType: refused,
+    }),
+  )
+
+const routeNotes = (route: Route): ReadonlyArray<string> =>
+  Route.$match(route, {
+    Proxy: ({ proxyDisplay }) => [note.proxyInUse(proxyDisplay)],
+    Direct: ({ unused }) =>
+      UnusedProxy.$match(unused, {
+        None: () => [],
+        NotLoopback: () => [note.notLoopback],
+        Disabled: () => [note.disabled],
+      }),
+  })
 
 const tokenNotes = (token: TokenCheck): ReadonlyArray<string> => {
   switch (token.file) {
@@ -152,28 +151,38 @@ const statusNotes = (status: Status): ReadonlyArray<string> => [
 
 // The proxy as shown: the one in use or the one left unused, when there is one to show.
 const shownProxy = (route: Route): string | null =>
-  route._tag === "Direct" && route.unused === "none" ? null : (route.proxyDisplay ?? null)
+  Route.$match(route, {
+    Proxy: ({ proxyDisplay }) => proxyDisplay,
+    Direct: ({ unused }) =>
+      UnusedProxy.$match(unused, {
+        None: () => null,
+        NotLoopback: ({ proxyDisplay }) => proxyDisplay ?? null,
+        Disabled: ({ proxyDisplay }) => proxyDisplay,
+      }),
+  })
+
+const failureNote = (failure: { readonly note: string }) => [failure.note]
 
 const checkServer = (
   target: Target,
 ): Effect.Effect<{ readonly check: ServerCheck; readonly notes: ReadonlyArray<string> }> =>
   Effect.map(probe(target), (found) => {
     const { route } = target
-    const status = found._tag === "Answered" ? found.status : undefined
+    const status = Probe.$is("Answered")(found) ? found.status : undefined
 
     return {
       check: {
         source: target.source,
-        route: route._tag === "Proxy" ? "proxy" : "direct",
+        route: Route.$is("Proxy")(route) ? "proxy" : "direct",
         proxy: shownProxy(route),
-        proxyUnused: route._tag === "Proxy" ? "none" : route.unused,
-        reachable: found._tag !== "Unreachable",
+        proxyUnused: Route.unused(route),
+        reachable: !Probe.$is("Unreachable")(found),
         state: status?.state ?? null,
         version: status?.version ?? null,
       },
       // The failure first, as the likeliest cause of whatever brought the agent here.
       notes: [
-        ...(found._tag === "Answered" ? [] : [found.note]),
+        ...Probe.$match(found, { Answered: () => [], Refused: failureNote, Unreachable: failureNote }),
         ...routeNotes(route),
         ...(status === undefined ? [] : statusNotes(status)),
       ],

@@ -51,7 +51,9 @@ const forms = (text: string): ReadonlyArray<string> => [text, JSON.stringify(tex
 export const scan = (observed: ReadonlyArray<Observed>, sentinels: ReadonlyArray<Sentinel>): ReadonlyArray<Leak> =>
   observed.flatMap(({ target, text }) =>
     sentinels
+      .values()
       .filter((sentinel) => scannedFor[target].has(sentinel.kind))
       .filter((sentinel) => forms(sentinel.text).some((form) => text.includes(form)))
-      .map((sentinel) => ({ target, sentinel })),
+      .map((sentinel) => ({ target, sentinel }))
+      .toArray(),
   )

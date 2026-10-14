@@ -45,10 +45,7 @@ export const create = (request: VaultRequest, peer: string | null) =>
         yield* sql`
           INSERT INTO vaults (id, name, name_key, key_nonce, key_wrapped, created_at)
           VALUES (${vaultId}, ${vault}, ${Name.key(vault)}, ${wrap.nonce}, ${wrap.wrapped}, ${at})`.pipe(
-          Effect.catchIf(
-            (error) => error.reason._tag === "UniqueViolation",
-            () => Effect.fail(new VaultExists({ vault })),
-          ),
+          Effect.catchReason("SqlError", "UniqueViolation", () => Effect.fail(new VaultExists({ vault }))),
           Effect.catchTag("SqlError", Effect.die),
         )
         const receipt: VaultReceipt = { vault, createdAt: at }

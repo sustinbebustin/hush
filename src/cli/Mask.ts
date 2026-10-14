@@ -24,9 +24,11 @@ const startsAt = (buffer: Uint8Array, at: number, value: Uint8Array) => {
 
 // The values a mask over `values` replaces: at least `minimumBytes` long, deduplicated, longest first.
 export const masked = (values: ReadonlyArray<string>): ReadonlyArray<Uint8Array> =>
-  [...new Set(values)]
+  new Set(values)
+    .values()
     .map((value) => encoder.encode(value))
     .filter((bytes) => bytes.length >= minimumBytes)
+    .toArray()
     .toSorted((a, b) => b.length - a.length)
 
 export const make = (values: ReadonlyArray<string>): Mask => {

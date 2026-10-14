@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Schema } from "effect"
 import { readFileSync } from "node:fs"
 import { readdir } from "node:fs/promises"
 import { networkInterfaces } from "node:os"
@@ -23,8 +24,18 @@ const withSandbox = async (
   }
 }
 
-const startupLine = (box: Sandbox): unknown =>
-  JSON.parse(
+// The Server's `listening` line. Excess fields fail the decode, so the comparisons below still see every field.
+const StartupLine = Schema.Struct({
+  event: Schema.String,
+  version: Schema.String,
+  state: Schema.String,
+  addresses: Schema.Array(Schema.Struct({ ip: Schema.String, port: Schema.Number })),
+  allowAnyListen: Schema.Boolean,
+  initCodeFile: Schema.optionalKey(Schema.String),
+})
+
+const startupLine = (box: Sandbox): typeof StartupLine.Type =>
+  Schema.decodeSync(Schema.fromJsonString(StartupLine), { onExcessProperty: "error" })(
     box.server
       .output()
       .split("\n")

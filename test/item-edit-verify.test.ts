@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Redacted } from "effect"
+import { Effect, Predicate, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -120,7 +120,7 @@ describe("item edit verification before commit", () => {
 
           const failed = yield* Effect.flip(ItemAdmin.edit(request, null, sealer))
           assert.strictEqual(failed._tag, "IntegrityCheckFailed")
-          assert.deepStrictEqual(failed._tag === "IntegrityCheckFailed" ? failed.damaged : undefined, {
+          assert.deepStrictEqual(Predicate.isTagged(failed, "IntegrityCheckFailed") ? failed.damaged : undefined, {
             what: "field",
             reference: "hush://Work/Stripe/credential",
           })

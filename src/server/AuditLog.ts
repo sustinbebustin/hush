@@ -1,4 +1,4 @@
-import { Effect, Result, Schema } from "effect"
+import { Effect, Result, Schema, type Types } from "effect"
 import { SqlClient } from "effect/sql"
 
 import {
@@ -55,7 +55,7 @@ const entryOf = (row: AuditRow): Effect.Effect<AuditEntry> => {
 
   if (actor === undefined) return broken
 
-  const common = {
+  const common: Types.Mutable<Omit<AuditEntry, "outcome" | "error">> = {
     id: row.id,
     at: row.at,
     lastAt: row.last_at,
@@ -64,9 +64,11 @@ const entryOf = (row: AuditRow): Effect.Effect<AuditEntry> => {
     action: row.action,
     vaults: row.vaults,
     references: row.refs,
-    ...(row.detail === null ? {} : { detail: row.detail }),
-    ...(row.peer === null ? {} : { peer: row.peer }),
   }
+
+  if (row.detail !== null) common.detail = row.detail
+
+  if (row.peer !== null) common.peer = row.peer
 
   if (row.outcome === "ok") return Effect.succeed({ ...common, outcome: row.outcome })
 
@@ -118,7 +120,9 @@ const readPage = (request: AuditRequest) =>
 
     const entries = yield* Effect.forEach(found.slice(0, limit), entryOf)
     const next = found.length > limit ? entries.at(-1)?.id : undefined
-    const result: AuditPage = { entries, ...(next === undefined ? {} : { next }) }
+    const result: Types.Mutable<AuditPage> = { entries }
+
+    if (next !== undefined) result.next = next
 
     return result
   })

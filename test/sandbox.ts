@@ -179,12 +179,15 @@ const spawnDetached = ({
 }): Promise<Result> =>
   new Promise((resolve, reject) => {
     const [file, ...args] = options.tty === undefined ? command : underScript(command, options.tty)
+    const env: NodeJS.ProcessEnv = { HOME: home, PATH: bin }
+
+    // `script` runs its command with `$SHELL`, else the login shell; the sandbox's `sh` keeps it portable.
+    if (options.tty !== undefined) env.SHELL = join(bin, "sh")
 
     // A new session (detached) has no controlling terminal, so `/dev/tty` fails as it does in CI.
     const child = spawn(file, args, {
       cwd: repository,
-      // `script` runs its command with `$SHELL`, else the login shell; the sandbox's `sh` keeps it portable.
-      env: { HOME: home, PATH: bin, ...(options.tty === undefined ? {} : { SHELL: join(bin, "sh") }), ...options.env },
+      env: { ...env, ...options.env },
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     })

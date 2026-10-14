@@ -26,11 +26,11 @@ export type PlainLabel = (typeof plainLabels)[number]
 const primary = (text: string): FieldSpec => ({ label: label(text), role: "primary", flag: undefined })
 const plain = (text: PlainLabel): FieldSpec => ({ label: label(text), role: "plain", flag: `--${text}` })
 
-const specs: { readonly [K in Kind]: readonly [FieldSpec, ...ReadonlyArray<FieldSpec>] } = {
+const specs = {
   "api-credential": [primary("credential"), plain("notes")],
   login: [primary("password"), plain("username"), plain("notes")],
   database: [primary("password"), plain("username"), plain("host"), plain("port"), plain("database"), plain("notes")],
-}
+} satisfies { readonly [K in Kind]: readonly [FieldSpec, ...ReadonlyArray<FieldSpec>] }
 
 const isKind = (input: string): input is Kind => all.some((kind) => kind === input)
 

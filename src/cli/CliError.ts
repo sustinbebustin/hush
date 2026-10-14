@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Match, Schema } from "effect"
 
 import { auditLimit } from "../shared/Api.js"
 import type { ApiError, Damaged, TokenRejected } from "../shared/ApiError.js"
@@ -330,18 +330,13 @@ const tokenFileReasonText = ({ problem }: TokenFileInvalid) => {
 }
 
 // Why an issued Token's save failed, as the parenthesis of `TokenNotSaved`.
-const notSavedReasonText = ({ cause }: TokenNotSaved) => {
-  switch (cause._tag) {
-    case "FileWriteFailed":
-      return cause.code
-    case "TokenAlreadySaved":
-      return `a Token labelled ${cause.label} was saved meanwhile`
-    case "TokenFileInvalid":
-      return `the token file is ${tokenFileReasonText(cause)}`
-    case "TokenFileInsecure":
-      return `the token file has mode ${cause.mode}`
-  }
-}
+const notSavedReasonText = ({ cause }: TokenNotSaved) =>
+  Match.valueTags(cause, {
+    FileWriteFailed: ({ code }) => code,
+    TokenAlreadySaved: ({ label }) => `a Token labelled ${label} was saved meanwhile`,
+    TokenFileInvalid: (invalid) => `the token file is ${tokenFileReasonText(invalid)}`,
+    TokenFileInsecure: ({ mode }) => `the token file has mode ${mode}`,
+  })
 
 // Read again on the Server host: the code changes at every restart until Init succeeds.
 const readInitCodeAgain =
@@ -477,12 +472,12 @@ const unreachableText = ({ url, address, route, reason }: ServerUnreachable): st
   const nothing = "nothing was read or changed"
   const doctor = "`hush doctor` shows the route."
 
-  switch (route._tag) {
-    case "Direct":
-      return `${failed} directly (${reason}); ${nothing}. Check ${directCheck}.${route.unused === "disabled" ? ` ${proxyDisabled}` : ""} ${doctor}`
-    case "Proxy":
-      return `${failed} through the loopback proxy at ${route.proxy} (${reason}); ${nothing}. Inside an agent sandbox, add \`${address}\` to its allowed domains; if that proxy is not a sandbox's, set HUSH_PROXY=direct, since it would otherwise receive Tokens in cleartext. ${doctor}`
-  }
+  return Match.valueTags(route, {
+    Direct: ({ unused }) =>
+      `${failed} directly (${reason}); ${nothing}. Check ${directCheck}.${unused === "disabled" ? ` ${proxyDisabled}` : ""} ${doctor}`,
+    Proxy: ({ proxy }) =>
+      `${failed} through the loopback proxy at ${proxy} (${reason}); ${nothing}. Inside an agent sandbox, add \`${address}\` to its allowed domains; if that proxy is not a sandbox's, set HUSH_PROXY=direct, since it would otherwise receive Tokens in cleartext. ${doctor}`,
+  })
 }
 
 const unusable = (path: string, why: string) =>
@@ -514,179 +509,163 @@ const auditText = ({ problem }: AuditFlagsInvalid): string => {
   }
 }
 
-export const render = (error: CliError, token?: TokenContext): string => {
-  switch (error._tag) {
-    case "ServerUnreachable":
-      return unreachableText(error)
-    case "UnexpectedResponse":
-      return `The hush Server at ${error.url} answered with something this CLI does not understand (HTTP ${error.status}); nothing is known to have changed. CLI and Server versions may differ; \`hush status\` shows both.`
-    case "RequestTooLarge":
-      return "The request was larger than the Server accepts (1 MiB); nothing was changed. Values are limited to 64 KiB."
-    case "ServerUrlInvalid":
-      return error.source.from === "argument"
+const inputSourceText = (error: InputSourceRequired | InputSourceConflict) =>
+  `Pass exactly one of \`--stdin\` (piped value), \`--prompt\` (hidden prompt) or \`--clipboard\` (macOS); nothing was ${error.outcome}.`
+
+export const render = (cliError: CliError, token?: TokenContext): string =>
+  Match.valueTags(cliError, {
+    ServerUnreachable: unreachableText,
+    UnexpectedResponse: (error) =>
+      `The hush Server at ${error.url} answered with something this CLI does not understand (HTTP ${error.status}); nothing is known to have changed. CLI and Server versions may differ; \`hush status\` shows both.`,
+    RequestTooLarge: () =>
+      "The request was larger than the Server accepts (1 MiB); nothing was changed. Values are limited to 64 KiB.",
+    ServerUrlInvalid: (error) =>
+      error.source.from === "argument"
         ? `That is not a valid Server URL (${error.reason}); nothing was saved. Use \`hush config set server http://<ip>:7787\`.`
-        : `${error.source.from === "env" ? "HUSH_SERVER" : error.source.path} holds an invalid Server URL (${error.reason}); nothing was contacted. Use \`hush config set server http://<ip>:7787\`.`
-    case "ConfigInvalid":
-      return configInvalidText(error)
-    case "CreationMayHaveSucceeded":
-      return `Creation may have succeeded, but its receipt could not be verified. Do not retry creation; inspect the destination with ${findCommand(error.title, error.vault)} first.`
-    case "CreationUnverified":
-      return `Creation is unverified. Do not retry creation; inspect the destination by title with ${findCommand(error.title, error.vault)} first. Item reference: ${error.ref}.`
-    case "ChangeUnverified":
-      return "The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`."
-    case "InvalidValue":
-      return `The ${error.noun} ${invalidInputText[error.reason]}; nothing was ${error.outcome}.`
-    case "InputEmpty":
-      return `The ${error.noun} is empty; nothing was ${error.outcome}.`
-    case "InputSourceRequired":
-    case "InputSourceConflict":
-      return `Pass exactly one of \`--stdin\` (piped value), \`--prompt\` (hidden prompt) or \`--clipboard\` (macOS); nothing was ${error.outcome}.`
-    case "InvalidReference":
-      return `${error.input} is not a hush Reference (${error.reason}); nothing was read or run. References look like \`hush://Vault/Item/field\`.`
-    case "NoToken": {
+        : `${error.source.from === "env" ? "HUSH_SERVER" : error.source.path} holds an invalid Server URL (${error.reason}); nothing was contacted. Use \`hush config set server http://<ip>:7787\`.`,
+    ConfigInvalid: configInvalidText,
+    CreationMayHaveSucceeded: (error) =>
+      `Creation may have succeeded, but its receipt could not be verified. Do not retry creation; inspect the destination with ${findCommand(error.title, error.vault)} first.`,
+    CreationUnverified: (error) =>
+      `Creation is unverified. Do not retry creation; inspect the destination by title with ${findCommand(error.title, error.vault)} first. Item reference: ${error.ref}.`,
+    ChangeUnverified: () =>
+      "The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.",
+    InvalidValue: (error) => `The ${error.noun} ${invalidInputText[error.reason]}; nothing was ${error.outcome}.`,
+    InputEmpty: (error) => `The ${error.noun} is empty; nothing was ${error.outcome}.`,
+    InputSourceRequired: inputSourceText,
+    InputSourceConflict: inputSourceText,
+    InvalidReference: (error) =>
+      `${error.input} is not a hush Reference (${error.reason}); nothing was read or run. References look like \`hush://Vault/Item/field\`.`,
+    NoToken: (error) => {
       const missing = `No hush Token is available for ${error.server} (\`HUSH_TOKEN\` unset, none saved for this Server); nothing was read.`
 
       if (token === undefined) return `${missing} A human can run \`hush token issue\`, or set \`HUSH_TOKEN\`.`
       const issue = `hush token issue --label "${accountLabel(token.account)}" ${token.flag} ${error.vault ?? "<vault>"}`
 
       return `${missing} A human can run \`${issue}\` as ${accountName(token.account)} on ${token.account.hostname} (the Token is saved to that account's token file), or from another account ${savedFor(issue, token.account, false)}, or set \`HUSH_TOKEN\`.`
-    }
-
-    case "IssueFlagsInvalid":
-      return `${issueText(error)}; nothing was issued and no prompt was shown. See \`hush token issue --help\`.`
-    case "AuditFlagsInvalid":
-      return `${auditText(error)}; nothing was read and no prompt was shown. See \`hush audit --help\`.`
-    case "EditFlagsInvalid":
-      return "Pass either `--field <label>` with one of `--stdin`, `--prompt` or `--clipboard`, or `--remove <label>` alone; nothing was changed and no prompt was shown. See `hush item edit --help`."
-    case "TokenEnvInvalid":
-      return "`HUSH_TOKEN` does not hold a hush Token (expected `hush_` and 43 characters); nothing was read and the token file was not tried. Fix or unset it."
-    case "TokenFileInvalid":
-      return `Could not read the token file ${error.path} (${tokenFileReasonText(error)}); nothing was read and no other Token was tried. Fix or remove the file, or set \`HUSH_TOKEN\`.`
-    case "TokenFileInsecure":
-      return `The token file ${error.path} has mode ${error.mode}, so other users may read its Token; nothing was read. Run \`chmod 600 ${error.path}\` and Revoke the Token if it may have been copied.`
-    case "TokenAlreadySaved":
-      return error.command === "issue"
+    },
+    IssueFlagsInvalid: (error) =>
+      `${issueText(error)}; nothing was issued and no prompt was shown. See \`hush token issue --help\`.`,
+    AuditFlagsInvalid: (error) =>
+      `${auditText(error)}; nothing was read and no prompt was shown. See \`hush audit --help\`.`,
+    EditFlagsInvalid: () =>
+      "Pass either `--field <label>` with one of `--stdin`, `--prompt` or `--clipboard`, or `--remove <label>` alone; nothing was changed and no prompt was shown. See `hush item edit --help`.",
+    TokenEnvInvalid: () =>
+      "`HUSH_TOKEN` does not hold a hush Token (expected `hush_` and 43 characters); nothing was read and the token file was not tried. Fix or unset it.",
+    TokenFileInvalid: (error) =>
+      `Could not read the token file ${error.path} (${tokenFileReasonText(error)}); nothing was read and no other Token was tried. Fix or remove the file, or set \`HUSH_TOKEN\`.`,
+    TokenFileInsecure: (error) =>
+      `The token file ${error.path} has mode ${error.mode}, so other users may read its Token; nothing was read. Run \`chmod 600 ${error.path}\` and Revoke the Token if it may have been copied.`,
+    TokenAlreadySaved: (error) =>
+      error.command === "issue"
         ? `A Token for this Server is already saved (Label ${error.label}); nothing was issued or saved. Pass \`--replace\`, or \`--print\` to print the new Token instead.`
-        : `A Token for this Server is already saved (Label ${error.label}); nothing was saved. Pass \`--replace\` to replace it.`
-    case "TokenInputInvalid":
-      return "The input is not a hush Token (expected `hush_` and 43 characters) or a `hush token issue --print` receipt; nothing was saved."
-    case "FileWriteFailed":
-      return fileWriteText(error)
-    case "OutputExists":
-      return `${error.path} already exists; nothing was written. Choose a new file name; a backup never overwrites a file.`
-    case "BackupCorrupt":
-      return "The backup stream did not match its size or SHA-256; nothing was written. Run `hush backup` again."
-    case "InvalidAssignment":
-      return `Assignment ${error.position} is not NAME=hush://Vault/Item/field (${assignmentText(error.reason)}); nothing was read or run.`
-    case "EnvFileInvalid":
-      return `${error.path} line ${error.line}: ${lineText(error.reason)}; nothing was resolved or run.`
-    case "EnvTargetInvalid":
-      return "Pass exactly one of `--output <path>` or `--in-place`; nothing was resolved or written."
-    case "EnvFileUnreadable":
-      return `Could not read ${error.path} (${error.code}); nothing was resolved or run.`
-    case "ChildNotFound":
-      return `Could not start ${error.command}: not found; nothing was run (secrets were resolved but not exposed).`
-    case "ChildSignalled":
-      return `${error.command} was killed by signal ${error.signal} before it exited, so its result is unknown.`
-    case "ChildFailed":
-      return `Could not run ${error.command} (details suppressed); secrets were resolved but not exposed.`
-    case "TokenNotSaved":
-      return `Token ${error.label} was issued but could not be saved to ${error.path} (${notSavedReasonText(error)}) and cannot be shown again. Revoke it with \`hush token revoke "${error.label}"\` and issue a new one.`
-    case "StdinFramingInvalid":
-      return `stdin did not contain ${listOf(error.expected)}, one per line and nothing after; nothing was changed. See \`hush ${error.command} --help\`.`
-    case "StdinIsTerminal":
-      return `\`${error.flag}\` reads piped input but stdin is a terminal; nothing was ${error.outcome}. Pipe the input, or use ${error.flag === "--stdin" ? "`--prompt`" : "the default prompt"}.`
-    case "InitCodeEmpty":
-      return `No Init code was entered; nothing was changed. ${readInitCodeAgain}`
-    case "NoTerminal":
-      return error.prompt.for === "passphrase"
+        : `A Token for this Server is already saved (Label ${error.label}); nothing was saved. Pass \`--replace\` to replace it.`,
+    TokenInputInvalid: () =>
+      "The input is not a hush Token (expected `hush_` and 43 characters) or a `hush token issue --print` receipt; nothing was saved.",
+    FileWriteFailed: fileWriteText,
+    OutputExists: (error) =>
+      `${error.path} already exists; nothing was written. Choose a new file name; a backup never overwrites a file.`,
+    BackupCorrupt: () =>
+      "The backup stream did not match its size or SHA-256; nothing was written. Run `hush backup` again.",
+    InvalidAssignment: (error) =>
+      `Assignment ${error.position} is not NAME=hush://Vault/Item/field (${assignmentText(error.reason)}); nothing was read or run.`,
+    EnvFileInvalid: (error) =>
+      `${error.path} line ${error.line}: ${lineText(error.reason)}; nothing was resolved or run.`,
+    EnvTargetInvalid: () => "Pass exactly one of `--output <path>` or `--in-place`; nothing was resolved or written.",
+    EnvFileUnreadable: (error) => `Could not read ${error.path} (${error.code}); nothing was resolved or run.`,
+    ChildNotFound: (error) =>
+      `Could not start ${error.command}: not found; nothing was run (secrets were resolved but not exposed).`,
+    ChildSignalled: (error) =>
+      `${error.command} was killed by signal ${error.signal} before it exited, so its result is unknown.`,
+    ChildFailed: (error) =>
+      `Could not run ${error.command} (details suppressed); secrets were resolved but not exposed.`,
+    TokenNotSaved: (error) =>
+      `Token ${error.label} was issued but could not be saved to ${error.path} (${notSavedReasonText(error)}) and cannot be shown again. Revoke it with \`hush token revoke "${error.label}"\` and issue a new one.`,
+    StdinFramingInvalid: (error) =>
+      `stdin did not contain ${listOf(error.expected)}, one per line and nothing after; nothing was changed. See \`hush ${error.command} --help\`.`,
+    StdinIsTerminal: (error) =>
+      `\`${error.flag}\` reads piped input but stdin is a terminal; nothing was ${error.outcome}. Pipe the input, or use ${error.flag === "--stdin" ? "`--prompt`" : "the default prompt"}.`,
+    InitCodeEmpty: () => `No Init code was entered; nothing was changed. ${readInitCodeAgain}`,
+    NoTerminal: (error) =>
+      error.prompt.for === "passphrase"
         ? `hush ${error.prompt.command} needs a human with the Passphrase at a terminal; nothing was changed. Run it from an interactive terminal (or pipe secrets with \`--passphrase-stdin\`). Agents cannot run it.`
-        : `\`--prompt\` needs a terminal and there is none; nothing was ${error.prompt.outcome}. Pipe the value with \`--stdin\` instead.`
-    case "PromptCancelled":
-      return "Cancelled at the prompt; nothing was changed."
-    case "PassphraseMismatch":
-      return "The two new Passphrases differ; nothing was changed."
-    case "ClipboardUnsupported":
-      return `\`--clipboard\` works on macOS only; use \`--stdin\` or \`--prompt\`; nothing was ${error.outcome}.`
-    case "InputUnreadable":
-      return `The ${error.noun} could not be read (details suppressed); nothing was ${error.outcome}.`
-  }
-}
+        : `\`--prompt\` needs a terminal and there is none; nothing was ${error.prompt.outcome}. Pipe the value with \`--stdin\` instead.`,
+    PromptCancelled: () => "Cancelled at the prompt; nothing was changed.",
+    PassphraseMismatch: () => "The two new Passphrases differ; nothing was changed.",
+    ClipboardUnsupported: (error) =>
+      `\`--clipboard\` works on macOS only; use \`--stdin\` or \`--prompt\`; nothing was ${error.outcome}.`,
+    InputUnreadable: (error) =>
+      `The ${error.noun} could not be read (details suppressed); nothing was ${error.outcome}.`,
+  })
 
 // The Server errors (`ApiError`), rendered from their typed fields and the Server origin; a response body
 // never reaches the user verbatim (invariant 2).
-export const renderServer = (error: ApiError, server: string, token?: TokenContext): string => {
-  switch (error._tag) {
-    case "HostNotAllowed":
-      return error.host === null
+export const renderServer = (apiError: ApiError, server: string, token?: TokenContext): string =>
+  Match.valueTags(apiError, {
+    HostNotAllowed: (error) =>
+      error.host === null
         ? "The hush Server refused the request because it carried no Host header; nothing was read or changed. Point `HUSH_SERVER` at the Server's IP address."
-        : `The hush Server refused the request because it was addressed as ${error.host}, which is not on its allowed list; nothing was read or changed. Start it with \`--allowed-host ${error.host.replace(/:\d*$/, "")}\` (or \`HUSH_ALLOWED_HOSTS\`), or point \`HUSH_SERVER\` at its IP address.`
-    case "FunnelRequestRefused":
-      return "The hush Server refuses requests from Tailscale Funnel (the public internet); nothing was read or changed. Turn Funnel off for this port; use the tailnet."
-    case "BrowserRequestRefused":
-      return "The hush Server refuses requests carrying an Origin header, which browsers send; nothing was read or changed. Use the hush CLI."
-    case "UnsupportedContentType":
-      return `The hush Server accepts only JSON request bodies (got ${error.received ?? "none"}); nothing was read or changed. Send \`Content-Type: application/json\`.`
-    case "NotInitialised":
-      return `The hush Server at ${server} has not been initialised; nothing was read or changed. A human reads the Init code on the Server host (systemd: \`sudo cat /var/lib/hush/init-code\`; Docker: \`docker exec hush cat /data/init-code\`; Proxmox LXC: \`pct enter <CTID>\`, then \`cat /var/lib/hush/init-code\`; the Server's startup log prints the exact path) and runs \`hush init --vault <name>\`.`
-    case "AlreadyInitialised":
-      return `The hush Server at ${server} is already initialised; its Passphrase and data are unchanged. If you did not initialise it, someone else did: stop it and investigate. Otherwise use \`hush vault create\`.`
-    case "InitCodeInvalid":
-      return `The Init code is wrong; nothing was changed. ${readInitCodeAgain}`
-    case "PassphraseInvalid":
-      return `The new Passphrase is ${error.reason === "too-short" ? "too short (at least 12 characters)" : "too long"}; nothing was changed. Choose another.`
-    case "PassphraseIncorrect":
-      return `The Passphrase is incorrect; nothing was changed. You can try again ${error.retryAfterSeconds === 0 ? "now" : `in ${seconds(error.retryAfterSeconds)}`}; repeated failures slow every Passphrase operation on this Server.`
-    case "BackoffActive":
-      return `Too many incorrect Passphrase attempts; the Server will check the next one in ${seconds(error.retryAfterSeconds)}. Nothing was checked or changed. Wait, or restart the Server to clear the delay. If the delay keeps returning, someone is guessing: to Revoke a Token now, run \`hush server revoke <label>\` on the Server host, then block the source (README, "Incident").`
-    case "VaultNotFound":
-      return `Vault ${error.vault} does not exist on this Server; nothing was changed. \`hush vault list\` shows the Vaults.`
-    case "VaultExists":
-      return `A Vault named ${error.vault} already exists; nothing was changed.`
-    case "VaultNotEmpty":
-      return `Vault ${error.vault} still has ${count(error.items, "Item")} and ${count(error.activeTokens, "unrevoked Token")} granted to it; nothing was deleted. Delete its Items and Revoke those Tokens first.`
-    case "AuditUnavailable":
-      return "The hush Server could not write its Audit Log, so it refused the request and returned nothing. Check its disk space and logs (`journalctl -u hush` or `docker logs`)."
-    case "TokenRejected":
-      return tokenRejectedText(error)
-    case "VaultNotGranted":
-      return `Token ${error.label} is not granted Vault ${error.vault}; nothing was read or changed.${error.suggestion === undefined ? "" : ` Did you mean ${error.suggestion}?`} It is granted: ${error.granted.map(({ vault, access }) => `${vault} (${access})`).join(", ")}. If ${error.vault} is right, ask the human to run: ${replacementCommand(`hush token issue --label "${error.label}" ${token?.flag ?? "--read"} ${error.vault} --keep-grants --replace`, token)}.`
-    case "CreateNotAllowed":
-      return `Token ${error.label} has Read Access to Vault ${error.vault}, which cannot create Items; nothing was created. Ask the human to run: ${replacementCommand(`hush token issue --label "${error.label}" --create ${error.vault} --keep-grants --replace`, token)}.`
-    case "TokenLabelExists":
-      return `A Token labelled ${error.label} already exists (active or expired); nothing was issued. To replace it in one step, add \`--replace\` (and \`--keep-grants\` to keep its Grants), or choose another Label.`
-    case "TokenNotFound":
-      return `No unrevoked Token is labelled ${error.label}; nothing was revoked or issued. \`hush token list\` shows Tokens.`
-    case "LimitExceeded":
-      return error.what === "grants"
+        : `The hush Server refused the request because it was addressed as ${error.host}, which is not on its allowed list; nothing was read or changed. Start it with \`--allowed-host ${error.host.replace(/:\d*$/, "")}\` (or \`HUSH_ALLOWED_HOSTS\`), or point \`HUSH_SERVER\` at its IP address.`,
+    FunnelRequestRefused: () =>
+      "The hush Server refuses requests from Tailscale Funnel (the public internet); nothing was read or changed. Turn Funnel off for this port; use the tailnet.",
+    BrowserRequestRefused: () =>
+      "The hush Server refuses requests carrying an Origin header, which browsers send; nothing was read or changed. Use the hush CLI.",
+    UnsupportedContentType: (error) =>
+      `The hush Server accepts only JSON request bodies (got ${error.received ?? "none"}); nothing was read or changed. Send \`Content-Type: application/json\`.`,
+    NotInitialised: () =>
+      `The hush Server at ${server} has not been initialised; nothing was read or changed. A human reads the Init code on the Server host (systemd: \`sudo cat /var/lib/hush/init-code\`; Docker: \`docker exec hush cat /data/init-code\`; Proxmox LXC: \`pct enter <CTID>\`, then \`cat /var/lib/hush/init-code\`; the Server's startup log prints the exact path) and runs \`hush init --vault <name>\`.`,
+    AlreadyInitialised: () =>
+      `The hush Server at ${server} is already initialised; its Passphrase and data are unchanged. If you did not initialise it, someone else did: stop it and investigate. Otherwise use \`hush vault create\`.`,
+    InitCodeInvalid: () => `The Init code is wrong; nothing was changed. ${readInitCodeAgain}`,
+    PassphraseInvalid: (error) =>
+      `The new Passphrase is ${error.reason === "too-short" ? "too short (at least 12 characters)" : "too long"}; nothing was changed. Choose another.`,
+    PassphraseIncorrect: (error) =>
+      `The Passphrase is incorrect; nothing was changed. You can try again ${error.retryAfterSeconds === 0 ? "now" : `in ${seconds(error.retryAfterSeconds)}`}; repeated failures slow every Passphrase operation on this Server.`,
+    BackoffActive: (error) =>
+      `Too many incorrect Passphrase attempts; the Server will check the next one in ${seconds(error.retryAfterSeconds)}. Nothing was checked or changed. Wait, or restart the Server to clear the delay. If the delay keeps returning, someone is guessing: to Revoke a Token now, run \`hush server revoke <label>\` on the Server host, then block the source (README, "Incident").`,
+    VaultNotFound: (error) =>
+      `Vault ${error.vault} does not exist on this Server; nothing was changed. \`hush vault list\` shows the Vaults.`,
+    VaultExists: (error) => `A Vault named ${error.vault} already exists; nothing was changed.`,
+    VaultNotEmpty: (error) =>
+      `Vault ${error.vault} still has ${count(error.items, "Item")} and ${count(error.activeTokens, "unrevoked Token")} granted to it; nothing was deleted. Delete its Items and Revoke those Tokens first.`,
+    AuditUnavailable: () =>
+      "The hush Server could not write its Audit Log, so it refused the request and returned nothing. Check its disk space and logs (`journalctl -u hush` or `docker logs`).",
+    TokenRejected: tokenRejectedText,
+    VaultNotGranted: (error) =>
+      `Token ${error.label} is not granted Vault ${error.vault}; nothing was read or changed.${error.suggestion === undefined ? "" : ` Did you mean ${error.suggestion}?`} It is granted: ${error.granted.map(({ vault, access }) => `${vault} (${access})`).join(", ")}. If ${error.vault} is right, ask the human to run: ${replacementCommand(`hush token issue --label "${error.label}" ${token?.flag ?? "--read"} ${error.vault} --keep-grants --replace`, token)}.`,
+    CreateNotAllowed: (error) =>
+      `Token ${error.label} has Read Access to Vault ${error.vault}, which cannot create Items; nothing was created. Ask the human to run: ${replacementCommand(`hush token issue --label "${error.label}" --create ${error.vault} --keep-grants --replace`, token)}.`,
+    TokenLabelExists: (error) =>
+      `A Token labelled ${error.label} already exists (active or expired); nothing was issued. To replace it in one step, add \`--replace\` (and \`--keep-grants\` to keep its Grants), or choose another Label.`,
+    TokenNotFound: (error) =>
+      `No unrevoked Token is labelled ${error.label}; nothing was revoked or issued. \`hush token list\` shows Tokens.`,
+    LimitExceeded: (error) =>
+      error.what === "grants"
         ? `A Token can hold at most ${error.max} Grants; nothing was issued. Grant fewer Vaults (with \`--keep-grants\`, the kept Grants count too).`
-        : `One command can resolve at most ${error.max} References; nothing was read or run. Split them across several commands.`
-    case "InvalidName":
-      return `${error.what} is not a valid name (${error.reason}); nothing was changed. Names are 1-128 characters without \`/\` or control characters, not starting with \`-\` or with a space at either end.`
-    case "ItemExists":
-      return `An Item titled ${error.item} already exists in Vault ${error.vault}; nothing was created or overwritten. Run ${findCommand(error.item, error.vault)}, or choose another title.`
-    case "ItemNotFound":
-      return `Item ${error.item} does not exist in Vault ${error.vault}; nothing was changed. \`${findCommand(error.item, error.vault)}\` shows exact titles.`
-    case "FieldNotFound":
-      return `Item ${error.item} has no Field ${error.field}; nothing was changed. \`hush inventory --vault ${error.vault}\` lists its Fields.`
-    case "TitleRetired":
-      return `The title ${error.item} in Vault ${error.vault} was freed by a rename or delete, and Tokens cannot reuse it until the human releases it; nothing was created. Choose another title, or ask the human to run ${releaseCommand(error.vault, error.item)}.`
-    case "TitleNotRetired":
-      return `The title ${error.item} is not retired in Vault ${error.vault}; nothing was changed.`
-    case "UnknownField":
-      return `${error.kind} Items have no Field ${error.field}; nothing was changed. Allowed: ${error.allowed.join(", ")}.`
-    case "FieldRequired":
-      return `${error.kind} Items need their ${error.field} Field; nothing was changed.`
-    case "InvalidValue":
-      return `The value for ${error.field} ${error.reason === "empty" ? "is empty" : invalidInputText[error.reason]}; nothing was changed.`
-    case "InvalidReference":
-      return `${error.reference} is not a hush Reference (${error.reason}); nothing was read. References look like \`hush://Vault/Item/field\`.`
-    case "ReferenceNotFound":
-      return `${error.reference} does not exist (no such ${error.missing}); nothing was read and no command was run.${error.suggestions.length === 0 ? "" : ` Did you mean: ${error.suggestions.join(", ")}?`} Renaming an Item breaks old References; \`hush find\` gives current ones.`
-    case "IntegrityCheckFailed":
-      return `Stored data for ${damagedText(error.damaged)} failed its integrity check, so the database file was modified or corrupted; nothing was returned or changed. Restore the Server from a backup: see "Backup and restore" in the hush README.`
-  }
-}
+        : `One command can resolve at most ${error.max} References; nothing was read or run. Split them across several commands.`,
+    InvalidName: (error) =>
+      `${error.what} is not a valid name (${error.reason}); nothing was changed. Names are 1-128 characters without \`/\` or control characters, not starting with \`-\` or with a space at either end.`,
+    ItemExists: (error) =>
+      `An Item titled ${error.item} already exists in Vault ${error.vault}; nothing was created or overwritten. Run ${findCommand(error.item, error.vault)}, or choose another title.`,
+    ItemNotFound: (error) =>
+      `Item ${error.item} does not exist in Vault ${error.vault}; nothing was changed. \`${findCommand(error.item, error.vault)}\` shows exact titles.`,
+    FieldNotFound: (error) =>
+      `Item ${error.item} has no Field ${error.field}; nothing was changed. \`hush inventory --vault ${error.vault}\` lists its Fields.`,
+    TitleRetired: (error) =>
+      `The title ${error.item} in Vault ${error.vault} was freed by a rename or delete, and Tokens cannot reuse it until the human releases it; nothing was created. Choose another title, or ask the human to run ${releaseCommand(error.vault, error.item)}.`,
+    TitleNotRetired: (error) => `The title ${error.item} is not retired in Vault ${error.vault}; nothing was changed.`,
+    UnknownField: (error) =>
+      `${error.kind} Items have no Field ${error.field}; nothing was changed. Allowed: ${error.allowed.join(", ")}.`,
+    FieldRequired: (error) => `${error.kind} Items need their ${error.field} Field; nothing was changed.`,
+    InvalidValue: (error) =>
+      `The value for ${error.field} ${error.reason === "empty" ? "is empty" : invalidInputText[error.reason]}; nothing was changed.`,
+    InvalidReference: (error) =>
+      `${error.reference} is not a hush Reference (${error.reason}); nothing was read. References look like \`hush://Vault/Item/field\`.`,
+    ReferenceNotFound: (error) =>
+      `${error.reference} does not exist (no such ${error.missing}); nothing was read and no command was run.${error.suggestions.length === 0 ? "" : ` Did you mean: ${error.suggestions.join(", ")}?`} Renaming an Item breaks old References; \`hush find\` gives current ones.`,
+    IntegrityCheckFailed: (error) =>
+      `Stored data for ${damagedText(error.damaged)} failed its integrity check, so the database file was modified or corrupted; nothing was returned or changed. Restore the Server from a backup: see "Backup and restore" in the hush README.`,
+  })
 
 const damagedText = (damaged: Damaged): string => {
   switch (damaged.what) {

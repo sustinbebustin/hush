@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Database } from "bun:sqlite"
-import { Schema } from "effect"
+import { Predicate, Schema } from "effect"
 import { createHash } from "node:crypto"
 import { existsSync, statSync } from "node:fs"
 import { chmod, copyFile, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
@@ -51,7 +51,7 @@ const tables = ["meta", "vaults", "items", "fields", "tokens", "token_vaults", "
 const Count = Schema.decodeUnknownSync(Schema.Struct({ n: Schema.Number }))
 
 // The schema and the row count of every table, read from `path` alone.
-const shape = (path: string) => {
+const tableSummary = (path: string) => {
   const db = new Database(path, { readonly: true })
 
   try {
@@ -111,8 +111,8 @@ describe("hush backup <file>", () => {
         error: null,
       })
       // The snapshot was taken before its own audit row was written.
-      const live = shape(join(box.server.stateDir, "hush.db"))
-      assert.deepStrictEqual(shape(target), {
+      const live = tableSummary(join(box.server.stateDir, "hush.db"))
+      assert.deepStrictEqual(tableSummary(target), {
         ...live,
         counts: { ...live.counts, audit: (live.counts.audit ?? 0) - 1 },
       })
@@ -207,7 +207,7 @@ describe("hush server backup <file>", () => {
       assert.strictEqual(await mode(target), "600")
       // The file alone holds every row: it is a snapshot, not a copy of a database whose rows sit in a WAL.
       assert.deepStrictEqual(await readdir(box.backupDir), ["hush.db"])
-      assert.deepStrictEqual(shape(target), shape(join(box.server.stateDir, "hush.db")))
+      assert.deepStrictEqual(tableSummary(target), tableSummary(join(box.server.stateDir, "hush.db")))
     }))
 })
 
@@ -224,7 +224,7 @@ describe("hush server backup -", () => {
       assert.strictEqual(result.stderr, "")
       const written = join(box.backupDir, "from-stdout.db")
       await Bun.write(written, result.stdoutBytes)
-      assert.deepStrictEqual(shape(written), shape(join(box.server.stateDir, "hush.db")))
+      assert.deepStrictEqual(tableSummary(written), tableSummary(join(box.server.stateDir, "hush.db")))
       assert.deepStrictEqual(await snapshots(box), [])
     }))
 })
@@ -254,9 +254,9 @@ const pinBackoff = async (box: Sandbox, seconds: number) => {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const answer = await wrongPassphrase(box)
 
-    if (answer._tag === "PassphraseIncorrect" && answer.retryAfterSeconds >= seconds) return
+    if (Predicate.isTagged(answer, "PassphraseIncorrect") && answer.retryAfterSeconds >= seconds) return
 
-    if (answer._tag === "BackoffActive") await wait(answer.retryAfterSeconds)
+    if (Predicate.isTagged(answer, "BackoffActive")) await wait(answer.retryAfterSeconds)
   }
 
   throw new Error(`the backoff did not pin for ${seconds} s after 20 wrong Passphrases`)
@@ -507,7 +507,7 @@ describe("hush server backup to another filesystem (skipped where /dev/shm is ab
           assert.strictEqual(JSON.parse(result.stdout).file, target)
           assert.strictEqual(await mode(target), "600")
           assert.deepStrictEqual(await readdir(directory), ["hush.db"])
-          assert.deepStrictEqual(shape(target), shape(join(box.server.stateDir, "hush.db")))
+          assert.deepStrictEqual(tableSummary(target), tableSummary(join(box.server.stateDir, "hush.db")))
           // Into the backup directory, so the leak scan reads it.
           await copyFile(target, join(box.backupDir, "from-other-filesystem.db"))
         } finally {

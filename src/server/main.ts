@@ -1,5 +1,5 @@
 import { BunHttpServer } from "@effect/platform-bun"
-import { Console, Context, Effect, Layer, Ref, References, Schema } from "effect"
+import { Console, Context, Effect, Layer, Predicate, Ref, References, Schema } from "effect"
 import { HttpServer } from "effect/http"
 import { SqlClient, SqlError } from "effect/sql"
 
@@ -25,12 +25,12 @@ const maxRequestBodySize = 1_048_576
 // without a system code is not a bind failure and stays a defect.
 const bindError =
   (ip: string, port: number) =>
-  (defect: unknown): Effect.Effect<never, ListenAddressUnavailable | ListenAddressInUse | ListenFailed> => {
-    const code = PlatformCause.code(defect)
+  (cause: unknown): Effect.Effect<never, ListenAddressUnavailable | ListenAddressInUse | ListenFailed> => {
+    const code = PlatformCause.code(cause)
 
     switch (code) {
       case undefined:
-        return Effect.die(defect)
+        return Effect.die(cause)
       case "EADDRNOTAVAIL":
         return Effect.fail(new ListenAddressUnavailable({ ip }))
       case "EADDRINUSE":
@@ -49,7 +49,7 @@ const bind = (address: ListenAddress, port: number) =>
     Effect.flatMap((context) => {
       const bound = Context.get(context, HttpServer.HttpServer).address
 
-      return bound._tag === "UnixPathAddress"
+      return Predicate.isTagged(bound, "UnixPathAddress")
         ? Effect.die(new Error("the listener bound a unix socket"))
         : Effect.succeed({ ip: address.ip, port: bound.port, context })
     }),
@@ -102,22 +102,29 @@ export const run = (
           message: cleartextWarning,
         })
 
-      if (state._tag === "Uninitialised")
+      if (ServerState.$is("Uninitialised")(state))
         yield* Log.write({
           event: "init-code-written",
           path: state.initCodeFile,
           readWith: `cat ${state.initCodeFile}`,
           next: "hush init",
         })
+
+      const listening = {
+        event: "listening",
+        version: Version.current,
+        state: ServerState.wire(state),
+        addresses: listeners.map(({ ip, port }) => ({ ip, port })),
+        allowAnyListen: config.allowAnyListen,
+      }
+
       yield* Console.log(
-        JSON.stringify({
-          event: "listening",
-          version: Version.current,
-          state: ServerState.wire(state),
-          addresses: listeners.map(({ ip, port }) => ({ ip, port })),
-          allowAnyListen: config.allowAnyListen,
-          ...(state._tag === "Uninitialised" ? { initCodeFile: state.initCodeFile } : {}),
-        }),
+        JSON.stringify(
+          ServerState.$match(state, {
+            Ready: () => listening,
+            Uninitialised: ({ initCodeFile }) => ({ ...listening, initCodeFile }),
+          }),
+        ),
       )
 
       return yield* Effect.never

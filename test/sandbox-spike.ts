@@ -1,4 +1,4 @@
-import { Result, Schema } from "effect"
+import { Match, Result, Schema } from "effect"
 import { spawn } from "node:child_process"
 import { access, mkdtemp, readFile, rm } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
@@ -371,7 +371,7 @@ const checkVariant = async (variant: string, hush: ReadonlyArray<string>) => {
 const checkTokenFile = async () => {
   const outcome = await readFile(tokenFile).then(
     (bytes) => (bytes.length === 0 ? "reads as empty" : "readable"),
-    (error: unknown) => PlatformCause.code(error) ?? "unreadable",
+    (cause: unknown) => PlatformCause.code(cause) ?? "unreadable",
   )
 
   if (outcome === "ENOENT")
@@ -410,13 +410,18 @@ const check = async (args: ReadonlyArray<string>) => {
 }
 
 const [mode, ...rest] = process.argv.slice(2)
-const main = mode === "setup" ? setup : mode === "check" ? check : undefined
+
+const main = Match.value(mode).pipe(
+  Match.when("setup", () => setup),
+  Match.when("check", () => check),
+  Match.orElse(() => undefined),
+)
 
 if (main === undefined) {
   console.error("usage: bun test/sandbox-spike.ts setup [--tailnet <ip>] [--binary <path>] | check [--binary <path>]")
   process.exitCode = 2
 } else
-  await main(rest).catch((error: unknown) => {
-    console.error(`spike: ${PlatformCause.message(error) ?? String(error)}`)
+  await main(rest).catch((cause: unknown) => {
+    console.error(`spike: ${PlatformCause.message(cause) ?? String(cause)}`)
     process.exitCode = 1
   })

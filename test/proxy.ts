@@ -1,3 +1,4 @@
+import { Option, Predicate, Schema } from "effect"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 
 // The test proxy: a loopback HTTP server that logs each request line and forwards it.
@@ -24,22 +25,27 @@ const readBody = (request: IncomingMessage): Promise<Buffer> =>
     request.on("error", reject)
   })
 
-// Appends a marker to each value of a resolve answer, keeping it valid JSON the CLI decodes.
-const corrupt = (body: string): string => {
-  const parsed: unknown = JSON.parse(body)
+// Every other key of an object, kept as it came so the corrupted answer differs only in its values.
+const rest = [Schema.Record(Schema.String, Schema.Json)] as const
 
-  if (typeof parsed !== "object" || parsed === null || !("values" in parsed) || !Array.isArray(parsed.values))
-    return body
+const ResolveAnswer = Schema.fromJsonString(
+  Schema.StructWithRest(
+    Schema.Struct({ values: Schema.Array(Schema.StructWithRest(Schema.Struct({ value: Schema.String }), rest)) }),
+    rest,
+  ),
+)
 
-  return JSON.stringify({
-    ...parsed,
-    values: parsed.values.map((entry: unknown) =>
-      typeof entry === "object" && entry !== null && "value" in entry && typeof entry.value === "string"
-        ? { ...entry, value: `${entry.value}-corrupted` }
-        : entry,
-    ),
+// Appends a marker to each value of a resolve answer, keeping it valid JSON the CLI decodes; any other body
+// passes unchanged.
+const corrupt = (body: string): string =>
+  Option.match(Schema.decodeUnknownOption(ResolveAnswer)(body), {
+    onNone: () => body,
+    onSome: (answer) =>
+      JSON.stringify({
+        ...answer,
+        values: answer.values.map((entry) => ({ ...entry, value: `${entry.value}-corrupted` })),
+      }),
   })
-}
 
 // Headers for this hop only; `proxy-authorization` carries a proxy's userinfo and never reaches the Server.
 const hopByHop = new Set(["host", "connection", "proxy-authorization", "proxy-connection"])
@@ -73,7 +79,7 @@ export const start = async (upstream: string): Promise<Proxy> => {
     const headers = new Headers()
 
     for (const [name, value] of Object.entries(request.headers))
-      if (typeof value === "string" && !hopByHop.has(name)) headers.set(name, value)
+      if (Predicate.isString(value) && !hopByHop.has(name)) headers.set(name, value)
     const body = request.method === "GET" ? undefined : new Uint8Array(await readBody(request))
     // `proxy: false`: the forward goes straight to its target whatever the test runner's proxy variables say.
     const answer = await fetch(url, { method: request.method, headers, body, proxy: false })
@@ -82,11 +88,11 @@ export const start = async (upstream: string): Promise<Proxy> => {
     if (current === "drop-response") return request.socket.destroy()
     const sent = current === "corrupt-response" ? corrupted(url.pathname, answer.ok, bytes) : bytes
 
-    const forwarded: Record<string, string> = {
-      "content-type": answer.headers.get("content-type") ?? "application/json",
-    }
+    const forwarded = Object.fromEntries([
+      ["content-type", answer.headers.get("content-type") ?? "application/json"],
+      ...[...answer.headers].filter(([name]) => name.startsWith("x-hush-")),
+    ])
 
-    for (const [name, value] of answer.headers) if (name.startsWith("x-hush-")) forwarded[name] = value
     response.writeHead(answer.status, forwarded)
     response.end(sent)
   }
@@ -98,7 +104,7 @@ export const start = async (upstream: string): Promise<Proxy> => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
   const address = server.address()
 
-  if (address === null || typeof address === "string") throw new Error("the test proxy has no TCP address")
+  if (address === null || Predicate.isString(address)) throw new Error("the test proxy has no TCP address")
 
   return {
     url: `http://127.0.0.1:${address.port}`,

@@ -11,7 +11,12 @@ const items = [
   { ref: "hush://Work/Database/password", title: "Database" },
 ]
 
-const matching = (query: string) => items.filter(({ title }) => Match.matches(query, title)).map(({ ref }) => ref)
+const matching = (query: string) =>
+  items
+    .values()
+    .filter(({ title }) => Match.matches(query, title))
+    .map(({ ref }) => ref)
+    .toArray()
 
 describe("Match.matches", () => {
   it("matches titles containing every term of a query, case-insensitively", () => {

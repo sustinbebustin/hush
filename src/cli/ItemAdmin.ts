@@ -1,4 +1,4 @@
-import { Effect, Redacted, Result } from "effect"
+import { Data, Effect, Redacted, Result } from "effect"
 
 import { Api, type ItemChange } from "../shared/Api.js"
 import { parseName } from "../shared/ApiError.js"
@@ -22,9 +22,12 @@ import type { Target } from "./Target.js"
 const parse = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 
 // What `item edit` was asked to do, from its flags: set a Field from one private source, or remove one.
-type Edit =
-  | { readonly _tag: "Set"; readonly label: string; readonly from: PrivateInput.PrivateSource }
-  | { readonly _tag: "Remove"; readonly label: string }
+type Edit = Data.TaggedEnum<{
+  Set: { readonly label: string; readonly from: PrivateInput.PrivateSource }
+  Remove: { readonly label: string }
+}>
+
+const Edit = Data.taggedEnum<Edit>()
 
 const editOf = (
   input: ItemEditInput,
@@ -32,11 +35,10 @@ const editOf = (
   const { field, remove, sources } = input
 
   if (field !== undefined && remove === undefined)
-    return Result.map(PrivateInput.source(sources, "changed"), (from) => ({ _tag: "Set", label: field, from }))
+    return Result.map(PrivateInput.source(sources, "changed"), (from) => Edit.Set({ label: field, from }))
   const anySource = sources.stdin || sources.prompt || sources.clipboard
 
-  if (remove !== undefined && field === undefined && !anySource)
-    return Result.succeed({ _tag: "Remove", label: remove })
+  if (remove !== undefined && field === undefined && !anySource) return Result.succeed(Edit.Remove({ label: remove }))
 
   return Result.fail(new EditFlagsInvalid())
 }
@@ -45,7 +47,7 @@ const editOf = (
 // after the Passphrase line;otherwise the Passphrase comes first, then the value from its own source.
 const editSecrets = (edit: Edit, label: Name) => (command: string, source: SecretSource) =>
   Effect.gen(function* () {
-    if (edit._tag === "Remove") {
+    if (Edit.$is("Remove")(edit)) {
       const change: ItemChange = { remove: label }
 
       return { passphrase: yield* passphraseOnly(command, source), change }

@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Option, Schema } from "effect"
 import { readFile, stat } from "node:fs/promises"
 import { join } from "node:path"
 
@@ -227,9 +228,11 @@ describe("a refused item edit changes nothing", () => {
 const tokenCreate = (box: Sandbox, title: string) =>
   box.run(["create", "api-credential", "--title", title, "--vault", "Personal", "--stdin"], { input: `${rotated}\n` })
 
+const RetiredRows = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ title_key: Schema.String })))
+
 const retiredKeys = async (box: Sandbox) =>
-  (await rows(box, "SELECT title_key FROM retired_titles ORDER BY title_key")).map((row) =>
-    typeof row === "object" && row !== null && "title_key" in row ? row.title_key : undefined,
+  RetiredRows(await rows(box, "SELECT title_key FROM retired_titles ORDER BY title_key")).map(
+    ({ title_key }) => title_key,
   )
 
 const releaseNotice = (title: string) =>
@@ -409,7 +412,7 @@ describe("hush item delete and item release", () => {
 })
 
 // An `ok` audit row of a Passphrase operation on Personal.
-const okRow = (action: string, detail: unknown) => ({
+const okRow = (action: string, detail: { readonly [key: string]: string }) => ({
   actor: "passphrase",
   action,
   vaults: '["Personal"]',
@@ -440,17 +443,20 @@ describe("the Audit Log of Item operations", () => {
     }))
 })
 
+const SealedRow = Schema.decodeUnknownOption(Schema.Struct({ sealed: Schema.Uint8Array }))
+
 // The sealed value of `title`'s `label` Field, read raw.
 const sealedOf = (box: Sandbox, title: string, label: string) =>
   box.inspect((db) => {
-    const row = db
-      .query("SELECT f.sealed FROM fields f JOIN items i ON i.id = f.item_id WHERE i.title = ? AND f.label = ?")
-      .get(title, label)
+    const row = SealedRow(
+      db
+        .query("SELECT f.sealed FROM fields f JOIN items i ON i.id = f.item_id WHERE i.title = ? AND f.label = ?")
+        .get(title, label),
+    )
 
-    if (typeof row !== "object" || row === null || !("sealed" in row) || !(row.sealed instanceof Uint8Array))
-      throw new Error(`no sealed value for ${title}/${label}`)
+    if (Option.isNone(row)) throw new Error(`no sealed value for ${title}/${label}`)
 
-    return Buffer.from(row.sealed)
+    return Buffer.from(row.value.sealed)
   })
 
 // The database files that hold `bytes`, read raw.

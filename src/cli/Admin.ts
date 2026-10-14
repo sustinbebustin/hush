@@ -1,4 +1,4 @@
-import { Clock, Effect, Redacted, Result, Schema } from "effect"
+import { Clock, Data, Effect, Redacted, Result, Schema, type Types } from "effect"
 
 import type { Access, Grant } from "../shared/Access.js"
 import {
@@ -7,6 +7,7 @@ import {
   type AuditRequest,
   maxTtlSeconds,
   type TokenIssueReceipt,
+  type TokenIssueRequest,
   type TokenRevoked,
 } from "../shared/Api.js"
 import { type InvalidName, parseName } from "../shared/ApiError.js"
@@ -249,7 +250,9 @@ export const tokenStatus = (input: { readonly target: Target; readonly env: EnvV
       choice.token,
     )
 
-    return { ...described, source: choice._tag === "Env" ? "env" : "file" } as const
+    const source = TokenStore.TokenChoice.$match(choice, { Env: () => "env" as const, Saved: () => "file" as const })
+
+    return { ...described, source } as const
   })
 
 const Receipt = Schema.Struct({ token: Token.schema })
@@ -300,13 +303,14 @@ export const tokenSave = (input: {
       "save",
     )
 
-    return {
+    const receipt = {
       saved: saved.path,
       label: described.label,
       grants: described.grants,
       expiresAt: described.expiresAt,
-      ...(saved.replaced === undefined ? {} : { replaced: saved.replaced }),
     }
+
+    return saved.replaced === undefined ? receipt : { ...receipt, replaced: saved.replaced }
   })
 
 // `hush token forget`: drops the saved entry for this Server and contacts nothing, so the Token stays valid on the
@@ -343,7 +347,12 @@ export const writeDownNotice =
 
 // Where an issued Token goes: saved for this Server (over an existing entry only with `replace`), or printed in
 // the receipt and saved nowhere.
-export type Delivery = { readonly _tag: "Save"; readonly replace: boolean } | { readonly _tag: "Print" }
+export type Delivery = Data.TaggedEnum<{
+  Save: { readonly replace: boolean }
+  Print: {}
+}>
+
+export const Delivery = Data.taggedEnum<Delivery>()
 
 // `init --vault`: the first Vault and the Read+Create Token Init issues for it.
 export interface FirstVault {
@@ -397,7 +406,7 @@ export const init = (input: {
         delivery: firstVault.delivery,
       }
 
-      if (first.delivery._tag === "Save") yield* TokenStore.checkSavable(target, first.delivery.replace, env)
+      if (Delivery.$is("Save")(first.delivery)) yield* TokenStore.checkSavable(target, first.delivery.replace, env)
 
       return first
     }),
@@ -418,13 +427,12 @@ const sendInit = (input: {
 
     if (initCode === "") return yield* new InitCodeEmpty()
 
+    const secretsOnly = { initCode: Redacted.make(initCode), passphrase: secrets.passphrase }
+
     const receipt = yield* Client.request(Api, target, (client) =>
       client.admin.init({
-        payload: {
-          initCode: Redacted.make(initCode),
-          passphrase: secrets.passphrase,
-          ...(first === undefined ? {} : { first: { vault: first.vault, label: first.label } }),
-        },
+        payload:
+          first === undefined ? secretsOnly : { ...secretsOnly, first: { vault: first.vault, label: first.label } },
       }),
     )
 
@@ -436,21 +444,14 @@ const sendInit = (input: {
 
     if (Result.isFailure(parsed)) return yield* new UnexpectedResponse({ url: target.origin, status: 200 })
 
-    switch (first.delivery._tag) {
-      case "Print":
-        return { state: receipt.state, vault, label, grants, token: parsed.success }
-      case "Save": {
-        const saved = yield* saveIssued({
-          target,
-          label: first.label,
-          token: Redacted.make(parsed.success),
-          replace: first.delivery.replace,
-          env,
-        })
-
-        return { state: receipt.state, vault, label, grants, saved: saved.path }
-      }
-    }
+    return yield* Delivery.$match(first.delivery, {
+      Print: () => Effect.succeed({ state: receipt.state, vault, label, grants, token: parsed.success }),
+      Save: ({ replace }) =>
+        Effect.map(
+          saveIssued({ target, label: first.label, token: Redacted.make(parsed.success), replace, env }),
+          (saved) => ({ state: receipt.state, vault, label, grants, saved: saved.path }),
+        ),
+    })
   })
 
 const ttlUnits = { s: 1, m: 60, h: 3_600, d: 86_400, w: 604_800 } as const
@@ -536,16 +537,19 @@ export const auditQuery = (
     const since = flags.since === undefined ? undefined : yield* parseSince(flags.since, nowMs)
     const limit = yield* numberFlag(flags, "limit", auditLimit.max)
     const before = yield* numberFlag(flags, "before", Number.MAX_SAFE_INTEGER)
+    const query: Types.Mutable<AuditQuery> = {}
 
-    const query: AuditQuery = {
-      ...(vault === undefined ? {} : { vault }),
-      ...(label === undefined ? {} : { label }),
-      ...(since === undefined ? {} : { since }),
-      ...(limit === undefined ? {} : { limit }),
-      ...(before === undefined ? {} : { before }),
-    }
+    if (vault !== undefined) query.vault = vault
 
-    return query
+    if (label !== undefined) query.label = label
+
+    if (since !== undefined) query.since = since
+
+    if (limit !== undefined) query.limit = limit
+
+    if (before !== undefined) query.before = before
+
+    return query satisfies AuditQuery
   })
 
 // `hush audit`: the flags, then the Passphrase, then one `admin/audit`. It never sends a Token.
@@ -577,14 +581,19 @@ export interface TokenIssueInput {
 
 // What happens to the Token with the same Label: nothing (a live one is `TokenLabelExists`), or revoked in the
 // issue transaction, optionally handing its Grants on.
-type Replacement = { readonly _tag: "None" } | { readonly _tag: "Replace"; readonly keepGrants: boolean }
+type Replacement = Data.TaggedEnum<{
+  None: {}
+  Replace: { readonly keepGrants: boolean }
+}>
+
+const Replacement = Data.taggedEnum<Replacement>()
 
 const replacementOf = (input: TokenIssueInput): Result.Result<Replacement, IssueFlagsInvalid> => {
-  if (input.replace) return Result.succeed({ _tag: "Replace", keepGrants: input.keepGrants })
+  if (input.replace) return Result.succeed(Replacement.Replace({ keepGrants: input.keepGrants }))
 
   return input.keepGrants
     ? Result.fail(new IssueFlagsInvalid({ problem: { reason: "keep-grants-needs-replace" } }))
-    : Result.succeed({ _tag: "None" })
+    : Result.succeed(Replacement.None())
 }
 
 // The flags and names of `token issue`, checked before any secret is read; a Vault named twice, by name identity,
@@ -592,7 +601,7 @@ const replacementOf = (input: TokenIssueInput): Result.Result<Replacement, Issue
 const issueFlags = (input: TokenIssueInput) =>
   Effect.gen(function* () {
     const replacement = yield* Effect.fromResult(replacementOf(input))
-    const keepGrants = replacement._tag === "Replace" && replacement.keepGrants
+    const keepGrants = Replacement.$is("Replace")(replacement) && replacement.keepGrants
 
     if (input.read.length + input.create.length === 0 && !keepGrants)
       return yield* new IssueFlagsInvalid({ problem: { reason: "no-grants" } })
@@ -649,7 +658,7 @@ export interface Delivered {
 // `hush token issue`: flags and names, then the token-file checks unless `--print`, then the Passphrase, then one
 // `admin/tokens/issue`, then the Token's delivery.
 export const tokenIssue = (input: TokenIssueInput) => {
-  const delivery: Delivery = input.print ? { _tag: "Print" } : { _tag: "Save", replace: input.replace }
+  const delivery = input.print ? Delivery.Print() : Delivery.Save({ replace: input.replace })
 
   return passphraseCommand({
     command: "token issue",
@@ -658,25 +667,24 @@ export const tokenIssue = (input: TokenIssueInput) => {
     prepare: Effect.gen(function* () {
       const flags = yield* issueFlags(input)
 
-      if (delivery._tag === "Save") yield* TokenStore.checkSavable(input.target, delivery.replace, input.env)
+      if (Delivery.$is("Save")(delivery)) yield* TokenStore.checkSavable(input.target, delivery.replace, input.env)
 
       return flags
     }),
     send: ({ label, grants, ttlSeconds, replacement }, passphrase) =>
       Effect.gen(function* () {
+        const payload: Types.Mutable<TokenIssueRequest> = { passphrase, label, grants }
+
+        if (ttlSeconds !== undefined) payload.ttlSeconds = ttlSeconds
+
+        if (Replacement.$is("Replace")(replacement)) {
+          payload.replaces = true
+
+          if (replacement.keepGrants) payload.keepGrants = true
+        }
+
         const issued = yield* unverifiedOnTransport(
-          Client.request(Api, input.target, (client) =>
-            client.admin.tokensIssue({
-              payload: {
-                passphrase,
-                label,
-                grants,
-                ...(ttlSeconds === undefined ? {} : { ttlSeconds }),
-                ...(replacement._tag === "Replace" ? { replaces: true } : {}),
-                ...(replacement._tag === "Replace" && replacement.keepGrants ? { keepGrants: true } : {}),
-              },
-            }),
-          ),
+          Client.request(Api, input.target, (client) => client.admin.tokensIssue({ payload })),
         )
 
         return yield* deliverIssued({ target: input.target, issued, label, delivery, env: input.env })
@@ -706,7 +714,7 @@ export const deliverIssued = (input: {
       revokedOnServer: issued.replaced,
     }
 
-    if (delivery._tag === "Print") {
+    if (Delivery.$is("Print")(delivery)) {
       const printed: Delivered = { receipt: { ...shown, token: parsed.success }, notices: [] }
 
       return printed
@@ -725,12 +733,11 @@ export const deliverIssued = (input: {
         ? undefined
         : previous
 
-    const receipt: SavedReceipt = {
-      ...shown,
-      saved: saved.path,
-      ...(previous === undefined ? {} : { replacedLocally: previous }),
-      ...(stillActive === undefined ? {} : { stillActive }),
-    }
+    const receipt: Types.Mutable<SavedReceipt> = { ...shown, saved: saved.path }
+
+    if (previous !== undefined) receipt.replacedLocally = previous
+
+    if (stillActive !== undefined) receipt.stillActive = stillActive
 
     const delivered: Delivered = {
       receipt,

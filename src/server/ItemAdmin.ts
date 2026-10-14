@@ -215,7 +215,7 @@ const changeDetail = (change: ItemChange): Audit.Detail => {
 // `items/edit`: one Field set or removed, then the WAL is checkpointed so the old seal leaves the files.
 export const edit = (request: ItemEditRequest, peer: string | null, sealer: Sealer = Keys) => {
   const title = nameOf(request.item)
-  const detail: Audit.Detail = { ...(title === undefined ? {} : { title }), ...changeDetail(request.change) }
+  const detail: Audit.Detail = { title, ...changeDetail(request.change) }
 
   return Passphrase.audited({
     passphrase: request.passphrase,
@@ -303,7 +303,7 @@ export const rename = (request: ItemRenameRequest, peer: string | null) => {
     peer,
     scope: {
       vaults: Audit.named(request.vault),
-      detail: { ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) },
+      detail: { from, to },
     },
     exclusive: false,
     checkpoint: true,
@@ -316,9 +316,8 @@ export const rename = (request: ItemRenameRequest, peer: string | null) => {
         const { vault } = located
         const item = yield* ofKind(vault, located.item)
         yield* sql`UPDATE items SET title = ${newTitle}, title_key = ${Name.key(newTitle)} WHERE id = ${item.id}`.pipe(
-          Effect.catchIf(
-            (error) => error.reason._tag === "UniqueViolation",
-            () => Effect.fail(new ItemExists({ vault: vault.name, item: newTitle })),
+          Effect.catchReason("SqlError", "UniqueViolation", () =>
+            Effect.fail(new ItemExists({ vault: vault.name, item: newTitle })),
           ),
           Effect.catchTag("SqlError", Effect.die),
         )
@@ -355,7 +354,7 @@ export const remove = (request: ItemRequest, peer: string | null) => {
     passphrase: request.passphrase,
     action: "item.delete",
     peer,
-    scope: { vaults: Audit.named(request.vault), ...(title === undefined ? {} : { detail: { title } }) },
+    scope: { vaults: Audit.named(request.vault), detail: title === undefined ? undefined : { title } },
     exclusive: false,
     checkpoint: true,
     unlock: Keys.fromPassphrase,
@@ -381,7 +380,7 @@ export const releaseTitle = (request: ItemReleaseRequest, peer: string | null) =
     passphrase: request.passphrase,
     action: "item.release",
     peer,
-    scope: { vaults: Audit.named(request.vault), ...(title === undefined ? {} : { detail: { title } }) },
+    scope: { vaults: Audit.named(request.vault), detail: title === undefined ? undefined : { title } },
     exclusive: false,
     checkpoint: false,
     unlock: Keys.fromPassphrase,

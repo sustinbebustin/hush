@@ -1,3 +1,5 @@
+import { Predicate } from "effect"
+
 import * as CliErrors from "../src/cli/CliError.js"
 import * as StartupErrors from "../src/server/StartupError.js"
 import * as ApiErrors from "../src/shared/ApiError.js"
@@ -17,9 +19,9 @@ export type ExportedTags<Module> = {
 
 // A `Schema.TaggedError` class, whose `identifier` is its tag.
 const isErrorClass = (value: unknown): value is { readonly identifier: string } =>
-  typeof value === "function" && "identifier" in value && typeof value.identifier === "string"
+  Predicate.isFunction(value) && Predicate.hasProperty(value, "identifier") && Predicate.isString(value.identifier)
 
-const exportedTags = (module: object): ReadonlyArray<string> =>
+const exportedTags = (module: (typeof modules)[keyof typeof modules]): ReadonlyArray<string> =>
   Object.values(module).flatMap((value) => (isErrorClass(value) ? [value.identifier] : []))
 
 export const tags: ReadonlySet<string> = new Set(Object.values(modules).flatMap(exportedTags))

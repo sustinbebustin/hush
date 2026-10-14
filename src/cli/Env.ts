@@ -1,4 +1,4 @@
-import { type Array as Arr, Effect, Redacted, Result, Schema } from "effect"
+import { type Array as Arr, Data, Effect, Redacted, Result, Schema } from "effect"
 import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 
@@ -34,11 +34,14 @@ export type ReferenceInvalidReason = (typeof referenceReasons)[number]
 
 export type AssignmentInvalidReason = "not-assignment" | "op-reference" | ReferenceInvalidReason
 
-export type EnvLine =
-  | { readonly _tag: "Verbatim"; readonly original: string }
-  | { readonly _tag: "Plain"; readonly original: string; readonly name: string; readonly value: string }
-  | { readonly _tag: "Reference"; readonly original: string; readonly name: string; readonly reference: string }
-  | { readonly _tag: "Other"; readonly original: string; readonly line: number }
+export type EnvLine = Data.TaggedEnum<{
+  Verbatim: { readonly original: string }
+  Plain: { readonly original: string; readonly name: string; readonly value: string }
+  Reference: { readonly original: string; readonly name: string; readonly reference: string }
+  Other: { readonly original: string; readonly line: number }
+}>
+
+export const EnvLine = Data.taggedEnum<EnvLine>()
 
 // Never carries the line's text: a malformed line may be a stray pasted secret.
 export class LineInvalid extends Schema.TaggedError<LineInvalid>()("LineInvalid", {
@@ -89,27 +92,27 @@ const unquote = (value: string): string =>
 const parseLine = (original: string, line: number): Result.Result<EnvLine, LineInvalid> => {
   const trimmed = original.trim()
 
-  if (trimmed === "" || trimmed.startsWith("#")) return Result.succeed({ _tag: "Verbatim", original })
+  if (trimmed === "" || trimmed.startsWith("#")) return Result.succeed(EnvLine.Verbatim({ original }))
   const assignment = trimmed.startsWith("export ") ? trimmed.slice(7).trim() : trimmed
   const parts = split(assignment)
 
-  if (parts === undefined) return Result.succeed({ _tag: "Other", original, line })
+  if (parts === undefined) return Result.succeed(EnvLine.Other({ original, line }))
   const name = parts.name.trim()
 
-  if (!namePattern.test(name)) return Result.succeed({ _tag: "Other", original, line })
+  if (!namePattern.test(name)) return Result.succeed(EnvLine.Other({ original, line }))
   const value = unquote(parts.value.trim())
 
   switch (scheme(value)) {
     case "hush":
       return Result.mapBoth(normalizeReference(value), {
-        onSuccess: (formatted) => ({ _tag: "Reference", original, name, reference: formatted }),
+        onSuccess: (formatted) => EnvLine.Reference({ original, name, reference: formatted }),
         onFailure: (reason) => new LineInvalid({ line, reason }),
       })
     case "op":
       // A leftover 1Password `op://` template line must never inject the literal reference string.
       return Result.fail(new LineInvalid({ line, reason: "op-reference" }))
     case "none":
-      return Result.succeed({ _tag: "Plain", original, name, value })
+      return Result.succeed(EnvLine.Plain({ original, name, value }))
   }
 }
 
@@ -119,6 +122,8 @@ export const parse = (content: string): Result.Result<ReadonlyArray<EnvLine>, Li
 
 export const render = (assignments: ReadonlyArray<Assignment>): string =>
   assignments.map(({ name, reference }) => `${name}=${reference}`).join("\n") + "\n"
+
+const isReferenceLine = EnvLine.$is("Reference")
 
 const quote = (value: string): string =>
   `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n").replaceAll("\r", "\\r")}"`
@@ -131,7 +136,7 @@ export const resolve = <E, R>(
 ): Effect.Effect<{ readonly content: string; readonly count: number }, E | LineInvalid, R> =>
   Effect.gen(function* () {
     const lines = yield* Effect.fromResult(parse(content))
-    const references = [...new Set(lines.flatMap((line) => (line._tag === "Reference" ? [line.reference] : [])))]
+    const references = [...new Set(lines.flatMap((line) => (isReferenceLine(line) ? [line.reference] : [])))]
 
     if (references.length === 0) return { content, count: 0 }
     const resolved = yield* resolver(references)
@@ -143,7 +148,7 @@ export const resolve = <E, R>(
     const values = new Map(references.map((reference, index) => [reference, resolved[index]]))
 
     const rendered = yield* Effect.forEach(lines, (line) => {
-      if (line._tag !== "Reference") return Effect.succeed(line.original)
+      if (!isReferenceLine(line)) return Effect.succeed(line.original)
       const value = values.get(line.reference)
 
       return value === undefined
@@ -151,7 +156,7 @@ export const resolve = <E, R>(
         : Effect.succeed(`${line.name}=${quote(value.replace(/\n$/, ""))}`)
     })
 
-    return { content: rendered.join("\n"), count: lines.filter((line) => line._tag === "Reference").length }
+    return { content: rendered.join("\n"), count: lines.filter(isReferenceLine).length }
   })
 
 // Each argument as an Assignment, or `InvalidAssignment` for the first that is not one.
@@ -195,10 +200,12 @@ const resolveValues = (target: Target, references: ReadonlyArray<string>, env: E
   })
 
 // One variable a child gets on top of the launch environment; a later one of the same name wins.
-type Injected = { readonly name: string } & (
-  | { readonly _tag: "Plain"; readonly value: string }
-  | { readonly _tag: "Reference"; readonly reference: string }
-)
+type Injected = Data.TaggedEnum<{
+  Plain: { readonly name: string; readonly value: string }
+  Reference: { readonly name: string; readonly reference: string }
+}>
+
+const Injected = Data.taggedEnum<Injected>()
 
 // Resolves every Reference in one request (none when there are none), then runs `command` with the
 // launch environment minus `HUSH_TOKEN`, plus `injected`. Every failure ends before anything is spawned.
@@ -209,7 +216,10 @@ const inject = (
   launch: Snapshot,
 ) =>
   Effect.gen(function* () {
-    const references = [...new Set(injected.flatMap((entry) => (entry._tag === "Reference" ? [entry.reference] : [])))]
+    const references = [
+      ...new Set(injected.flatMap((entry) => (Injected.$is("Reference")(entry) ? [entry.reference] : []))),
+    ]
+
     const resolved = references.length === 0 ? [] : yield* resolveValues(target, references, launch)
     const values = new Map(references.map((reference, index) => [reference, resolved[index]?.value]))
 
@@ -218,7 +228,10 @@ const inject = (
     )
 
     for (const entry of injected) {
-      const value = entry._tag === "Plain" ? entry.value : values.get(entry.reference)
+      const value = Injected.$match(entry, {
+        Plain: (plain) => plain.value,
+        Reference: ({ reference }) => values.get(reference),
+      })
 
       if (value === undefined) return yield* Effect.die(new Error("Env.inject: a Reference has no resolved value"))
       env[entry.name] = value
@@ -239,7 +252,7 @@ export const run = (
   Effect.flatMap(parseAssignments(assignments), (parsed) =>
     inject(
       target,
-      parsed.map(({ name, reference }) => ({ _tag: "Reference", name, reference })),
+      parsed.map(({ name, reference }) => Injected.Reference({ name, reference })),
       command,
       launch,
     ),
@@ -250,20 +263,18 @@ export const run = (
 export const runFile = (target: Target, path: string, command: Arr.NonEmptyReadonlyArray<string>, launch: Snapshot) =>
   Effect.gen(function* () {
     const lines = yield* Effect.fromResult(Result.mapError(parse(yield* readTemplate(path)), fileInvalid(path)))
-    const injected: Array<Injected> = []
+    const other = lines.find(EnvLine.$is("Other"))
 
-    for (const line of lines)
-      switch (line._tag) {
-        case "Verbatim":
-          break
-        case "Other":
-          return yield* new EnvFileInvalid({ path, line: line.line, reason: "not-assignment" })
-        case "Plain":
-          injected.push({ _tag: "Plain", name: line.name, value: line.value })
-          break
-        case "Reference":
-          injected.push({ _tag: "Reference", name: line.name, reference: line.reference })
-      }
+    if (other !== undefined) return yield* new EnvFileInvalid({ path, line: other.line, reason: "not-assignment" })
+
+    const injected = lines.flatMap((line): ReadonlyArray<Injected> =>
+      EnvLine.$match(line, {
+        Verbatim: () => [],
+        Other: () => [],
+        Plain: ({ name, value }) => [Injected.Plain({ name, value })],
+        Reference: ({ name, reference }) => [Injected.Reference({ name, reference })],
+      }),
+    )
 
     return yield* inject(target, injected, command, launch)
   })

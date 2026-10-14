@@ -1,4 +1,4 @@
-import { Duration, Effect, Option, type Redacted, Ref, Schema, type Stream } from "effect"
+import { Duration, Effect, Match, Option, type Redacted, Ref, Schema, type Stream } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http"
 import { HttpApiClient, type HttpApi, type HttpApiGroup } from "effect/http-api"
 
@@ -26,37 +26,37 @@ type TransportFailure = ServerUnreachable | UnexpectedResponse | RequestTooLarge
 const fromHttpClientError =
   (target: Target) =>
   (error: HttpClientError.HttpClientError): Effect.Effect<never, TransportFailure> => {
-    const { reason } = error
     const url = target.origin
 
-    switch (reason._tag) {
-      case "TransportError":
-        return Effect.fail(
+    const answered = ({ response }: HttpClientError.ResponseError) =>
+      Effect.fail(
+        response.status === 413 ? new RequestTooLarge() : new UnexpectedResponse({ url, status: response.status }),
+      )
+
+    // The request was never sent: a bug in the CLI, not a Server answer.
+    const neverSent = () => Effect.die(error)
+
+    return Match.valueTags(error.reason, {
+      TransportError: ({ cause }) =>
+        Effect.fail(
           new ServerUnreachable({
             url,
             address: Route.display(new URL(url)),
             route: Route.view(target.route),
             reason:
-              reason.cause === headersTimedOut
+              cause === headersTimedOut
                 ? "timed out"
-                : PlatformCause.code(reason.cause) === "ECONNREFUSED"
+                : PlatformCause.code(cause) === "ECONNREFUSED"
                   ? "refused"
                   : "other",
           }),
-        )
-      case "StatusCodeError":
-      case "DecodeError":
-      case "EmptyBodyError":
-        return Effect.fail(
-          reason.response.status === 413
-            ? new RequestTooLarge()
-            : new UnexpectedResponse({ url, status: reason.response.status }),
-        )
-      case "EncodeError":
-      case "InvalidUrlError":
-        // The request was never sent: a bug in the CLI, not a Server answer.
-        return Effect.die(error)
-    }
+        ),
+      StatusCodeError: answered,
+      DecodeError: answered,
+      EmptyBodyError: answered,
+      EncodeError: neverSent,
+      InvalidUrlError: neverSent,
+    })
   }
 
 const transport =

@@ -1,4 +1,4 @@
-import { Brand, Result, Schema } from "effect"
+import { Brand, Predicate, Result, Schema } from "effect"
 
 // A Vault, Item, Field or Token Label name:NFC-normalised, 1-128 code points, no `/`,
 // no control characters (Cc), no whitespace at either end and no leading `-`.
@@ -37,7 +37,7 @@ const invalidReason = (name: string): InvalidNameReason | undefined => {
 
 // A Name as stored: already NFC and within the rules, so it decodes unchanged.
 const is = (input: unknown): input is Name =>
-  typeof input === "string" && input === input.normalize("NFC") && invalidReason(input) === undefined
+  Predicate.isString(input) && input === input.normalize("NFC") && invalidReason(input) === undefined
 
 export const Name = {
   // Every reason `parse` can fail with, at runtime, so error schemas can list them as literals.

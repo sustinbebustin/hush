@@ -1,4 +1,4 @@
-import { Result } from "effect"
+import { Match, Result } from "effect"
 import { isIP } from "node:net"
 
 import { ListenInvalid } from "./StartupError.js"
@@ -67,8 +67,11 @@ const classifyV6 = (ip: string): ListenClass | undefined => {
 }
 
 const parse = (source: ListenInvalid["source"], text: string): Result.Result<ListenAddress, ListenInvalid> => {
-  const version = isIP(text)
-  const kind = version === 4 ? classifyV4(text) : version === 6 ? classifyV6(text) : undefined
+  const kind = Match.value(isIP(text)).pipe(
+    Match.when(4, () => classifyV4(text)),
+    Match.when(6, () => classifyV6(text)),
+    Match.orElse(() => undefined),
+  )
 
   return kind === undefined
     ? Result.fail(new ListenInvalid({ source, value: text }))

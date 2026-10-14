@@ -1,4 +1,4 @@
-import { Context, Effect, Ref, Schema } from "effect"
+import { Context, Data, Effect, Ref, Schema } from "effect"
 import { SqlClient, type SqlError } from "effect/sql"
 
 import type { ServerStateWire } from "../shared/Api.js"
@@ -9,10 +9,14 @@ import type { InitCodeWriteFailed, MetaInvalid, StatePermissionFailed } from "./
 
 // Uninitialised or Ready: a `meta` row at start means Ready. Held in one Ref that only Init
 // changes.
-export type ServerState =
+export type ServerState = Data.TaggedEnum<{
   // `initCodeDigest` is the SHA-256 of the code in `initCodeFile`, the absolute path Init deletes.
-  | { readonly _tag: "Uninitialised"; readonly initCodeDigest: Crypto.Bytes; readonly initCodeFile: string }
-  | { readonly _tag: "Ready" }
+  Uninitialised: { readonly initCodeDigest: Crypto.Bytes; readonly initCodeFile: string }
+  Ready: {}
+}>
+
+// Destructured, not spread: `Data.taggedEnum` returns a Proxy with no own keys, so a spread copies nothing.
+const { Uninitialised, Ready, $is, $match } = Data.taggedEnum<ServerState>()
 
 class Current extends Context.Service<Current, Ref.Ref<ServerState>>()("hush/ServerState/Current") {}
 
@@ -36,12 +40,16 @@ const load = (
       yield* Meta.check
       yield* InitCode.remove(initCodeFile)
 
-      return { _tag: "Ready" }
+      return Ready()
     }
 
-    return { _tag: "Uninitialised", initCodeDigest: yield* InitCode.write(stateDir), initCodeFile }
+    return Uninitialised({ initCodeDigest: yield* InitCode.write(stateDir), initCodeFile })
   })
 
-const wire = (state: ServerState): ServerStateWire => (state._tag === "Ready" ? "ready" : "uninitialised")
+const wire = (state: ServerState): ServerStateWire =>
+  $match(state, {
+    Ready: (): ServerStateWire => "ready",
+    Uninitialised: (): ServerStateWire => "uninitialised",
+  })
 
-export const ServerState = { Current, load, wire } as const
+export const ServerState = { Uninitialised, Ready, $is, $match, Current, load, wire } as const

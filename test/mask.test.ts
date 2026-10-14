@@ -7,20 +7,28 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 // Feeds `chunks` through a fresh mask over `values` and returns everything it wrote, as text.
-const through = (values: ReadonlyArray<string>, chunks: ReadonlyArray<string | Uint8Array>): string => {
+const throughBytes = (values: ReadonlyArray<string>, chunks: ReadonlyArray<Uint8Array>): string => {
   const mask = Mask.make(values)
-  const parts = chunks.map((chunk) => mask.push(typeof chunk === "string" ? encoder.encode(chunk) : chunk))
+  const parts = chunks.map((chunk) => mask.push(chunk))
 
   return decoder.decode(Buffer.concat([...parts, mask.end()]))
 }
+
+const through = (values: ReadonlyArray<string>, chunks: ReadonlyArray<string>): string =>
+  throughBytes(
+    values,
+    chunks.map((chunk) => encoder.encode(chunk)),
+  )
 
 const concealed = "<concealed by hush>"
 
 // A single left-to-right replacement over the whole input, longest value first at each position.
 const reference = (values: ReadonlyArray<string>, input: Uint8Array): string => {
-  const masked = [...new Set(values)]
+  const masked = new Set(values)
+    .values()
     .map((value) => encoder.encode(value))
     .filter((bytes) => bytes.length >= 8)
+    .toArray()
     .toSorted((a, b) => b.length - a.length)
 
   const out: Array<Uint8Array> = []
@@ -92,7 +100,7 @@ describe("Mask.make", () => {
           const points = [...new Set(cuts.map((cut) => cut % (input.length + 1)))].toSorted((a, b) => a - b)
           const bounds = [0, ...points, input.length]
           const chunks = bounds.slice(1).map((end, index) => input.subarray(bounds[index] ?? 0, end))
-          assert.strictEqual(through(values, chunks), reference(values, input))
+          assert.strictEqual(throughBytes(values, chunks), reference(values, input))
         },
       ),
     )

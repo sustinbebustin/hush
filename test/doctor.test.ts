@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Schema } from "effect"
 import { chmod, mkdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { join } from "node:path"
@@ -7,6 +8,8 @@ import packageJson from "../package.json" with { type: "json" }
 import { Doctor } from "../src/cli/Doctor.js"
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
 import { type Cli, cli, sandbox, type Sandbox, type Seeded } from "./sandbox.js"
+
+const TcpAddress = Schema.Struct({ port: Schema.Number })
 
 const server: Doctor.ServerCheck = {
   source: "default",
@@ -273,6 +276,7 @@ describe("hush doctor", () => {
 
   it("notes a Host the Server does not allow, without naming it", () =>
     withStub(
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       () => Response.json({ _tag: "HostNotAllowed", host: "hush.example.ts.net" }, { status: 403 }),
       async (url, run) => {
         const result = await run(["doctor"])
@@ -304,9 +308,8 @@ describe("hush doctor", () => {
   it("gives up on a Server that accepts but never answers after 5 seconds", async () => {
     const listener = createServer(() => {})
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve))
-    const address = listener.address()
-
-    if (address === null || typeof address === "string") throw new Error("listener has no TCP address")
+    // A TCP listener's address; a pipe's string or a closed listener's null fails here.
+    const address = Schema.decodeUnknownSync(TcpAddress)(listener.address())
     const box = await cli()
 
     try {

@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Ref, Schema } from "effect"
+import { Effect, Exit, Layer, Option, Ref, Schema } from "effect"
 import { HttpMiddleware, HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { HttpApiBuilder, type HttpApiGroup } from "effect/http-api"
 import { SqlClient } from "effect/sql"
@@ -87,12 +87,12 @@ type TokenEndpoint = HttpApiGroup.Endpoints<typeof TokenGroup>["identifier"]
 
 // The audit Action of each endpoint of the `token` group, for the rows `TokenAuth` writes itself. Keyed by the
 // group's endpoints, so an endpoint added without an Action does not compile.
-const tokenActions: { readonly [Endpoint in TokenEndpoint]: Audit.Action } = {
+const tokenActions = {
   resolve: "secrets.resolve",
   create: "items.create",
   list: "items.list",
   describe: "token.describe",
-}
+} as const satisfies { readonly [Endpoint in TokenEndpoint]: Audit.Action }
 
 const isTokenEndpoint = (identifier: string): identifier is TokenEndpoint => Object.hasOwn(tokenActions, identifier)
 
@@ -125,8 +125,9 @@ const requestLog = HttpMiddleware.make((app) =>
     const request = yield* HttpServerRequest.HttpServerRequest
     const exit = yield* Effect.exit(app)
 
-    const status =
-      exit._tag === "Success" ? exit.value.status : HttpServerError.causeResponseStripped(exit.cause)[0].status
+    const status = Exit.isSuccess(exit)
+      ? exit.value.status
+      : HttpServerError.causeResponseStripped(exit.cause)[0].status
 
     yield* Log.write({ event: "request", method: request.method, path: Guard.pathOf(request.url), status })
 

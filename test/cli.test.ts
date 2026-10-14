@@ -1,10 +1,13 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Schema } from "effect"
 import { execFileSync } from "node:child_process"
 import { mkdir } from "node:fs/promises"
 import { createServer } from "node:net"
 import { join } from "node:path"
 import packageJson from "../package.json" with { type: "json" }
 import { cli } from "./sandbox.js"
+
+const TcpAddress = Schema.Struct({ port: Schema.Number })
 
 // Runs `hush <args>` with a token file and config file that would block any read (FIFOs with no writer)
 // and HUSH_SERVER pointing at a listener that counts connections.
@@ -22,9 +25,8 @@ const isolated = async (args: ReadonlyArray<string>) => {
 
     for (const file of ["tokens.json", "config.json"]) execFileSync("mkfifo", [join(config, file)])
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve))
-    const address = listener.address()
-
-    if (address === null || typeof address === "string") throw new Error("listener has no TCP address")
+    // A TCP listener's address; a pipe's string or a closed listener's null fails here.
+    const address = Schema.decodeUnknownSync(TcpAddress)(listener.address())
     const result = await box.run(args, { env: { HUSH_SERVER: `http://127.0.0.1:${address.port}` } })
 
     return { ...result, connections }

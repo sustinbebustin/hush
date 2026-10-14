@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Redacted, Ref, Result, Schema } from "effect"
+import { Clock, Context, Effect, Predicate, Redacted, Ref, Result, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 
 import type { PassphraseChangeReceipt, PassphraseChangeRequest } from "../shared/Api.js"
@@ -114,7 +114,7 @@ export const audited = <U, A, E extends ApiError = never, R = never>(request: {
         action: request.action,
         vaults: scope.vaults,
         references: [],
-        ...(scope.detail === undefined ? {} : { detail: scope.detail }),
+        detail: scope.detail,
         result,
         peer: request.peer,
       })
@@ -143,7 +143,7 @@ export const audited = <U, A, E extends ApiError = never, R = never>(request: {
         return result
       }).pipe(
         Effect.catchIf(
-          (error): error is Exclude<E, AuditUnavailable> => error._tag !== "AuditUnavailable",
+          (error): error is Exclude<E, AuditUnavailable> => !Predicate.isTagged(error, "AuditUnavailable"),
           (error) =>
             Effect.andThen(sql.withTransaction(record({ outcome: "error", error: error._tag })), Effect.fail(error)),
         ),

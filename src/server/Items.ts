@@ -1,4 +1,4 @@
-import { Effect, Redacted, Result, Schema } from "effect"
+import { Effect, Redacted, Result, Schema, type Types } from "effect"
 import { SqlClient } from "effect/sql"
 
 import {
@@ -55,14 +55,15 @@ const grantFor = (token: AuthenticatedToken, vault: Name): Result.Result<Grant, 
     { max: 1 },
   )
 
-  return Result.fail(
-    new VaultNotGranted({
-      vault,
-      label: token.label,
-      granted: token.grants.map(({ vault: name, access }) => ({ vault: name, access })),
-      ...(closest === undefined ? {} : { suggestion: closest.title }),
-    }),
-  )
+  const refusal: Types.Mutable<ConstructorParameters<typeof VaultNotGranted>[0]> = {
+    vault,
+    label: token.label,
+    granted: token.grants.map(({ vault: name, access }) => ({ vault: name, access })),
+  }
+
+  if (closest !== undefined) refusal.suggestion = closest.title
+
+  return Result.fail(new VaultNotGranted(refusal))
 }
 
 // The Vault an audit row names: the stored display name when granted, else the name as requested.
@@ -416,9 +417,8 @@ const insert = (
     yield* sql`
       INSERT INTO items (id, vault_id, title, title_key, kind, created_at, updated_at)
       VALUES (${itemId}, ${grant.vaultId}, ${title}, ${Name.key(title)}, ${kind}, ${at}, ${at})`.pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "UniqueViolation",
-        () => Effect.fail(new ItemExists({ vault: grant.vault, item: title })),
+      Effect.catchReason("SqlError", "UniqueViolation", () =>
+        Effect.fail(new ItemExists({ vault: grant.vault, item: title })),
       ),
       Effect.catchTag("SqlError", Effect.die),
     )

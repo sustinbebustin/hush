@@ -82,6 +82,7 @@ describe("an Uninitialised Server", () => {
       })
 
       assert.strictEqual(response.status, 409)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await response.json(), { _tag: "NotInitialised" })
       assert.strictEqual((await box.fetch("/v1/status")).status, 200)
       assert.deepStrictEqual(await auditRows(box), [])
@@ -199,6 +200,7 @@ describe("hush init --passphrase-stdin", () => {
       })
 
       assert.strictEqual(response.status, 400)
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- pins the wire JSON, independent of the schema
       assert.deepStrictEqual(await response.json(), { _tag: "PassphraseInvalid", reason: "too-short" })
       await assertUninitialised(box, code)
     }))

@@ -76,7 +76,8 @@ export const check = (
   if (request.method === "POST" && contentType?.trim().toLowerCase() !== "application/json")
     return Result.fail(new UnsupportedContentType({ received: contentType ?? null }))
 
-  if (state._tag === "Uninitialised" && !ungated.has(pathOf(request.url))) return Result.fail(new NotInitialised())
+  if (ServerState.$is("Uninitialised")(state) && !ungated.has(pathOf(request.url)))
+    return Result.fail(new NotInitialised())
 
   return Result.void
 }

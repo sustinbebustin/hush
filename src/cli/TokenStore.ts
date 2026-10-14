@@ -1,4 +1,4 @@
-import { Effect, Redacted, Result, Schema } from "effect"
+import { Data, Effect, Redacted, Result, Schema } from "effect"
 import { constants } from "node:fs"
 import { access, readFile, stat } from "node:fs/promises"
 import { hostname, userInfo } from "node:os"
@@ -26,9 +26,12 @@ import type { Target } from "./Target.js"
 // never opened; otherwise this Server origin's entry in `~/.config/hush/tokens.json`. Every failure is reported
 // and no other source is tried (invariant 6).
 
-export type TokenChoice =
-  | { readonly _tag: "Env"; readonly token: Redacted.Redacted<Token> }
-  | { readonly _tag: "Saved"; readonly token: Redacted.Redacted<Token>; readonly label: string; readonly path: string }
+export type TokenChoice = Data.TaggedEnum<{
+  Env: { readonly token: Redacted.Redacted<Token> }
+  Saved: { readonly token: Redacted.Redacted<Token>; readonly label: string; readonly path: string }
+}>
+
+export const TokenChoice = Data.taggedEnum<TokenChoice>()
 
 // One entry of the file: unique by `server`, the Server origin that issued it.
 export interface SavedToken {
@@ -47,6 +50,15 @@ type TokenFile = typeof TokenFile.Type
 
 export const path = (env: EnvVars) => PrivateFile.path(env, "tokens.json")
 
+// What reading the file found, before its content is parsed.
+type Opened = Data.TaggedEnum<{
+  Missing: {}
+  Insecure: { readonly mode: string }
+  Read: { readonly text: string }
+}>
+
+const Opened = Data.taggedEnum<Opened>()
+
 // The parsed file, or undefined when it does not exist. Group or other bits fail before the content is read.
 const load = (file: string): Effect.Effect<TokenFile | undefined, TokenFileInvalid | TokenFileInsecure> =>
   Effect.gen(function* () {
@@ -55,15 +67,15 @@ const load = (file: string): Effect.Effect<TokenFile | undefined, TokenFileInval
         const { mode } = await stat(file)
         const bits = mode & 0o777
 
-        if ((bits & 0o077) !== 0) return { _tag: "Insecure", mode: bits.toString(8) } as const
+        if ((bits & 0o077) !== 0) return Opened.Insecure({ mode: bits.toString(8) })
 
-        return { _tag: "Read", text: await readFile(file, "utf8") } as const
+        return Opened.Read({ text: await readFile(file, "utf8") })
       },
       catch: (cause) => cause,
     }).pipe(
       Effect.catch((cause) =>
         PlatformCause.code(cause) === "ENOENT"
-          ? Effect.succeed({ _tag: "Missing" } as const)
+          ? Effect.succeed(Opened.Missing())
           : Effect.fail(
               new TokenFileInvalid({
                 path: file,
@@ -73,21 +85,19 @@ const load = (file: string): Effect.Effect<TokenFile | undefined, TokenFileInval
       ),
     )
 
-    switch (read._tag) {
-      case "Missing":
-        return undefined
-      case "Insecure":
-        return yield* new TokenFileInsecure({ path: file, mode: read.mode })
-      case "Read": {
-        const json = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(read.text).pipe(
+    return yield* Opened.$match(read, {
+      Missing: () => Effect.succeed(undefined),
+      Insecure: ({ mode }) => Effect.fail(new TokenFileInsecure({ path: file, mode })),
+      Read: ({ text }) =>
+        Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
           Effect.mapError(() => new TokenFileInvalid({ path: file, problem: { reason: "not-json" } })),
-        )
-
-        return yield* Schema.decodeUnknownEffect(TokenFile)(json).pipe(
-          Effect.mapError(() => new TokenFileInvalid({ path: file, problem: { reason: "invalid" } })),
-        )
-      }
-    }
+          Effect.flatMap((json) =>
+            Schema.decodeUnknownEffect(TokenFile)(json).pipe(
+              Effect.mapError(() => new TokenFileInvalid({ path: file, problem: { reason: "invalid" } })),
+            ),
+          ),
+        ),
+    })
   })
 
 // Which command saves: one issuing a Token, or `token save` with a Token it was given; `TokenAlreadySaved` says it.
@@ -142,16 +152,18 @@ export const current = (
 
     if (variable !== undefined)
       return yield* Result.match(Token.parse(variable), {
-        onSuccess: (token) => Effect.succeed<TokenChoice>({ _tag: "Env", token: Redacted.make(token) }),
+        onSuccess: (token) => Effect.succeed(TokenChoice.Env({ token: Redacted.make(token) })),
         onFailure: () => Effect.fail(new TokenEnvInvalid()),
       })
     const file = path(env)
     const entry = (yield* load(file))?.tokens.find(({ server }) => server === target.origin)
 
     if (entry === undefined)
-      return yield* new NoToken({ server: target.origin, ...(vault === undefined ? {} : { vault }) })
+      return yield* vault === undefined
+        ? new NoToken({ server: target.origin })
+        : new NoToken({ server: target.origin, vault })
 
-    return { _tag: "Saved", token: Redacted.make(entry.token), label: entry.label, path: file }
+    return TokenChoice.Saved({ token: Redacted.make(entry.token), label: entry.label, path: file })
   })
 
 // Where `current` would take a Token from and the token file's state, for `doctor`. With `HUSH_TOKEN` set the file

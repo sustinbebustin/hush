@@ -40,7 +40,7 @@ const fail = (message: string) =>
   )
 
 // Every result is one JSON object; fields left `undefined` are omitted.
-const printJson = (value: object) => Console.log(JSON.stringify(value, null, 2))
+const printJson = <Receipt extends object>(receipt: Receipt) => Console.log(JSON.stringify(receipt, null, 2))
 
 // A receipt on stdout, then each notice on stderr.
 const printWithNotices = ({
@@ -117,7 +117,7 @@ const init = Command.make(
           onSome: (name) => ({
             vault: name,
             label: Option.getOrUndefined(label),
-            delivery: print ? { _tag: "Print" } : { _tag: "Save", replace },
+            delivery: print ? Admin.Delivery.Print() : Admin.Delivery.Save({ replace }),
           }),
         }),
         env: LaunchEnv.snapshot,
@@ -636,7 +636,9 @@ const serverBackup = Command.make(
   ({ file, stateDir }) =>
     HostCommand.backup({ stateDir: Option.getOrUndefined(stateDir), env: LaunchEnv.snapshot, file }).pipe(
       // `-` put the bytes alone on stdout.
-      Effect.flatMap((outcome) => (outcome._tag === "Written" ? printJson(outcome.receipt) : Effect.void)),
+      Effect.flatMap(
+        HostCommand.BackupOutcome.$match({ Written: ({ receipt }) => printJson(receipt), Streamed: () => Effect.void }),
+      ),
       Effect.catch(hostFailed),
     ),
 ).pipe(

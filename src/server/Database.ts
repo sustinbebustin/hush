@@ -49,7 +49,7 @@ export const rows = <S extends Schema.Top & { readonly DecodingServices: never }
 ) => Effect.flatMap(statement, Schema.decodeUnknownEffect(Schema.Array(schema))).pipe(Effect.orDie)
 
 // bun:sqlite's error code (`SQLITE_NOTADB`, ...) and message, or the reason's tag when the cause carries none.
-const sqliteDetail = (error: SqlError.SqlError): { readonly code: string; readonly message: string } => ({
+const sqliteDetail = (error: SqlError.SqlError) => ({
   code: PlatformCause.code(error.reason.cause) ?? error.reason._tag,
   message: PlatformCause.message(error.reason.cause) ?? error.reason._tag,
 })

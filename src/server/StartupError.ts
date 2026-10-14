@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Match, Schema } from "effect"
 
 // Server startup errors: each is printed as one `hush: <message>` line on stderr,
 // then the process exits 1, so journald and `docker logs` show it and the supervisor retries.
@@ -117,37 +117,35 @@ const operationText = {
   chown: "change the owner of",
 } as const
 
-export const render = (error: StartupError): string => {
-  switch (error._tag) {
-    case "StateDirRequired":
-      return "hush server needs a state directory and none was given; nothing was created. Pass `--state-dir /var/lib/hush` or set `HUSH_STATE_DIR` (the unit and image set it already)."
-    case "ConfigInvalid":
-      return `${error.source} is invalid (${error.reason}); nothing was started.`
-    case "ListenInvalid":
-      return `${error.source === "--listen" ? `\`--listen ${error.value}\`` : `\`HUSH_LISTEN\` item \`${error.value}\``} must be an IP address (not a hostname, link-local or IPv4-mapped address); nothing was started. For the tailnet use the 100.x address from \`tailscale ip -4\`.`
-    case "ListenNotAllowed":
-      return `Refusing to listen on ${error.ip}: it is not a loopback or Tailscale address, and Tokens and the Passphrase would cross it in cleartext; nothing was started. In a Docker bridge container set \`HUSH_ALLOW_ANY_LISTEN=true\` only together with \`-p 127.0.0.1:7787:7787\` or \`-p <tailnet-ip>:7787:7787\`; elsewhere listen on 127.0.0.1 or the tailnet IP.`
-    case "ListenAddressUnavailable":
-      return `${error.ip} is not assigned to this host yet; nothing was started. If it is the tailnet IP, start after Tailscale (\`systemctl enable tailscale-wait-online.service\` and order the unit after \`tailscale-online.target\`); systemd and Docker retry automatically.`
-    case "ListenAddressInUse":
-      return `${error.ip}:${error.port} is already in use (another hush Server on this state dir or port?); nothing was started. Stop the other process or choose \`--port\`.`
-    case "ListenFailed":
-      return `Could not listen on ${error.ip}:${error.port} (${error.code}); nothing was started.`
-    case "StateFileNotOwned":
-      return `${error.path} is owned by ${ownerText(error.owner)} but the Server runs as ${ownerText(error.server)}; nothing was changed. Fix it with the command for your deployment: systemd static user \`sudo chown hush:hush ${error.path}\`; DynamicUser \`sudo chown --reference=/var/lib/private/hush ${error.path}\`; Docker \`docker run --rm -v hush-data:/data debian:stable-slim chown 10001:10001 ${dockerPath(error)}\`.`
-    case "StatePermissionFailed":
-      return `Could not ${operationText[error.operation]} ${error.path} (${error.code}); nothing else was changed. Check the directory's owner and the filesystem (never NFS or a bind mount).`
-    case "DatabaseOpenFailed":
-      return `Could not open ${error.path} (${error.code}); nothing was changed. If it was just restored, check it is a hush backup and that \`-wal\`/\`-shm\` from the old file were deleted.`
-    case "MigrationFailed":
-      return `Upgrading the database schema to ${error.version} failed (${error.message}); the migration was rolled back and the file is as before. Keep the file, run the previous hush version, and report the message.`
-    case "MigrationPending":
-      return "The database schema is older than this hush binary; nothing was changed. Start the Server once (it migrates), then run the command again."
-    case "MetaInvalid":
-      return `The database's key metadata is invalid (${error.field}), so it was modified or corrupted; nothing was changed. Restore from a backup (README, "Backup and restore").`
-    case "InitCodeWriteFailed":
-      return `Could not write the Init code file ${error.path} (${error.code}); nothing else was changed. Check the state directory's owner and free space.`
-  }
-}
+export const render: (error: StartupError) => string = Match.type<StartupError>().pipe(
+  Match.tagsExhaustive({
+    StateDirRequired: () =>
+      "hush server needs a state directory and none was given; nothing was created. Pass `--state-dir /var/lib/hush` or set `HUSH_STATE_DIR` (the unit and image set it already).",
+    ConfigInvalid: (error) => `${error.source} is invalid (${error.reason}); nothing was started.`,
+    ListenInvalid: (error) =>
+      `${error.source === "--listen" ? `\`--listen ${error.value}\`` : `\`HUSH_LISTEN\` item \`${error.value}\``} must be an IP address (not a hostname, link-local or IPv4-mapped address); nothing was started. For the tailnet use the 100.x address from \`tailscale ip -4\`.`,
+    ListenNotAllowed: (error) =>
+      `Refusing to listen on ${error.ip}: it is not a loopback or Tailscale address, and Tokens and the Passphrase would cross it in cleartext; nothing was started. In a Docker bridge container set \`HUSH_ALLOW_ANY_LISTEN=true\` only together with \`-p 127.0.0.1:7787:7787\` or \`-p <tailnet-ip>:7787:7787\`; elsewhere listen on 127.0.0.1 or the tailnet IP.`,
+    ListenAddressUnavailable: (error) =>
+      `${error.ip} is not assigned to this host yet; nothing was started. If it is the tailnet IP, start after Tailscale (\`systemctl enable tailscale-wait-online.service\` and order the unit after \`tailscale-online.target\`); systemd and Docker retry automatically.`,
+    ListenAddressInUse: (error) =>
+      `${error.ip}:${error.port} is already in use (another hush Server on this state dir or port?); nothing was started. Stop the other process or choose \`--port\`.`,
+    ListenFailed: (error) => `Could not listen on ${error.ip}:${error.port} (${error.code}); nothing was started.`,
+    StateFileNotOwned: (error) =>
+      `${error.path} is owned by ${ownerText(error.owner)} but the Server runs as ${ownerText(error.server)}; nothing was changed. Fix it with the command for your deployment: systemd static user \`sudo chown hush:hush ${error.path}\`; DynamicUser \`sudo chown --reference=/var/lib/private/hush ${error.path}\`; Docker \`docker run --rm -v hush-data:/data debian:stable-slim chown 10001:10001 ${dockerPath(error)}\`.`,
+    StatePermissionFailed: (error) =>
+      `Could not ${operationText[error.operation]} ${error.path} (${error.code}); nothing else was changed. Check the directory's owner and the filesystem (never NFS or a bind mount).`,
+    DatabaseOpenFailed: (error) =>
+      `Could not open ${error.path} (${error.code}); nothing was changed. If it was just restored, check it is a hush backup and that \`-wal\`/\`-shm\` from the old file were deleted.`,
+    MigrationFailed: (error) =>
+      `Upgrading the database schema to ${error.version} failed (${error.message}); the migration was rolled back and the file is as before. Keep the file, run the previous hush version, and report the message.`,
+    MigrationPending: () =>
+      "The database schema is older than this hush binary; nothing was changed. Start the Server once (it migrates), then run the command again.",
+    MetaInvalid: (error) =>
+      `The database's key metadata is invalid (${error.field}), so it was modified or corrupted; nothing was changed. Restore from a backup (README, "Backup and restore").`,
+    InitCodeWriteFailed: (error) =>
+      `Could not write the Init code file ${error.path} (${error.code}); nothing else was changed. Check the state directory's owner and free space.`,
+  }),
+)
 
 export * as StartupError from "./StartupError.js"

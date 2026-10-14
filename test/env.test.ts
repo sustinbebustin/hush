@@ -70,17 +70,16 @@ describe("Env.parse", () => {
     assert.deepStrictEqual(
       Env.parse(content),
       Result.succeed([
-        { _tag: "Verbatim", original: "# Development" },
-        { _tag: "Verbatim", original: "" },
-        { _tag: "Plain", original: "NODE_ENV=development", name: "NODE_ENV", value: "development" },
-        {
-          _tag: "Reference",
+        Env.EnvLine.Verbatim({ original: "# Development" }),
+        Env.EnvLine.Verbatim({ original: "" }),
+        Env.EnvLine.Plain({ original: "NODE_ENV=development", name: "NODE_ENV", value: "development" }),
+        Env.EnvLine.Reference({
           original: "export  API_KEY = 'hush://Work/Cloud API/credential'",
           name: "API_KEY",
           reference: "hush://Work/Cloud API/credential",
-        },
-        { _tag: "Other", original: SENTINEL, line: 5 },
-        { _tag: "Other", original: "=no-name", line: 6 },
+        }),
+        Env.EnvLine.Other({ original: SENTINEL, line: 5 }),
+        Env.EnvLine.Other({ original: "=no-name", line: 6 }),
       ]),
     )
   })
