@@ -79,7 +79,7 @@ Every version is pinned exactly; see [docs/agents/toolchain.md](docs/agents/tool
 
 ### Issue tracker
 
-Issues live as local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+Issues live as local markdown files under `.scratch/<feature>/`. When work comes from a ticket, tick each acceptance checkbox as it passes and set `Status: resolved` at the end. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
