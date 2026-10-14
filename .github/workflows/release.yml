@@ -1,0 +1,72 @@
+name: Release
+
+# A `v*` tag whose version matches package.json: check, build, both smoke tests, then the
+# multi-arch image on GHCR and the binaries with SHA256SUMS on the GitHub release. Tick the release checklist in
+# CLAUDE.md before pushing the tag.
+
+on:
+  push:
+    tags: ["v*"]
+
+# The repository's default token is read-only.
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE: ghcr.io/sustinbebustin/hush
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+
+      - name: The tag is the package.json version
+        id: version
+        run: |
+          version=$(bun -p 'require("./package.json").version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version; bump package.json and deploy/compose.yaml together, then tag v$version"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - run: bun run check
+      - run: bun run build
+      - name: The binary reports the tagged version
+        run: test "$(dist/hush-linux-x64 --version)" = "hush v${{ steps.version.outputs.version }}"
+      - name: Compiled smoke test
+        run: sh scripts/smoke-binary.sh dist/hush-linux-x64
+      - name: Docker smoke test
+        run: sh scripts/smoke-docker.sh dist/hush-linux-x64
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: sha256sum hush-linux-x64 hush-linux-arm64 hush-darwin-arm64 >SHA256SUMS
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "hush $GITHUB_REF_NAME" --generate-notes
+          dist/hush-linux-x64 dist/hush-linux-arm64 dist/hush-darwin-arm64 dist/SHA256SUMS
