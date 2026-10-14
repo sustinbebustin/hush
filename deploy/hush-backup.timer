@@ -1,0 +1,13 @@
+# Runs hush-backup.service daily; a run missed while the host was off happens at the next boot.
+#   sudo install -m 0644 deploy/hush-backup.service deploy/hush-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now hush-backup.timer
+
+[Unit]
+Description=Daily hush database backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

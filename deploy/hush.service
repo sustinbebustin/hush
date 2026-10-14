@@ -1,0 +1,43 @@
+# hush Server. Install the binary as /usr/local/bin/hush, then:
+#   sudo install -m 0644 deploy/hush.service /etc/systemd/system/hush.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now hush
+# In an unprivileged LXC with nesting=0, also install deploy/hush-static-user.conf (it says how).
+
+[Unit]
+Description=hush secret Server
+After=network-online.target
+Wants=network-online.target
+# With a tailnet --listen (and `systemctl enable tailscale-wait-online.service`, Tailscale >= 1.96.2):
+# After=tailscale-online.target
+# Wants=tailscale-online.target
+
+[Service]
+ExecStart=/usr/local/bin/hush server
+Environment=HUSH_STATE_DIR=/var/lib/hush
+# Environment=HUSH_LISTEN=100.x.y.z
+DynamicUser=yes
+StateDirectory=hush
+StateDirectoryMode=0700
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+# MemoryDenyWriteExecute=yes would silently disable Bun's JIT; left unset.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

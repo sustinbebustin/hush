@@ -1,0 +1,12 @@
+# Unattended backup on the Server host:`hush server backup` as root, no Passphrase.
+# Started daily by hush-backup.timer. Pruning old files is left to your backup tooling, for example
+#   find /var/backups/hush -name 'hush-*.db' -mtime +30 -delete
+
+[Unit]
+Description=hush database backup
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStartPre=/bin/mkdir -p /var/backups/hush
+ExecStart=/bin/sh -c 'exec /usr/local/bin/hush server backup --state-dir /var/lib/hush /var/backups/hush/hush-$(date +%%F).db'

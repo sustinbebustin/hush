@@ -1,0 +1,25 @@
+# hush Server under Docker Compose:`docker compose -f deploy/compose.yaml up -d`.
+# Init from the host: `docker exec hush cat /data/init-code`, then `hush init --vault Personal` with the host CLI.
+# Inside the container `hush init --vault` and `hush token issue` need `--print`: there is no writable home.
+# Deploy check: `docker exec hush sh -c 'ulimit -c'` prints 0.
+services:
+  hush:
+    image: ghcr.io/sustinbebustin/hush:0.0.0
+    container_name: hush # every documented `docker exec hush ...` relies on it
+    network_mode: host # the Server listens on 127.0.0.1:7787 of the host
+    restart: unless-stopped # rides out the tailnet boot race
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ulimits: { core: { soft: 0, hard: 0 } } # no core dumps: they would contain keys
+    volumes: [hush-data:/data]
+    # environment: { HUSH_LISTEN: <tailnet-ip> }
+    #
+    # Bridge variant (Docker Engine >= 28.0.0): drop `network_mode: host` and publish on loopback or the tailnet IP
+    # only, never a bare port. The opt-in warning prints at every start.
+    # ports: ["127.0.0.1:7787:7787"]
+    # environment: { HUSH_LISTEN: 0.0.0.0, HUSH_ALLOW_ANY_LISTEN: "true" }
+volumes:
+  hush-data:
+    name: hush-data # fixed name for the restore commands
