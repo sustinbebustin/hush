@@ -41,6 +41,8 @@ WARNING: `effect-solutions` v0.5.3 targets `effect@4.0.0-beta.59`. Its snippets 
 - No `unstable` import segment: `effect/unstable/cli` -> `effect/cli`, `effect/unstable/http` -> `effect/http`.
 - Install stable versions, not `@beta`.
 
+WARNING: `Data.taggedEnum<X>()` returns a Proxy with no own keys, so `{ ...Data.taggedEnum<X>() }` copies nothing: it typechecks, then the constructors are undefined at runtime. List the members by name in a type-centred module, e.g. `const { A, B, $is, $match } = Data.taggedEnum<X>()`.
+
 Never guess at Effect APIs. Check every Effect API name you use (module, function, type, option) in the installed `node_modules/effect/src` (or the installed `@effect/*` package source) before writing it: the pins are exact (see Toolchain) and the `cli`, `http`, `http-api` and `sql` modules are `@stability unstable`.
 
 ## Invariants
