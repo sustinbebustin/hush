@@ -7,7 +7,7 @@ import { join } from "node:path"
 
 import packageJson from "../package.json" with { type: "json" }
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
-import { cli, sandbox, type Sandbox, type SandboxOptions } from "./sandbox.js"
+import { cli, sandbox, type Sandbox, type SandboxOptions, serverSupported } from "./sandbox.js"
 
 const withSandbox = async (
   options: SandboxOptions,
@@ -140,7 +140,7 @@ describe("hush server listeners", () => {
   })
 })
 
-describe("hush server listen errors", () => {
+describe.skipIf(!serverSupported)("hush server listen errors", () => {
   it("refuses a LAN address without the opt-in with ListenNotAllowed, creating nothing", () =>
     assertStartRefused(
       ["--listen", "192.0.2.10"],

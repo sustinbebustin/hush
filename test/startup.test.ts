@@ -193,8 +193,9 @@ describe("a failed start", () => {
 })
 
 // The root of a read-only mount this user owns, where chmod fails with EROFS; most runners have none, and an
-// unprivileged runner cannot make one.
+// unprivileged runner cannot make one. Linux only: the mount table is read from `/proc`.
 const readOnlyOwnedMount = (): string | undefined => {
+  if (process.platform !== "linux") return undefined
   const uid = process.geteuid?.()
 
   return readFileSync("/proc/self/mounts", "utf8")

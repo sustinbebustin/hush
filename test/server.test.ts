@@ -5,7 +5,7 @@ import { join } from "node:path"
 
 import packageJson from "../package.json" with { type: "json" }
 import { passphraseSentinel, scan, valueSentinel } from "./leaks.js"
-import { cli, sandbox, type Sandbox } from "./sandbox.js"
+import { cli, sandbox, type Sandbox, serverSupported } from "./sandbox.js"
 
 const withSandbox = async (test: (box: Sandbox) => Promise<void>) => {
   const box = await sandbox()
@@ -128,7 +128,7 @@ describe("hush server start", () => {
     }))
 })
 
-describe("hush server config errors", () => {
+describe.skipIf(!serverSupported)("hush server config errors", () => {
   it("fails StateDirRequired with one line and exit 1, creating nothing", async () => {
     const box = await cli()
 

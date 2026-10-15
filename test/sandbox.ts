@@ -37,6 +37,10 @@ export interface Result {
 // Whether `tty` runs work here: they need util-linux `script`, and macOS ships BSD `script`, whose flags differ.
 export const onPty = process.platform === "linux"
 
+// Whether Server behaviour is under test here: a macOS Server is unsupported (README), and there its
+// `VACUUM INTO`, bind error codes and files under HOME differ.
+export const serverSupported = process.platform === "linux"
+
 // One step of typing at a pty: wait until `after` appears in the output (past the previous step's match), then
 // send `keys`. Waiting for each prompt keeps keys from reaching the pty before raw mode, when it would echo them.
 export interface Keystrokes {

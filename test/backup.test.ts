@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
-import { sandbox, type Sandbox } from "./sandbox.js"
+import { sandbox, type Sandbox, serverSupported } from "./sandbox.js"
 
 // Backups and the host commands through the seam: `hush backup` over the raw route, `hush server backup` and
 // `hush server revoke` over their own connection beside the running Server, and restores of what they wrote.
@@ -83,7 +83,7 @@ const lastAudit = async (box: Sandbox) =>
     )
   )[0]
 
-describe("hush backup <file>", () => {
+describe.skipIf(!serverSupported)("hush backup <file>", () => {
   it("streams a snapshot from the Server into a new 0600 file with the live schema and row counts", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
@@ -120,24 +120,30 @@ describe("hush backup <file>", () => {
 })
 
 describe("hush backup refusals", () => {
-  it("fails BackupCorrupt with exit 1 when the stream differs from its SHA-256, writing nothing", () =>
-    withSandbox(async (box, seen) => {
-      await seeded(box, seen)
-      const before = await files(box)
-      box.proxy.mode("corrupt-response")
-      const result = await backup(box, join(box.backupDir, "hush.db"), { env: { HUSH_SERVER: box.proxy.url } })
-      assert.strictEqual(result.code, 1)
-      assert.strictEqual(result.stdout, "")
-      assert.strictEqual(
-        result.stderr,
-        "hush: The backup stream did not match its size or SHA-256; nothing was written. Run `hush backup` again.\n",
-      )
-      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/backup HTTP/1.1"])
-      assert.deepStrictEqual(await snapshots(box), [])
-      const after = await files(box)
-      // The Server took and audited the snapshot; only its audit row was added.
-      assert.deepStrictEqual({ ...after, rows: after.rows.slice(0, -1) }, { ...before, rows: before.rows.slice(0, -1) })
-    }))
+  it.skipIf(!serverSupported)(
+    "fails BackupCorrupt with exit 1 when the stream differs from its SHA-256, writing nothing",
+    () =>
+      withSandbox(async (box, seen) => {
+        await seeded(box, seen)
+        const before = await files(box)
+        box.proxy.mode("corrupt-response")
+        const result = await backup(box, join(box.backupDir, "hush.db"), { env: { HUSH_SERVER: box.proxy.url } })
+        assert.strictEqual(result.code, 1)
+        assert.strictEqual(result.stdout, "")
+        assert.strictEqual(
+          result.stderr,
+          "hush: The backup stream did not match its size or SHA-256; nothing was written. Run `hush backup` again.\n",
+        )
+        assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/backup HTTP/1.1"])
+        assert.deepStrictEqual(await snapshots(box), [])
+        const after = await files(box)
+        // The Server took and audited the snapshot; only its audit row was added.
+        assert.deepStrictEqual(
+          { ...after, rows: after.rows.slice(0, -1) },
+          { ...before, rows: before.rows.slice(0, -1) },
+        )
+      }),
+  )
 
   it("fails OutputExists with exit 1 before asking for the Passphrase, sending nothing", () =>
     withSandbox(async (box, seen) => {
@@ -187,7 +193,7 @@ describe("hush backup refusals", () => {
     }))
 })
 
-describe("hush server backup <file>", () => {
+describe.skipIf(!serverSupported)("hush server backup <file>", () => {
   it("writes a 0600 snapshot beside the running Server with the live schema and row counts", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
@@ -215,7 +221,7 @@ describe("hush server backup <file>", () => {
 const snapshots = async (box: Sandbox) =>
   (await readdir(box.server.stateDir)).filter((name) => name.startsWith("backup-"))
 
-describe("hush server backup -", () => {
+describe.skipIf(!serverSupported)("hush server backup -", () => {
   it("writes the database bytes and nothing else to stdout, and leaves no snapshot behind", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
@@ -435,7 +441,7 @@ const VaultNames = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ vaults: Schema.Array(Schema.Struct({ vault: Schema.String })) })),
 )
 
-describe("restore", () => {
+describe.skipIf(!serverSupported)("restore", () => {
   it("opens a backup taken before a Passphrase change with the old Passphrase on a fresh state directory", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
@@ -517,7 +523,7 @@ describe("hush server backup to another filesystem (skipped where /dev/shm is ab
   )
 })
 
-describe("host commands and stale snapshots", () => {
+describe.skipIf(!serverSupported)("host commands and stale snapshots", () => {
   it("leave no state file holding a revoked Token's wrap, a stale snapshot taken before the Revoke included", () =>
     withSandbox(async (box, seen) => {
       const first = await seeded(box, seen)
