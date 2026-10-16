@@ -107,6 +107,7 @@ README.md                   install, first run, deployment, backup and restore, 
 SECURITY.md                 the threat model (ADR-0003) and the agent isolation recipe
 skills/hush/SKILL.md        the agent skill we ship; keep it in sync with the CLI
 scripts/build.sh            `bun run build`: `bun build --compile` per target into `dist/hush-<target>`
+scripts/homebrew-formula.sh the Homebrew formula for a release from its `SHA256SUMS`, pushed to `sustinbebustin/homebrew-tap` by `release.yml`
 scripts/smoke-binary.sh     compiled-binary smoke test (`bun run smoke [binary]`): crypto vectors compiled, start, Init, create, resolve, both backups, restart
 scripts/crypto-vectors.ts   the crypto vectors outside vitest, compiled and run by the smoke test
 scripts/smoke-docker.sh     Docker smoke test (`bun run smoke:docker <binary>`): image config, Compose up, Init, create, resolve, backup, core limit, Token-saving refusal
@@ -114,5 +115,5 @@ deploy/hush.service         the hardened systemd unit (DynamicUser); `hush-stati
 deploy/hush-backup.*        daily `hush server backup` as root into /var/backups/hush (service and timer)
 deploy/Dockerfile           the multi-stage image (builder cross-compiles for TARGETARCH); base images pinned by digest
 deploy/compose.yaml         host networking, read-only, core ulimit 0, volume `hush-data`; image tag = package.json version
-.github/workflows/          `ci.yml` (check on Linux and macOS, compiled smoke on Linux), `release.yml` (on a `v*` tag)
+.github/workflows/          `ci.yml` (check on Linux and macOS, compiled smoke on Linux), `release.yml` (on a `v*` tag: GitHub release and GHCR image, then npm and the Homebrew tap)
 ```

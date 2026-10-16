@@ -34,17 +34,31 @@ The Owner, a human with the Passphrase, does everything else: Init, Vaults, Item
 
 ## Install
 
-Release binaries: `hush-linux-x64`, `hush-linux-arm64` and `hush-darwin-arm64`. macOS runs the CLI only; a macOS or Windows Server is unsupported. Download yours and `SHA256SUMS` from the [latest release](https://github.com/sustinbebustin/hush/releases/latest), verify, and install:
+macOS runs the CLI only; a macOS or Windows Server is unsupported.
+
+With [Homebrew](https://brew.sh) on macOS or Linux, which installs the release binary:
+
+```sh
+brew install sustinbebustin/tap/hush
+```
+
+With [Bun](https://bun.sh), which runs the package from npm:
+
+```sh
+bun add -g @sustinbebustin/hush
+```
+
+Or install a release binary by hand: `hush-linux-x64`, `hush-linux-arm64`, `hush-darwin-arm64` or `hush-darwin-x64`. Download yours and `SHA256SUMS` from the [latest release](https://github.com/sustinbebustin/hush/releases/latest), verify, and install:
 
 ```sh
 curl -fLO https://github.com/sustinbebustin/hush/releases/latest/download/hush-linux-x64
 curl -fLO https://github.com/sustinbebustin/hush/releases/latest/download/SHA256SUMS
-sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 -c SHA256SUMS (ignore the two missing files)
+sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 -c SHA256SUMS (ignore the three missing files)
 sudo install -m 0755 hush-linux-x64 /usr/local/bin/hush
 hush --version
 ```
 
-To build from source instead, with [Bun](https://bun.sh): `bun install && bun run build` writes the three binaries to `dist/`.
+To build from source instead, with [Bun](https://bun.sh): `bun install && bun run build` writes the four binaries to `dist/`.
 
 Then install the agent skill, which teaches agents the commands and rules: copy [`skills/hush`](skills/hush/SKILL.md) to `~/.claude/skills/hush`, or run `bunx skills add sustinbebustin/hush` where Bun is installed.
 

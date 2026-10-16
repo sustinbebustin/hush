@@ -1,17 +1,15 @@
 name: Release
 
 # A `v*` tag whose version matches package.json: check, build, both smoke tests, then the
-# multi-arch image on GHCR and the binaries with SHA256SUMS on the GitHub release. Tick the release checklist in
-# CLAUDE.md before pushing the tag.
+# multi-arch image on GHCR and the binaries with SHA256SUMS on the GitHub release. Once that release exists,
+# the package goes to npm and the formula to sustinbebustin/homebrew-tap.
 
 on:
   push:
     tags: ["v*"]
 
-# The repository's default token is read-only.
-permissions:
-  contents: write
-  packages: write
+# The repository's default token is read-only; each job asks for what it writes.
+permissions: {}
 
 env:
   IMAGE: ghcr.io/sustinbebustin/hush
@@ -19,6 +17,11 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -47,7 +50,7 @@ jobs:
 
       - name: SHA256SUMS
         working-directory: dist
-        run: sha256sum hush-linux-x64 hush-linux-arm64 hush-darwin-arm64 >SHA256SUMS
+        run: sha256sum hush-linux-x64 hush-linux-arm64 hush-darwin-arm64 hush-darwin-x64 >SHA256SUMS
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -69,4 +72,55 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "hush $GITHUB_REF_NAME" --generate-notes
-          dist/hush-linux-x64 dist/hush-linux-arm64 dist/hush-darwin-arm64 dist/SHA256SUMS
+          dist/hush-linux-x64 dist/hush-linux-arm64 dist/hush-darwin-arm64 dist/hush-darwin-x64 dist/SHA256SUMS
+
+  # Trusted publishing: npm trusts this workflow file through OIDC, so there is no npm token, and it adds provenance.
+  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11.6.2
+      - run: npm publish
+
+  # HOMEBREW_TAP_TOKEN can push to sustinbebustin/homebrew-tap; the default token reaches only this repository.
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: hush
+      - uses: actions/checkout@v5
+        with:
+          repository: sustinbebustin/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Formula from the released checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir .
+          sh hush/scripts/homebrew-formula.sh "$VERSION" SHA256SUMS >tap/Formula/hush.rb
+      - name: Push the formula
+        working-directory: tap
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/hush.rb
+          git commit -m "hush $VERSION"
+          git push
