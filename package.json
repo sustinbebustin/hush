@@ -1,6 +1,6 @@
 {
   "name": "@sustinbebustin/hush",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A self-hosted secret store that lets coding agents use secrets without seeing them.",
   "keywords": [
     "agents",
