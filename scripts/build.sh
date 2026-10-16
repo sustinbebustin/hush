@@ -4,12 +4,12 @@
 # Usage: `bun run build`, or `sh scripts/build.sh linux-x64 linux-arm64`.
 set -eu
 
-targets=${*:-linux-x64 linux-arm64 darwin-arm64}
+targets=${*:-linux-x64 linux-arm64 darwin-arm64 darwin-x64}
 for target in $targets; do
   case $target in
-    linux-x64 | linux-arm64 | darwin-arm64) ;;
+    linux-x64 | linux-arm64 | darwin-arm64 | darwin-x64) ;;
     *)
-      echo "build: unknown target $target; use linux-x64, linux-arm64 or darwin-arm64" >&2
+      echo "build: unknown target $target; use linux-x64, linux-arm64, darwin-arm64 or darwin-x64" >&2
       exit 1
       ;;
   esac

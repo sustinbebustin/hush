@@ -58,7 +58,9 @@ const flag = (args: ReadonlyArray<string>, name: string): string | undefined => 
 const hostTarget = (): string | undefined => {
   const key = `${process.platform}-${process.arch}`
 
-  return key === "linux-x64" || key === "linux-arm64" || key === "darwin-arm64" ? key : undefined
+  return key === "linux-x64" || key === "linux-arm64" || key === "darwin-arm64" || key === "darwin-x64"
+    ? key
+    : undefined
 }
 
 const defaultBinary = () => {
