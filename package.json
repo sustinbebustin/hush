@@ -1,8 +1,15 @@
 {
-  "name": "hush",
+  "name": "@sustinbebustin/hush",
   "version": "0.0.0",
-  "private": true,
   "description": "A self-hosted secret store that lets coding agents use secrets without seeing them.",
+  "keywords": [
+    "agents",
+    "cli",
+    "secrets",
+    "skill"
+  ],
+  "homepage": "https://github.com/sustinbebustin/hush#readme",
+  "bugs": "https://github.com/sustinbebustin/hush/issues",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -11,7 +18,15 @@
   "bin": {
     "hush": "bin/hush"
   },
+  "files": [
+    "bin",
+    "src",
+    "skills"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "bun run --bun vitest run",
     "typecheck": "tsc --noEmit",
@@ -24,6 +39,7 @@
   },
   "dependencies": {
     "@effect/platform-bun": "4.0.3",
+    "@effect/platform-node-shared": "4.0.3",
     "@effect/sql-sqlite-bun": "4.0.3",
     "effect": "4.0.3"
   },
@@ -41,7 +57,7 @@
     "@effect/platform-node-shared": "4.0.3"
   },
   "engines": {
-    "bun": "1.4.3"
+    "bun": ">=1.4.3"
   },
   "packageManager": "bun@1.4.3"
 }
