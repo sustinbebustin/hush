@@ -13,6 +13,12 @@ for target in $targets; do
       exit 1
       ;;
   esac
+  # OpenTUI picks its native library by libc at runtime; defining it at build time embeds only the glibc one.
+  # musl is not a shipped target.
+  case $target in
+    linux-*) set -- --define 'process.env.OPENTUI_LIBC="glibc"' ;;
+    *) set -- ;;
+  esac
   # `bin/hush` has no extension, which Bun would bundle as an asset; `--loader :ts` makes it the TypeScript entry.
-  bun build --compile --loader :ts --target="bun-$target" bin/hush --outfile "dist/hush-$target"
+  bun build --compile --loader :ts "$@" --target="bun-$target" bin/hush --outfile "dist/hush-$target"
 done
