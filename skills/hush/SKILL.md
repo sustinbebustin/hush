@@ -16,6 +16,7 @@ metadata:
 - Run the command you need directly. The command itself is the capability check, so skip `hush status`, `hush doctor` and every other preflight.
 - A write runs once. After a write that failed or said unverified, run `hush find` to see whether it happened; never retry it.
 - The Passphrase and the Init code are the human's alone: never ask for, type or pipe either. Human-only commands are `hush init`, `hush passphrase`, `hush vault`, `hush item`, `hush token issue`, `hush token list`, `hush token revoke`, `hush audit`, `hush backup` and `hush server`; when one is needed, give the human the exact command.
+- `hush item reveal` is human-only and prints a value on stdout. Never run it, suggest it in place of a Reference, or read its output; to use a value, pass its Reference.
 - Values enter hush through `--stdin` (piped) or `--clipboard` (macOS) only; `--prompt` is for humans at a terminal. Never put a value in an argument, a command substitution or a temporary file.
 
 ## Find credentials
