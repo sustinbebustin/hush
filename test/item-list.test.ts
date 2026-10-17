@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Schema } from "effect"
+import { Predicate, Schema } from "effect"
 
 import { VaultItems } from "../src/shared/Api.js"
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
@@ -151,6 +151,30 @@ const wrongPassphrase = "a wrong fictional passphrase"
 const incorrectNow =
   "hush: The Passphrase is incorrect; nothing was changed. You can try again now; repeated failures slow every Passphrase operation on this Server.\n"
 
+const WrongPassphraseAnswer = Schema.decodeUnknownSync(
+  Schema.Union([
+    Schema.TaggedStruct("PassphraseIncorrect", { retryAfterSeconds: Schema.Number }),
+    Schema.TaggedStruct("BackoffActive", { retryAfterSeconds: Schema.Number }),
+  ]),
+)
+
+const wait = (seconds: number) => new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+
+// Sends wrong Passphrases to `admin/items/list`, each once the previous delay ran out, until one pins the backoff
+// for at least `seconds`: long enough that it cannot expire before the next CLI run under a loaded suite.
+const pinBackoff = async (box: Sandbox, seconds: number) => {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await post(box, "/v1/admin/items/list", { passphrase: wrongPassphrase, vault: "Personal" })
+    const answer = WrongPassphraseAnswer(await response.json())
+
+    if (Predicate.isTagged(answer, "PassphraseIncorrect") && answer.retryAfterSeconds >= seconds) return
+
+    if (Predicate.isTagged(answer, "BackoffActive")) await wait(answer.retryAfterSeconds)
+  }
+
+  throw new Error(`the backoff did not pin for ${seconds} s after 20 wrong Passphrases`)
+}
+
 describe("a refused hush item list", () => {
   it("VaultNotFound for a Vault that does not exist: exit 1, audited error", () =>
     withSandbox(async (box, seen) => {
@@ -210,12 +234,10 @@ describe("a refused hush item list", () => {
       )
     }))
 
-  it("BackoffActive after four wrong Passphrases refuses even the right one, unaudited", () =>
+  it("BackoffActive once wrong Passphrases pin the backoff refuses even the right one, unaudited", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
-
-      for (let attempt = 0; attempt < 4; attempt += 1)
-        assert.strictEqual((await admin(box, ["item", "list", "Personal"], wrongPassphrase)).code, 1)
+      await pinBackoff(box, 8)
       const before = await auditRows(box)
 
       const pinned = await admin(box, ["item", "list", "Personal"])
