@@ -148,6 +148,9 @@ const fromLocked = (state: Locked, event: Event): Step => {
   const checking = State.Phase.$is("Checking")(state.phase)
   // Whether the check of `attempt` is the one the prompt waits for.
   const awaits = (attempt: number) => checking && attempt === state.attempt
+  // An answer asked for by an Open UI that Locked meanwhile: dropped, values, Tokens and all. An issued Token so
+  // dropped is never seen and stays valid until revoked; a write so dropped stands, and the next Open lists it.
+  const drop = () => stay(state)
 
   return Event.$match(event, {
     Key: ({ key }) => lockedKey(state, key),
@@ -163,42 +166,35 @@ const fromLocked = (state: Locked, event: Event): Step => {
       attempt === state.attempt && State.Phase.$is("Refused")(state.phase)
         ? refusedWith(state, Problem.tick(state.phase.problem))
         : stay(state),
-    // Answers for an Open UI that Locked meanwhile: dropped.
-    ItemsLoaded: () => stay(state),
-    ItemsRefused: () => stay(state),
-    AuditListed: () => stay(state),
-    AuditRefused: () => stay(state),
     // Nothing to time out: Locked holds no Passphrase.
-    IdleTick: () => stay(state),
+    IdleTick: drop,
     // The typed input goes too, and a check in flight is dropped when it answers.
     Suspend: () => suspend(state.size, state.attempt),
-    TokensLoaded: () => stay(state),
-    TokensRefused: () => stay(state),
-    TokenRevoked: () => stay(state),
-    RevokeRefused: () => stay(state),
-    // An issue answered after a Lock: the Token is dropped unseen, and stays valid until revoked.
-    TokenIssued: () => stay(state),
-    IssueRefused: () => stay(state),
-    TokenCopied: () => stay(state),
-    // Vault answers after a Lock: dropped.
-    VaultChanged: () => stay(state),
-    VaultRefused: () => stay(state),
-    VaultsListed: () => stay(state),
     Closed: quit,
-    // A Reveal answered after a Lock: dropped, value and all.
-    Revealed: () => stay(state),
-    RevealRefused: () => stay(state),
-    RevealExpired: () => stay(state),
-    // A write answered after a Lock: dropped. The Item list shows it on the next unlock.
-    ItemCreated: () => stay(state),
-    ItemEdited: () => stay(state),
-    ItemSaveRefused: () => stay(state),
-    // A clipboard read answered after a Lock: dropped, text and all.
-    ClipboardRead: () => stay(state),
-    // A rename, delete or release answered after a Lock: the change stands; the next Open lists it.
-    Renamed: () => stay(state),
-    ItemsChanged: () => stay(state),
-    ChangeRefused: () => stay(state),
+    ItemsLoaded: drop,
+    ItemsRefused: drop,
+    AuditListed: drop,
+    AuditRefused: drop,
+    TokensLoaded: drop,
+    TokensRefused: drop,
+    TokenRevoked: drop,
+    RevokeRefused: drop,
+    TokenIssued: drop,
+    IssueRefused: drop,
+    TokenCopied: drop,
+    VaultChanged: drop,
+    VaultRefused: drop,
+    VaultsListed: drop,
+    Revealed: drop,
+    RevealRefused: drop,
+    RevealExpired: drop,
+    ItemCreated: drop,
+    ItemEdited: drop,
+    ItemSaveRefused: drop,
+    ClipboardRead: drop,
+    Renamed: drop,
+    ItemsChanged: drop,
+    ChangeRefused: drop,
   })
 }
 
