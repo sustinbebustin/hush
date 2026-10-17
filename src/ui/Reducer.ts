@@ -165,6 +165,10 @@ const fromLocked = (state: Locked, event: Event): Step => {
     TokenIssued: () => stay(state),
     IssueRefused: () => stay(state),
     TokenCopied: () => stay(state),
+    // Vault answers after a Lock: dropped.
+    VaultChanged: () => stay(state),
+    VaultRefused: () => stay(state),
+    VaultsListed: () => stay(state),
     Closed: quit,
     // A Reveal answered after a Lock: dropped, value and all.
     Revealed: () => stay(state),
@@ -236,6 +240,96 @@ const issuedKey = (state: Open, top: IssuedModal, key: Key): Step => {
   return { state: withTop(state, { ...top, copy: "copying" }), effects: [UiEffect.CopyToken({ token: top.token })] }
 }
 
+type VaultNameModal = Extract<Modal, { readonly _tag: "VaultName" }>
+
+// Keys in the Vault name prompt: Escape cancels it, Enter sends its one `vaults/create` (a name the CLI would refuse
+// comes back as that refusal, unsent), anything else edits the name. While the request is out, nothing does anything.
+const vaultNameKey = (state: Open, top: VaultNameModal, key: Key): Step => {
+  if (top.phase === "sending") return stay(state)
+  const edit = (text: string) => stay(withTop(state, { ...top, text }))
+
+  if (Key.is(key, "escape")) return stay(dismissed(state))
+
+  if (Key.is(key, "return"))
+    return {
+      state: withTop(state, { ...top, phase: "sending" }),
+      effects: [UiEffect.CreateVault({ passphrase: state.passphrase, vault: top.text })],
+    }
+
+  if (Key.is(key, "backspace")) return edit([...top.text].slice(0, -1).join(""))
+  const typed = Key.printable(key)
+
+  return typed === undefined ? stay(state) : edit(top.text + typed)
+}
+
+// `c` and `d` act on the Vaults only while the sidebar has the focus: on the Item list's sidebar, or with no Vault.
+const sidebarFocused = (view: View): boolean =>
+  View.$is("NoVaults")(view) || (View.$is("ItemList")(view) && View.Focus.$is("Sidebar")(view.focus))
+
+// `c` asks for a new Vault's name; `d` asks to delete the Vault under the sidebar cursor. Undefined for any other key.
+const vaultKey = (state: Open, key: Key): Step | undefined => {
+  if (Key.is(key, "c"))
+    return stay({ ...state, modals: [...state.modals, View.Modal.VaultName({ text: "", phase: "editing" })] })
+  const vault = state.vaults[state.cursor]
+
+  if (!Key.is(key, "d") || vault === undefined) return undefined
+
+  return stay({
+    ...state,
+    modals: [
+      ...state.modals,
+      View.Modal.Confirm({
+        description: `Delete Vault ${vault.vault}? An empty Vault is removed for good; one that still has Items or unrevoked Tokens granted to it is refused.`,
+        effect: UiEffect.DeleteVault({ passphrase: state.passphrase, vault: vault.vault }),
+      }),
+    ],
+  })
+}
+
+// A Vault request was refused: the name prompt, if it sent the request, takes keys again under the notice.
+const vaultRefused = (state: Open, problem: Problem): Step => {
+  const modals = state.modals.map((modal) =>
+    View.Modal.$is("VaultName")(modal) ? View.Modal.VaultName({ ...modal, phase: "editing" }) : modal,
+  )
+
+  return stay(withNotice({ ...state, modals }, problem))
+}
+
+// A Vault was created or deleted: the prompt is done, and the sidebar is listed anew.
+const vaultChanged = (state: Open): Step => ({
+  state: { ...state, modals: state.modals.filter((modal) => !View.Modal.$is("VaultName")(modal)) },
+  effects: [UiEffect.RefreshVaults({ passphrase: state.passphrase })],
+})
+
+// The Vault the main pane lists, if it lists one.
+const viewedVault = (view: View): string | undefined =>
+  View.$is("ItemList")(view) ? view.vault : View.$is("ItemDetail")(view) ? view.list.vault : undefined
+
+// The sidebar with its Vaults replaced. The cursor stays on its Vault, or on its section; when its Vault is gone it
+// moves to the Vault now at its row. The main pane stays unless its Vault is gone (or there was none and now is
+// one), which selects the Vault under the cursor.
+const vaultsListed = (state: Open, vaults: ReadonlyArray<Vault>): Step => {
+  const was = state.vaults[state.cursor]?.vault
+  const found = was === undefined ? -1 : vaults.findIndex(({ vault }) => vault === was)
+
+  const cursor =
+    was === undefined
+      ? vaults.length + (state.cursor - state.vaults.length)
+      : found >= 0
+        ? found
+        : Math.min(state.cursor, Math.max(0, vaults.length - 1))
+
+  const next = { ...state, vaults, cursor }
+  const viewed = viewedVault(state.view)
+  const stale = viewed === undefined ? View.$is("NoVaults")(state.view) : !vaults.some(({ vault }) => vault === viewed)
+
+  if (!stale) return stay(next)
+
+  return vaults.length === 0
+    ? stay({ ...next, view: View.NoVaults() })
+    : select(next, Math.min(cursor, vaults.length - 1))
+}
+
 // The topmost modal takes every key: Escape or Enter dismisses a notice; `y` runs a confirmation's effect and any
 // other key cancels it.
 const modalKey = (state: Open, top: Modal, key: Key): Step =>
@@ -245,6 +339,7 @@ const modalKey = (state: Open, top: Modal, key: Key): Step =>
       Key.is(key, "y") ? { state: dismissed(state), effects: [effect] } : stay(dismissed(state)),
     IssueForm: (form) => issueFormKey(state, form, key),
     Issued: (issued) => issuedKey(state, issued, key),
+    VaultName: (prompt) => vaultNameKey(state, prompt, key),
   })
 
 // The issue form over the Tokens view; Labels of the listed Tokens can be replaced.
@@ -357,6 +452,9 @@ const openKey = (state: Open, key: Key): Step => {
   if (View.$is("ItemDetail")(view)) return detailKey(state, view, key)
 
   if (Key.is(key, "q")) return quit()
+  const onVaults = sidebarFocused(view) ? vaultKey(state, key) : undefined
+
+  if (onVaults !== undefined) return onVaults
 
   if (View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus)) {
     const onRows = rowsKey(state, view, view.focus.row, key)
@@ -495,6 +593,9 @@ const openPaste = (state: Open, text: string): Step => {
   if (top !== undefined && View.Modal.$is("IssueForm")(top) && top.phase === "editing")
     return stay(withTop(state, { ...top, form: IssueForm.paste(top.form, firstLine(text)) }))
 
+  if (top !== undefined && View.Modal.$is("VaultName")(top) && top.phase === "editing")
+    return stay(withTop(state, { ...top, text: top.text + firstLine(text) }))
+
   if (state.modals.length === 0 && View.$is("Audit")(view))
     return stay({ ...state, view: Audit.paste(view, firstLine(text)) })
 
@@ -574,6 +675,9 @@ const fromOpen = (state: Open, event: Event): Step =>
     TokenIssued: ({ receipt, copyable }) => issued(state, receipt, copyable),
     IssueRefused: ({ problem }) => issueRefused(state, problem),
     TokenCopied: ({ written }) => copied(state, written),
+    VaultChanged: () => vaultChanged(state),
+    VaultRefused: ({ problem }) => vaultRefused(state, problem),
+    VaultsListed: ({ vaults }) => vaultsListed(state, vaults),
     // Locked-only events: none reaches an Open UI except late, and none changes it.
     Unlocked: () => stay(state),
     UnlockRefused: () => stay(state),

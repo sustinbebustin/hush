@@ -110,6 +110,9 @@ export type Modal = Data.TaggedEnum<{
     readonly replaced: boolean
     readonly copy: Copy
   }
+  // The name prompt of a new Vault (names are not secrets, so the text is drawn as typed); while its one request is
+  // out it takes no key, so it cannot be sent twice.
+  VaultName: { readonly text: string; readonly phase: "editing" | "sending" }
 }>
 
 const Modal = Data.taggedEnum<Modal>()
