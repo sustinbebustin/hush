@@ -2,6 +2,7 @@ import { Data } from "effect"
 
 import type { ItemMeta } from "../shared/Api.js"
 import { Match } from "../shared/Match.js"
+import type * as AuditView from "./Audit.js"
 import type { Problem } from "./Problem.js"
 
 // What the main pane of an Open UI shows, and the modals stacked above it. Later views (Item detail, forms, Tokens,
@@ -28,9 +29,16 @@ export type View = Data.TaggedEnum<{
   // The Server has no Vault.
   NoVaults: {}
   ItemList: { readonly vault: string; readonly filter: Filter; readonly items: Items }
+  // The Audit Log from `top`, the first row shown (see `Audit`).
+  Audit: {
+    readonly filters: AuditView.Filters
+    readonly form: AuditView.Form
+    readonly log: AuditView.Log
+    readonly top: number
+  }
 }>
 
-const { NoVaults, ItemList, $is, $match } = Data.taggedEnum<View>()
+const { NoVaults, ItemList, Audit, $is, $match } = Data.taggedEnum<View>()
 
 export type Modal = Data.TaggedEnum<{
   Notice: { readonly problem: Problem }
@@ -46,4 +54,4 @@ const loading = (vault: string): View =>
 const visible = (items: ReadonlyArray<ItemMeta>, filter: Filter): ReadonlyArray<ItemMeta> =>
   items.filter(({ title }) => Match.matches(filter.text, title))
 
-export const View = { NoVaults, ItemList, $is, $match, Filter, Items, Modal, loading, visible } as const
+export const View = { NoVaults, ItemList, Audit, $is, $match, Filter, Items, Modal, loading, visible } as const

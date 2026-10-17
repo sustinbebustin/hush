@@ -1,5 +1,6 @@
 import { Data, type Redacted } from "effect"
 
+import type { Ask } from "./Audit.js"
 import type { Event } from "./Event.js"
 
 // What the reducer asks the interpreter to do. Each request carries the Passphrase it is sent with, so the state
@@ -9,12 +10,14 @@ export type UiEffect = Data.TaggedEnum<{
   ListVaults: { readonly passphrase: Redacted.Redacted<string> }
   // `admin/items/list` for one Vault.
   ListItems: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string }
+  // One `admin/audit` page.
+  ListAudit: { readonly passphrase: Redacted.Redacted<string>; readonly ask: Ask }
   // `event` after `millis`.
   After: { readonly millis: number; readonly event: Event }
   // Destroy the renderer and end the UI.
   Quit: {}
 }>
 
-const { ListVaults, ListItems, After, Quit, $is, $match } = Data.taggedEnum<UiEffect>()
+const { ListVaults, ListItems, ListAudit, After, Quit, $is, $match } = Data.taggedEnum<UiEffect>()
 
-export const UiEffect = { ListVaults, ListItems, After, Quit, $is, $match } as const
+export const UiEffect = { ListVaults, ListItems, ListAudit, After, Quit, $is, $match } as const

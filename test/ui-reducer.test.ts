@@ -3,6 +3,7 @@ import { Redacted } from "effect"
 import * as fc from "fast-check"
 
 import type { ItemMeta } from "../src/shared/Api.js"
+import { Audit } from "../src/ui/Audit.js"
 import { Event } from "../src/ui/Event.js"
 import { Key } from "../src/ui/Key.js"
 import { Problem } from "../src/ui/Problem.js"
@@ -148,7 +149,9 @@ describe("Reducer from Locked", () => {
 const anyKey: fc.Arbitrary<Key> = fc.oneof(
   fc.string({ unit: "grapheme", minLength: 1, maxLength: 2 }).map(Key.char),
   fc.constantFrom(..."qjk/".split("").map(Key.char)),
-  fc.constantFrom("return", "backspace", "escape", "up", "down", "tab").map((name) => Key.named(name)),
+  fc
+    .constantFrom("return", "backspace", "escape", "up", "down", "tab", "pageup", "pagedown")
+    .map((name) => Key.named(name)),
   fc.constantFrom(Key.named("c", { ctrl: true }), Key.named("d", { ctrl: true }), Key.named("x", { meta: true })),
 )
 
@@ -160,6 +163,11 @@ const anyProblem: fc.Arbitrary<Problem> = fc.oneof(
 
 const vaultName = fc.constantFrom("Personal", "Work")
 
+const anyAsk = fc.oneof(
+  fc.constant(Audit.Ask.First({ filters: { vault: "", label: "", since: "" } })),
+  fc.nat({ max: 3 }).map((before) => Audit.Ask.Next({ query: {}, before })),
+)
+
 // Every event but a correct Passphrase's answer (`Unlocked`).
 const withoutUnlock: fc.Arbitrary<Event> = fc.oneof(
   anyKey.map((key) => Event.Key({ key })),
@@ -169,6 +177,8 @@ const withoutUnlock: fc.Arbitrary<Event> = fc.oneof(
     .tuple(vaultName, fc.array(fc.string({ minLength: 1 }), { maxLength: 3 }))
     .map(([name, titles]) => Event.ItemsLoaded({ list: { vault: name, items: titles.map(item), retired: [] } })),
   fc.tuple(vaultName, anyProblem).map(([name, problem]) => Event.ItemsRefused({ vault: name, problem })),
+  anyAsk.map((ask) => Event.AuditListed({ ask, query: {}, page: { entries: [], next: 1 } })),
+  fc.tuple(anyAsk, anyProblem).map(([ask, problem]) => Event.AuditRefused({ ask, problem })),
   fc.nat({ max: 3 }).map((attempt) => Event.WaitTick({ attempt })),
   fc.constant(Event.Closed()),
 )
@@ -232,12 +242,12 @@ describe("Reducer when Open", () => {
     assert.deepStrictEqual(State.$is("Open")(state) ? state.view : undefined, View.loading("Work"))
   })
 
-  it("keeps the cursor on the Vault list", () => {
+  it("keeps the cursor on the sidebar: the Vaults, then Audit", () => {
     const top = press(opened(), Key.named("up"))
     const bottom = press(opened(), Key.named("down"), Key.named("down"), Key.named("down"))
 
     assert.strictEqual(State.$is("Open")(top.state) ? top.state.cursor : undefined, 0)
-    assert.strictEqual(State.$is("Open")(bottom.state) ? bottom.state.cursor : undefined, 1)
+    assert.strictEqual(State.$is("Open")(bottom.state) ? bottom.state.cursor : undefined, 2)
   })
 
   it("narrows the Item list by every word of the filter, ignoring case, as `hush find` matches titles", () => {

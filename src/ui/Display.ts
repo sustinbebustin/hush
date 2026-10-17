@@ -1,6 +1,8 @@
 import { Data } from "effect"
 
+import { Audit } from "./Audit.js"
 import { Problem } from "./Problem.js"
+import { type Section, Sidebar } from "./Sidebar.js"
 import { type Open, type Phase, State } from "./State.js"
 import { View } from "./View.js"
 
@@ -13,6 +15,11 @@ export interface VaultRow {
   readonly underCursor: boolean
 }
 
+export interface SectionRow {
+  readonly name: Section
+  readonly underCursor: boolean
+}
+
 export interface ItemRow {
   readonly title: string
   readonly kind: string
@@ -22,6 +29,8 @@ export type Display = Data.TaggedEnum<{
   Locked: { readonly prompt: string; readonly mask: string; readonly notice: string; readonly hints: string }
   Open: {
     readonly vaults: ReadonlyArray<VaultRow>
+    // The sidebar rows below the Vaults.
+    readonly sections: ReadonlyArray<SectionRow>
     // The main pane's title: the Vault whose Items it lists, or empty.
     readonly title: string
     // The filter line: empty when no filter is applied or typed.
@@ -29,6 +38,8 @@ export type Display = Data.TaggedEnum<{
     readonly rows: ReadonlyArray<ItemRow>
     // Shown in place of rows: loading, refused or empty.
     readonly message: string
+    // The Audit view's header and rows, each one line; empty in every other view.
+    readonly log: ReadonlyArray<string>
     // The topmost modal's text, or undefined when there is none.
     readonly modal: string | undefined
     readonly hints: string
@@ -44,6 +55,8 @@ const lockedHints = "Enter unlock  Ctrl-C quit"
 const listHints = "Up/Down move  Enter open Vault  / filter  Esc clear filter  q quit"
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
 const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
+const auditHints = "Up/Down move  Enter open  / filter  PgUp/PgDn scroll  Esc clear filters  q quit"
+const auditFilterHints = "Type a filter  Tab next field  Enter apply  Esc cancel"
 
 const lockedNotice = (phase: Phase): string =>
   State.Phase.$match(phase, {
@@ -77,11 +90,14 @@ const pane = (view: View): Pick<Extract<Display, { _tag: "Open" }>, "title" | "f
         },
       })
     },
+    Audit: (audit) => ({ title: "Audit Log", filter: Audit.filterLine(audit), rows: [], message: Audit.status(audit) }),
   })
 
 const hintsFor = (state: Open) => {
   if (state.modals.length > 0) return modalHints
   const { view } = state
+
+  if (View.$is("Audit")(view)) return Audit.editing(view) ? auditFilterHints : auditHints
 
   return View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter) ? filterHints : listHints
 }
@@ -95,7 +111,12 @@ const open = (state: Open): Display => {
       items,
       underCursor: index === state.cursor,
     })),
+    sections: Sidebar.sections.map((name, index) => ({
+      name,
+      underCursor: state.vaults.length + index === state.cursor,
+    })),
     ...pane(state.view),
+    log: View.$is("Audit")(state.view) ? Audit.lines(state.view) : [],
     modal:
       top === undefined ? undefined : View.Modal.$match(top, { Notice: ({ problem }) => Problem.message(problem) }),
     hints: hintsFor(state),
