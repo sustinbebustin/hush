@@ -20,6 +20,11 @@ const Phase = Data.taggedEnum<Phase>()
 
 export type Vault = VaultList["vaults"][number]
 
+// The sidebar rows below the Vaults, in order: the cursor counts the Vaults first, then these.
+export type Entry = "Tokens"
+
+const entries: ReadonlyArray<Entry> = ["Tokens"]
+
 export type State = Data.TaggedEnum<{
   Locked: {
     readonly entered: Concealed
@@ -53,4 +58,4 @@ const initial: State = locked()
 const passphrase = (state: State): Redacted.Redacted<string> | undefined =>
   $is("Open")(state) ? state.passphrase : undefined
 
-export const State = { Locked, Open, $is, $match, Phase, locked, initial, passphrase } as const
+export const State = { Locked, Open, $is, $match, Phase, entries, locked, initial, passphrase } as const

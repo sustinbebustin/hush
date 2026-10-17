@@ -18,10 +18,29 @@ export interface ItemRow {
   readonly kind: string
 }
 
+// A sidebar row below the Vaults, such as Tokens.
+export interface EntryRow {
+  readonly name: string
+  readonly underCursor: boolean
+}
+
+// One row of the Token table; times are UTC dates.
+export interface TokenRow {
+  readonly label: string
+  readonly grants: string
+  readonly state: string
+  readonly created: string
+  readonly expires: string
+  readonly underCursor: boolean
+}
+
 export type Display = Data.TaggedEnum<{
   Locked: { readonly prompt: string; readonly mask: string; readonly notice: string; readonly hints: string }
   Open: {
     readonly vaults: ReadonlyArray<VaultRow>
+    readonly entries: ReadonlyArray<EntryRow>
+    // The Token table's rows in the Tokens view, else undefined.
+    readonly tokens: ReadonlyArray<TokenRow> | undefined
     // The main pane's title: the Vault whose Items it lists, or empty.
     readonly title: string
     // The filter line: empty when no filter is applied or typed.
@@ -44,6 +63,8 @@ const lockedHints = "Enter unlock  Ctrl-C quit"
 const listHints = "Up/Down move  Enter open Vault  / filter  Esc clear filter  q quit"
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
 const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
+const tableHints = "Up/Down move  Esc sidebar  q quit"
+const tokensSidebarHints = "Up/Down move  Enter open  q quit"
 
 const lockedNotice = (phase: Phase): string =>
   State.Phase.$match(phase, {
@@ -77,11 +98,41 @@ const pane = (view: View): Pick<Extract<Display, { _tag: "Open" }>, "title" | "f
         },
       })
     },
+    Tokens: ({ table }) => ({
+      title: "Tokens",
+      filter: "",
+      rows: [],
+      message: View.TokenTable.$match(table, {
+        Loading: () => "Loading...",
+        Refused: () => "Could not list the Tokens.",
+        Loaded: ({ tokens }) => (tokens.length === 0 ? "No Tokens yet. Press i to issue one." : ""),
+      }),
+    }),
   })
+
+const date = (time: string) => time.slice(0, "YYYY-MM-DD".length)
+
+const tokenRows = (view: View): ReadonlyArray<TokenRow> | undefined => {
+  if (!View.$is("Tokens")(view)) return undefined
+  const { table, focus } = view
+
+  if (!View.TokenTable.$is("Loaded")(table)) return []
+
+  return table.tokens.map((token, index) => ({
+    label: token.label,
+    grants: token.grants.map(({ vault, access }) => `${vault} (${access})`).join(", "),
+    state: token.state,
+    created: date(token.createdAt),
+    expires: token.expiresAt === null ? "never" : date(token.expiresAt),
+    underCursor: focus === "table" && index === table.row,
+  }))
+}
 
 const hintsFor = (state: Open) => {
   if (state.modals.length > 0) return modalHints
   const { view } = state
+
+  if (View.$is("Tokens")(view)) return view.focus === "table" ? tableHints : tokensSidebarHints
 
   return View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter) ? filterHints : listHints
 }
@@ -95,6 +146,8 @@ const open = (state: Open): Display => {
       items,
       underCursor: index === state.cursor,
     })),
+    entries: State.entries.map((name, index) => ({ name, underCursor: state.vaults.length + index === state.cursor })),
+    tokens: tokenRows(state.view),
     ...pane(state.view),
     modal:
       top === undefined ? undefined : View.Modal.$match(top, { Notice: ({ problem }) => Problem.message(problem) }),

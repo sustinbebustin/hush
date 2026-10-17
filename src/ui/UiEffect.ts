@@ -9,6 +9,8 @@ export type UiEffect = Data.TaggedEnum<{
   ListVaults: { readonly passphrase: Redacted.Redacted<string> }
   // `admin/items/list` for one Vault.
   ListItems: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string }
+  // `admin/tokens/list`.
+  ListTokens: { readonly passphrase: Redacted.Redacted<string> }
   // `event` after `millis`.
   After: { readonly millis: number; readonly event: Event }
   // Destroy the renderer and end the UI.
@@ -17,4 +19,6 @@ export type UiEffect = Data.TaggedEnum<{
 
 const { ListVaults, ListItems, After, Quit, $is, $match } = Data.taggedEnum<UiEffect>()
 
-export const UiEffect = { ListVaults, ListItems, After, Quit, $is, $match } as const
+const { ListTokens } = Data.taggedEnum<UiEffect>()
+
+export const UiEffect = { ListVaults, ListItems, ListTokens, After, Quit, $is, $match } as const

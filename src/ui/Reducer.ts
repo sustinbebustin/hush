@@ -10,6 +10,8 @@ import { type Filter, View } from "./View.js"
 
 type ItemList = Extract<View, { readonly _tag: "ItemList" }>
 
+type TokensView = Extract<View, { readonly _tag: "Tokens" }>
+
 // The pure reducer: one event and the current state in, the next state and the effects to run out. It never
 // imports the renderer or the Client; `Ui` runs the effects and draws the state.
 
@@ -49,6 +51,19 @@ const select = (state: Open, cursor: number): Step => {
     state: { ...state, cursor, view: View.loading(selected.vault) },
     effects: [UiEffect.ListItems({ passphrase: state.passphrase, vault: selected.vault })],
   }
+}
+
+// The Tokens view, and its one `tokens/list`.
+const listTokens = (state: Open): Step => ({
+  state: { ...state, view: View.tokensLoading() },
+  effects: [UiEffect.ListTokens({ passphrase: state.passphrase })],
+})
+
+// The view for the sidebar row at `cursor`: a Vault, or an entry below the Vaults.
+const selectRow = (state: Open, cursor: number): Step => {
+  const entry = State.entries[cursor - state.vaults.length]
+
+  return entry === "Tokens" ? listTokens({ ...state, cursor }) : select(state, cursor)
 }
 
 // Open on the first Vault.
@@ -93,6 +108,8 @@ const fromLocked = (state: Locked, event: Event): Step => {
     // Answers for an Open UI that Locked meanwhile: dropped.
     ItemsLoaded: () => stay(state),
     ItemsRefused: () => stay(state),
+    TokensLoaded: () => stay(state),
+    TokensRefused: () => stay(state),
     Closed: quit,
   })
 }
@@ -115,6 +132,27 @@ const filterKey = (state: Open, view: ItemList, text: string, key: Key): Step =>
 const modalKey = (state: Open, key: Key): Step =>
   Key.is(key, "escape") || Key.is(key, "return") ? stay({ ...state, modals: state.modals.slice(0, -1) }) : stay(state)
 
+// Keys while the Token table has the focus: Up and Down move its row, Escape hands the focus back to the sidebar.
+const tableKey = (state: Open, view: TokensView, key: Key): Step => {
+  const { table } = view
+  const withView = (next: TokensView) => stay({ ...state, view: next })
+
+  if (Key.is(key, "escape")) return withView({ ...view, focus: "sidebar" })
+
+  if (!View.TokenTable.$is("Loaded")(table)) return stay(state)
+
+  if (Key.is(key, "up") || Key.is(key, "k"))
+    return withView({ ...view, table: { ...table, row: Math.max(0, table.row - 1) } })
+
+  if (Key.is(key, "down") || Key.is(key, "j"))
+    return withView({
+      ...view,
+      table: { ...table, row: Math.max(0, Math.min(table.tokens.length - 1, table.row + 1)) },
+    })
+
+  return stay(state)
+}
+
 const openKey = (state: Open, key: Key): Step => {
   const { view } = state
 
@@ -127,12 +165,14 @@ const openKey = (state: Open, key: Key): Step => {
 
   if (Key.is(key, "q")) return quit()
 
+  if (View.$is("Tokens")(view) && view.focus === "table") return tableKey(state, view, key)
+
   if (Key.is(key, "up") || Key.is(key, "k")) return stay({ ...state, cursor: Math.max(0, state.cursor - 1) })
 
   if (Key.is(key, "down") || Key.is(key, "j"))
-    return stay({ ...state, cursor: Math.min(state.vaults.length - 1, state.cursor + 1) })
+    return stay({ ...state, cursor: Math.min(state.vaults.length + State.entries.length - 1, state.cursor + 1) })
 
-  if (Key.is(key, "return")) return select(state, state.cursor)
+  if (Key.is(key, "return")) return selectRow(state, state.cursor)
 
   if (View.$is("ItemList")(view) && Key.is(key, "/"))
     return stay({ ...state, view: { ...view, filter: View.Filter.Editing({ text: view.filter.text }) } })
@@ -166,6 +206,13 @@ const answerFor = (state: Open, vault: string, update: (view: ItemList) => Open)
     : stay(state)
 }
 
+// `update` applied to the Tokens view while its table is being fetched; an answer after the Owner moved on is dropped.
+const tokensAnswer = (state: Open, update: (view: TokensView) => Open): Step => {
+  const { view } = state
+
+  return View.$is("Tokens")(view) && View.TokenTable.$is("Loading")(view.table) ? stay(update(view)) : stay(state)
+}
+
 const fromOpen = (state: Open, event: Event): Step =>
   Event.$match(event, {
     Key: ({ key }) => openKey(state, key),
@@ -179,6 +226,17 @@ const fromOpen = (state: Open, event: Event): Step =>
       answerFor(state, vault, (view) => ({
         ...state,
         view: { ...view, items: View.Items.Refused() },
+        modals: [...state.modals, View.Modal.Notice({ problem })],
+      })),
+    TokensLoaded: ({ list }) =>
+      tokensAnswer(state, (view) => ({
+        ...state,
+        view: { ...view, table: View.TokenTable.Loaded({ tokens: list.tokens, row: 0 }) },
+      })),
+    TokensRefused: ({ problem }) =>
+      tokensAnswer(state, (view) => ({
+        ...state,
+        view: { ...view, table: View.TokenTable.Refused() },
         modals: [...state.modals, View.Modal.Notice({ problem })],
       })),
     // Locked-only events: none reaches an Open UI except late, and none changes it.

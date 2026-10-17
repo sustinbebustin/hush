@@ -1,6 +1,6 @@
 import { Data } from "effect"
 
-import type { ItemMeta } from "../shared/Api.js"
+import type { ItemMeta, TokenInfo } from "../shared/Api.js"
 import { Match } from "../shared/Match.js"
 import type { Problem } from "./Problem.js"
 
@@ -24,13 +24,26 @@ export type Items = Data.TaggedEnum<{
 
 const Items = Data.taggedEnum<Items>()
 
+// Every Token, newest first: asked for, answered (with the row under the table cursor), or refused.
+export type TokenTable = Data.TaggedEnum<{
+  Loading: {}
+  Loaded: { readonly tokens: ReadonlyArray<TokenInfo>; readonly row: number }
+  Refused: {}
+}>
+
+const TokenTable = Data.taggedEnum<TokenTable>()
+
+// Where Up and Down go in the Tokens view: the sidebar, or the table's rows.
+export type Focus = "sidebar" | "table"
+
 export type View = Data.TaggedEnum<{
   // The Server has no Vault.
   NoVaults: {}
   ItemList: { readonly vault: string; readonly filter: Filter; readonly items: Items }
+  Tokens: { readonly table: TokenTable; readonly focus: Focus }
 }>
 
-const { NoVaults, ItemList, $is, $match } = Data.taggedEnum<View>()
+const { NoVaults, ItemList, Tokens, $is, $match } = Data.taggedEnum<View>()
 
 export type Modal = Data.TaggedEnum<{
   Notice: { readonly problem: Problem }
@@ -46,4 +59,20 @@ const loading = (vault: string): View =>
 const visible = (items: ReadonlyArray<ItemMeta>, filter: Filter): ReadonlyArray<ItemMeta> =>
   items.filter(({ title }) => Match.matches(filter.text, title))
 
-export const View = { NoVaults, ItemList, $is, $match, Filter, Items, Modal, loading, visible } as const
+// The Token table being fetched, with the table focused.
+const tokensLoading = (): View => Tokens({ table: TokenTable.Loading(), focus: "table" })
+
+export const View = {
+  NoVaults,
+  ItemList,
+  Tokens,
+  $is,
+  $match,
+  Filter,
+  Items,
+  TokenTable,
+  Modal,
+  loading,
+  tokensLoading,
+  visible,
+} as const

@@ -232,12 +232,22 @@ describe("Reducer when Open", () => {
     assert.deepStrictEqual(State.$is("Open")(state) ? state.view : undefined, View.loading("Work"))
   })
 
-  it("keeps the cursor on the Vault list", () => {
+  it("keeps the cursor on the sidebar: the Vaults, then the entries below them", () => {
     const top = press(opened(), Key.named("up"))
-    const bottom = press(opened(), Key.named("down"), Key.named("down"), Key.named("down"))
+    const downs = Array.from({ length: 2 + State.entries.length + 2 }, () => Key.named("down"))
+    const bottom = press(opened(), ...downs)
 
     assert.strictEqual(State.$is("Open")(top.state) ? top.state.cursor : undefined, 0)
-    assert.strictEqual(State.$is("Open")(bottom.state) ? bottom.state.cursor : undefined, 1)
+    assert.strictEqual(State.$is("Open")(bottom.state) ? bottom.state.cursor : undefined, 1 + State.entries.length)
+  })
+
+  it("asks for one Token list when Enter selects the Tokens entry, and drops a late Item answer", () => {
+    const { state, effects } = press(opened(), Key.named("down"), Key.named("down"), Key.named("return"))
+
+    assert.deepStrictEqual(asked(effects), ["ListTokens"])
+    assert.deepStrictEqual(State.$is("Open")(state) ? state.view : undefined, View.tokensLoading())
+    const late = Reducer.reduce(state, Event.ItemsLoaded({ list: { vault: "Personal", items: [], retired: [] } }))
+    assert.deepStrictEqual(late, { state, effects: [] })
   })
 
   it("narrows the Item list by every word of the filter, ignoring case, as `hush find` matches titles", () => {

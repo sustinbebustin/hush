@@ -42,6 +42,11 @@ export const run = (target: Target, work: Work): Effect.Effect<Event> => {
         Effect.map((list) => Event.ItemsLoaded({ list })),
         Effect.catch((error) => Effect.succeed(Event.ItemsRefused({ vault, problem: refused(error) }))),
       ),
+    ListTokens: ({ passphrase }) =>
+      Client.request(Api, target, (client) => client.admin.tokensList({ payload: { passphrase } })).pipe(
+        Effect.map((list) => Event.TokensLoaded({ list })),
+        Effect.catch((error) => Effect.succeed(Event.TokensRefused({ problem: refused(error) }))),
+      ),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),
   })
 }
