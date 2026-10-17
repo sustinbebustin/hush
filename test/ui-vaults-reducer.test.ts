@@ -23,6 +23,7 @@ const open = (cursor: number, view: View, ...names: ReadonlyArray<string>): Stat
     view,
     modals: [],
     idle: State.Idle.Active(),
+    clipboard: false,
   })
 
 const listed = (state: State, ...names: ReadonlyArray<string>) =>

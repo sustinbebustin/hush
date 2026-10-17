@@ -1,6 +1,14 @@
-import { BoxRenderable, type CliRenderer, type KeyEvent, type PasteEvent, TextRenderable } from "@opentui/core"
+import {
+  BoxRenderable,
+  type CliRenderer,
+  InputRenderable,
+  type KeyEvent,
+  type PasteEvent,
+  TextRenderable,
+} from "@opentui/core"
 
 import { Display, type RetiredRow, type TokenRow } from "./Display.js"
+import { ItemForm, type Line as FormLine } from "./ItemForm.js"
 import type { Key } from "./Key.js"
 
 // The thin sync layer: one renderable tree built once, then each `Display` copied into it. It knows OpenTUI and
@@ -43,6 +51,57 @@ const mountTokenTable = (renderer: CliRenderer) => {
     box.visible = rows !== undefined
 
     for (const [text, header, cell] of columns) text.content = [header, ...(rows ?? []).map(cell)].join("\n")
+  }
+
+  return { box, draw }
+}
+
+// The most rows an Item form has: the Kind, the title and a database's six Fields.
+const formRows = 8
+const formLabelWidth = 14
+
+// The Item form: one line per row, a label then its cell. A plain text cell is an OpenTUI `Input` whose value is
+// copied from the `Display`; it is never focused, so the reducer alone owns what is typed. Every other cell (the
+// Kind, the concealed Field's mask, a state) is plain text: no secret is ever put in an `Input`.
+const mountForm = (renderer: CliRenderer) => {
+  const box = new BoxRenderable(renderer, { flexGrow: 1, flexDirection: "column" })
+
+  const lines = Array.from({ length: formRows }, () => {
+    const line = new BoxRenderable(renderer, { height: 1, flexDirection: "row" })
+    const label = column(renderer, { width: formLabelWidth })
+    const input = new InputRenderable(renderer, { flexGrow: 1, placeholderColor: "#888888" })
+    input.focusable = false
+    const shown = column(renderer, { flexGrow: 1 })
+    line.add(label)
+    line.add(input)
+    line.add(shown)
+    box.add(line)
+
+    return { line, label, input, shown }
+  })
+
+  const draw = (form: ReadonlyArray<FormLine> | undefined) => {
+    box.visible = form !== undefined
+
+    for (const [index, { line, label, input, shown }] of lines.entries()) {
+      const row = form?.[index]
+      line.visible = row !== undefined
+
+      if (row === undefined) continue
+      label.content = `${row.focused ? ">" : " "} ${row.label}`
+      input.visible = ItemForm.Cell.$is("Input")(row.cell)
+      shown.visible = !input.visible
+      ItemForm.Cell.$match(row.cell, {
+        Input: ({ text, placeholder }) => {
+          input.value = text
+          input.placeholder = placeholder
+        },
+        Shown: ({ text }) => {
+          input.value = ""
+          shown.content = text
+        },
+      })
+    }
   }
 
   return { box, draw }
@@ -100,6 +159,8 @@ const mount = (renderer: CliRenderer): Screen => {
   main.add(logBox)
   const tokenTable = mountTokenTable(renderer)
   main.add(tokenTable.box)
+  const itemForm = mountForm(renderer)
+  main.add(itemForm.box)
   open.add(sidebar)
   open.add(main)
 
@@ -144,6 +205,7 @@ const mount = (renderer: CliRenderer): Screen => {
         logBox.visible = shown.log.length > 0
         log.content = shown.log.join("\n")
         tokenTable.draw(shown.tokens)
+        itemForm.draw(shown.form)
         main.title = shown.title
         filterLine.content = shown.filter
         filterLine.visible = shown.filter !== ""
@@ -154,7 +216,8 @@ const mount = (renderer: CliRenderer): Screen => {
           ...retiredLines(shown.retired),
         ].join("\n")
         kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
-        rows.visible = shown.detail.length === 0 && shown.log.length === 0 && shown.tokens === undefined
+        rows.visible =
+          shown.detail.length === 0 && shown.log.length === 0 && shown.tokens === undefined && shown.form === undefined
         detail.content = shown.detail.join("\n")
         detail.visible = shown.detail.length > 0
         modal.visible = shown.modal !== undefined

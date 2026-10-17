@@ -2,6 +2,7 @@ import { Data, Redacted } from "effect"
 
 import { Audit } from "./Audit.js"
 import { IssueForm } from "./IssueForm.js"
+import { ItemForm, type Line as FormLine } from "./ItemForm.js"
 import { Problem } from "./Problem.js"
 import { type Section, Sidebar } from "./Sidebar.js"
 import { type Open, type Phase, State } from "./State.js"
@@ -65,6 +66,8 @@ export type Display = Data.TaggedEnum<{
     readonly detail: ReadonlyArray<string>
     // The Audit view's header and rows, each one line; empty in every other view.
     readonly log: ReadonlyArray<string>
+    // The Item form's rows in the Item form, else undefined; the concealed value appears only as its mask.
+    readonly form: ReadonlyArray<FormLine> | undefined
     // The topmost modal's text, or undefined when there is none.
     readonly modal: string | undefined
     // The topmost modal's box title, or empty when there is none.
@@ -80,9 +83,9 @@ const prompt = "hush Passphrase: "
 
 const lockedHints = "Enter unlock  Ctrl-C quit"
 const listHints = "Up/Down move  Enter open  Tab Items  c create Vault  d delete Vault  / filter  q quit"
-const rowsHints = "Up/Down move  Enter open  n rename  d delete  Tab Vaults  / filter  q quit"
-const retiredHints = "Up/Down move  x release  Tab Vaults  / filter  q quit"
-const detailHints = "Up/Down move  r reveal  n rename  d delete  Esc back  q quit"
+const rowsHints = "Up/Down move  Enter open  c create  n rename  d delete  Tab Vaults  / filter  q quit"
+const retiredHints = "Up/Down move  x release  c create  Tab Vaults  / filter  q quit"
+const detailHints = "Up/Down move  r reveal  e edit  n rename  d delete  Esc back  q quit"
 const renameHints = "Type the new title  Enter rename  Esc cancel"
 const shownHints = "Any key hides the value"
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
@@ -186,6 +189,16 @@ const pane = (
       message: Audit.status(audit),
       detail: [],
     }),
+    ItemForm: ({ list, form, phase }) => ({
+      title: ItemForm.$match(form, {
+        Create: () => `New Item in ${list.vault}`,
+        Edit: ({ item }) => `Edit ${list.vault} / ${item.title}`,
+      }),
+      filter: "",
+      rows: [],
+      message: { editing: "", pasting: "Reading the clipboard...", sending: "Saving the Item..." }[phase],
+      detail: [],
+    }),
     Tokens: ({ table }) => ({
       title: "Tokens",
       filter: "",
@@ -266,6 +279,19 @@ const modalShown = (top: Modal) =>
     }),
   })
 
+// The Item form's keys; the paste key only on the concealed row of a host with a clipboard.
+const formHints = ({ form, phase }: Extract<View, { readonly _tag: "ItemForm" }>, clipboard: boolean) => {
+  if (phase === "sending") return "Saving the Item...  Ctrl-C quit"
+
+  if (phase === "pasting") return "Reading the clipboard...  Ctrl-C quit"
+  const paste = clipboard && ItemForm.hiddenFocused(form) ? "  Ctrl-V paste" : ""
+
+  return ItemForm.$match(form, {
+    Create: () => `Up/Down move  Space change Kind${paste}  Enter create  Esc cancel`,
+    Edit: () => `Up/Down choose Field${paste}  Ctrl-D remove  Enter save  Esc cancel`,
+  })
+}
+
 const retiredRows = (view: View): ReadonlyArray<RetiredRow> => {
   if (!View.$is("ItemList")(view)) return []
   const cursor = View.cursorRow(view)
@@ -281,6 +307,8 @@ const hintsFor = (state: Open) => {
   const { view } = state
 
   if (View.$is("Tokens")(view)) return View.Focus.$is("Rows")(view.focus) ? tableHints : tokensSidebarHints
+
+  if (View.$is("ItemForm")(view)) return formHints(view, state.clipboard)
 
   if (View.$is("ItemDetail")(view)) return View.Reveal.$is("Shown")(view.reveal) ? shownHints : detailHints
 
@@ -310,6 +338,7 @@ const open = (state: Open): Display => {
     ...pane(state.view),
     retired: retiredRows(state.view),
     log: View.$is("Audit")(state.view) ? Audit.lines(state.view) : [],
+    form: View.$is("ItemForm")(state.view) ? ItemForm.lines(state.view.form) : undefined,
     modal: top === undefined ? undefined : modalShown(top).text,
     modalTitle: top === undefined ? "" : modalShown(top).title,
     hints: hintsFor(state),

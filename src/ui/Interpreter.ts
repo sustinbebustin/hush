@@ -1,10 +1,18 @@
-import { Clock, Effect, Match } from "effect"
+import { Clock, Effect, Match, Redacted } from "effect"
 
 import { Admin, type AuditQuery, unverifiedOnTransport } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
-import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
+import {
+  type AuditFlagsInvalid,
+  ChangeUnverified,
+  CliError,
+  type ServerUnreachable,
+  type UnexpectedResponse,
+} from "../cli/CliError.js"
+import { Create } from "../cli/Create.js"
+import { PrivateInput } from "../cli/PrivateInput.js"
 import type { Target } from "../cli/Target.js"
-import { Api } from "../shared/Api.js"
+import { Api, type ItemChange } from "../shared/Api.js"
 import {
   type ApiError,
   BackoffActive,
@@ -13,14 +21,16 @@ import {
   parseName,
   PassphraseIncorrect,
 } from "../shared/ApiError.js"
+import { Kind } from "../shared/Kind.js"
 import { Audit, type Ask } from "./Audit.js"
 import type { Clipboard } from "./Clipboard.js"
 import { Event } from "./Event.js"
+import { ItemForm, type Save } from "./ItemForm.js"
 import { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
 
 // Runs the reducer's effects that leave the process or wait: each Server request through the CLI's typed Client
-// (one request, no retry), timers and clipboard writes. Each ends in the one event that reports it; every expected failure becomes
+// (one request, no retry), timers and clipboard reads and writes. Each ends in the one event that reports it; every expected failure becomes
 // a `Problem` rendered from typed fields, so no response body reaches the screen (invariant 2).
 
 // The effects run here; `Quit` and `Suspend` act on the renderer, so they are the loop's own.
@@ -61,14 +71,74 @@ const auditQuery = (ask: Ask): Effect.Effect<AuditQuery, AuditFlagsInvalid | Inv
     Next: ({ query }) => Effect.succeed(query),
   })
 
-// `clipboard` is the host clipboard the copy key writes to.
+// A write sent once: an answer lost or not understood after sending may or may not have changed anything, so it
+// reads as the CLI's "do not retry" (invariant 3).
+const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
+  unverifiedOnTransport(write).pipe(Effect.catchTag("UnexpectedResponse", () => Effect.fail(new ChangeUnverified())))
+
+const parsedName = (what: string, input: string) => Effect.fromResult(parseName(what, input))
+
+// The Item form's one write, after the checks `hush item create` and `hush item edit` make before sending, in
+// their order, each failing with the CLI's own error.
+const saveItem = (target: Target, passphrase: Redacted.Redacted<string>, save: Save) =>
+  ItemForm.Save.$match(save, {
+    Create: ({ vault, title, kind, value, plain }) =>
+      Effect.gen(function* () {
+        const primary = Kind.primary(kind).label
+        const names = { vault: yield* parsedName("vault", vault), title: yield* parsedName("title", title) }
+
+        const fields = yield* Effect.forEach(plain, ({ label, text }) =>
+          Create.plainField(kind, { label, value: text }),
+        )
+
+        const secret = yield* Effect.fromResult(
+          PrivateInput.value(Redacted.value(value), { noun: `value for ${primary}`, outcome: "created" }),
+        )
+
+        const receipt = yield* sentOnce(
+          Client.request(Api, target, (client) =>
+            client.admin.itemsCreate({
+              payload: { passphrase, ...names, kind, fields: [{ label: primary, value: secret }, ...fields] },
+            }),
+          ),
+        )
+
+        return Event.ItemCreated({ receipt })
+      }),
+    Edit: ({ vault, item, label, change }) =>
+      Effect.gen(function* () {
+        const field = yield* parsedName("field", label)
+        const names = { vault: yield* parsedName("vault", vault), item: yield* parsedName("title", item.title) }
+
+        const wire: ItemChange = ItemForm.Change.$is("Set")(change)
+          ? {
+              set: {
+                label: field,
+                value: yield* Effect.fromResult(
+                  PrivateInput.value(Redacted.value(change.value), { noun: `value for ${field}`, outcome: "changed" }),
+                ),
+              },
+            }
+          : { remove: field }
+
+        const receipt = yield* sentOnce(
+          Client.request(Api, target, (client) =>
+            client.admin.itemsEdit({ payload: { passphrase, ...names, change: wire } }),
+          ),
+        )
+
+        return Event.ItemEdited({ receipt })
+      }),
+  })
+
+// `clipboard` is the host clipboard the copy key writes to and the paste key reads from.
 export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Effect<Event> => {
   const refused = problemOf(target)
 
   return Match.valueTags(work, {
     ListVaults: ({ passphrase }) =>
       Client.request(Api, target, (client) => client.admin.vaultsList({ payload: { passphrase } })).pipe(
-        Effect.map(({ vaults }) => Event.Unlocked({ passphrase, vaults })),
+        Effect.map(({ vaults }) => Event.Unlocked({ passphrase, vaults, clipboard: clipboard.available })),
         Effect.catch((error) => Effect.succeed(Event.UnlockRefused({ problem: refused(error) }))),
       ),
     ListItems: ({ passphrase, vault }) =>
@@ -143,6 +213,12 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
           Effect.succeed(Event.RevealRefused({ reference, generation, problem: renderedOf(target)(error) })),
         ),
       ),
+    // Refused as the CLI words it, a wrong Passphrase included, since the form stays open under the notice.
+    SaveItem: ({ passphrase, save }) =>
+      saveItem(target, passphrase, save).pipe(
+        Effect.catch((error) => Effect.succeed(Event.ItemSaveRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    ReadClipboard: () => Effect.map(clipboard.read, (pasted) => Event.ClipboardRead({ pasted })),
     // Writes, so a lost answer reads as unverified (invariant 3); refusals read as the CLI's `item` commands say.
     RenameItem: ({ passphrase, vault, item, newTitle }) =>
       unverifiedOnTransport(

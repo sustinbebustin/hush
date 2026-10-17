@@ -5,6 +5,7 @@ import { Match } from "../shared/Match.js"
 import { Reference } from "../shared/Reference.js"
 import type * as AuditView from "./Audit.js"
 import type { IssueForm } from "./IssueForm.js"
+import type { ItemForm } from "./ItemForm.js"
 import type { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
 
@@ -91,11 +92,16 @@ export type View = Data.TaggedEnum<{
   }
   // `focus` is the sidebar or a table row; a refresh keeps the row.
   Tokens: { readonly table: TokenTable; readonly focus: Focus }
+  // The Item form over `list.vault`: a create from the Item list, or an edit from an Item's detail. While its one
+  // write is out (`sending`) or the clipboard is being read (`pasting`) it takes no key, so nothing is sent twice.
+  ItemForm: { readonly list: ItemListOf; readonly form: ItemForm; readonly phase: "editing" | "pasting" | "sending" }
 }>
 
 const { NoVaults, ItemList, ItemDetail, Audit, $is, $match } = Data.taggedEnum<View>()
 
 const { Tokens } = Data.taggedEnum<View>()
+
+const { ItemForm: ItemFormView } = Data.taggedEnum<View>()
 
 export type Modal = Data.TaggedEnum<{
   Notice: { readonly problem: Problem }
@@ -200,6 +206,7 @@ export const View = {
   ItemDetail,
   Audit,
   Tokens,
+  ItemForm: ItemFormView,
   $is,
   $match,
   Filter,
