@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
-import type { Schema } from "effect"
+import { Schema } from "effect"
 
+import { VaultItems } from "../src/shared/Api.js"
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
 import { sandbox, type Sandbox } from "./sandbox.js"
 
@@ -47,6 +48,8 @@ const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void) => {
   return result
 }
 
+const Listed = Schema.decodeUnknownSync(Schema.fromJsonString(VaultItems))
+
 const call = (path: string, status: number) => ({ method: "POST", path, status })
 const isoTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
@@ -71,11 +74,15 @@ describe("hush item list", () => {
 
       assert.strictEqual(result.code, 0, result.stderr)
       assert.deepStrictEqual(result.calls, [call("/v1/admin/items/list", 200)])
-      const listed = JSON.parse(result.stdout)
-      assert.deepStrictEqual(Object.keys(listed), ["vault", "items", "retired"])
+      // Key order is part of the printed JSON, so it is checked on the raw text before decoding.
+      const raw = JSON.parse(result.stdout)
+      assert.deepStrictEqual(Object.keys(raw), ["vault", "items", "retired"])
+
+      for (const item of raw.items)
+        assert.deepStrictEqual(Object.keys(item), ["title", "kind", "createdAt", "updatedAt", "fields"])
+      const listed = Listed(result.stdout)
 
       for (const item of listed.items) {
-        assert.deepStrictEqual(Object.keys(item), ["title", "kind", "createdAt", "updatedAt", "fields"])
         assert.match(item.createdAt, isoTime)
         assert.match(item.updatedAt, isoTime)
       }
@@ -83,11 +90,7 @@ describe("hush item list", () => {
       assert.deepStrictEqual(
         {
           ...listed,
-          items: listed.items.map(({ title, kind, fields }: { title: string; kind: string; fields: unknown }) => ({
-            title,
-            kind,
-            fields,
-          })),
+          items: listed.items.map(({ title, kind, fields }) => ({ title, kind, fields })),
         },
         {
           vault: "Personal",
