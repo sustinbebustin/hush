@@ -75,6 +75,17 @@ for name in api host stdout; do
   test "$(head -c 15 "$root/$name.db")" = "SQLite format 3"
 done
 
+# `hush ui` on a pty (util-linux `script`) loads OpenTUI's embedded native library and draws the Locked prompt;
+# Ctrl-C, typed once the prompt is up, quits it. stdin stays open meanwhile, since `script` passes its end on.
+{
+  sleep 2
+  printf '\003'
+} | timeout 10 script -qec "$hush ui" /dev/null >"$root/ui.out"
+if ! grep -q 'hush Passphrase:' "$root/ui.out"; then
+  echo "smoke: hush ui drew no Locked prompt" >&2
+  exit 1
+fi
+
 # The same port keeps the saved Token's origin.
 stop
 start "$port"
