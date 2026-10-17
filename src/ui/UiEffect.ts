@@ -15,8 +15,10 @@ export type UiEffect = Data.TaggedEnum<{
   Quit: {}
   // Suspend the renderer (restoring the terminal) and stop the process; on SIGCONT, resume the renderer.
   Suspend: {}
+  // `admin/items/reveal` of one Field; `generation` comes back with the answer.
+  Reveal: { readonly passphrase: Redacted.Redacted<string>; readonly reference: string; readonly generation: number }
 }>
 
-const { ListVaults, ListItems, After, Quit, Suspend, $is, $match } = Data.taggedEnum<UiEffect>()
+const { ListVaults, ListItems, After, Quit, Suspend, Reveal, $is, $match } = Data.taggedEnum<UiEffect>()
 
-export const UiEffect = { ListVaults, ListItems, After, Quit, Suspend, $is, $match } as const
+export const UiEffect = { ListVaults, ListItems, After, Quit, Suspend, Reveal, $is, $match } as const

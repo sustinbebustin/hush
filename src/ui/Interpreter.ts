@@ -16,6 +16,14 @@ import type { UiEffect } from "./UiEffect.js"
 // The effects run here; `Quit` and `Suspend` act on the renderer, so they are the loop's own.
 export type Work = Exclude<UiEffect, { readonly _tag: "Quit" | "Suspend" }>
 
+// The CLI's own message for `error`, word for word.
+const renderedOf =
+  (target: Target) =>
+  (error: ApiError | CliError.CliError): Problem =>
+    Problem.Failed({
+      message: isApiError(error) ? CliError.renderServer(error, target.origin) : CliError.render(error),
+    })
+
 const problemOf =
   (target: Target) =>
   (error: ApiError | CliError.CliError): Problem => {
@@ -23,9 +31,7 @@ const problemOf =
 
     if (error instanceof BackoffActive) return Problem.Backoff({ retryAfterSeconds: error.retryAfterSeconds })
 
-    return Problem.Failed({
-      message: isApiError(error) ? CliError.renderServer(error, target.origin) : CliError.render(error),
-    })
+    return renderedOf(target)(error)
   }
 
 export const run = (target: Target, work: Work): Effect.Effect<Event> => {
@@ -43,6 +49,15 @@ export const run = (target: Target, work: Work): Effect.Effect<Event> => {
         Effect.catch((error) => Effect.succeed(Event.ItemsRefused({ vault, problem: refused(error) }))),
       ),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),
+    // A refused Reveal is a notice in an Open UI, not the Locked prompt, so even a wrong Passphrase (changed
+    // elsewhere) reads as the CLI says it.
+    Reveal: ({ passphrase, reference, generation }) =>
+      Client.request(Api, target, (client) => client.admin.itemsReveal({ payload: { passphrase, reference } })).pipe(
+        Effect.map(({ value }) => Event.Revealed({ reference, generation, value })),
+        Effect.catch((error) =>
+          Effect.succeed(Event.RevealRefused({ reference, generation, problem: renderedOf(target)(error) })),
+        ),
+      ),
   })
 }
 

@@ -24,6 +24,15 @@ export type Event = Data.TaggedEnum<{
   // An exit signal (SIGHUP when the terminal detaches, SIGTERM and the rest), or the renderer destroyed from outside
   // the reducer.
   Closed: {}
+  // `admin/items/reveal` answered the Reveal numbered `generation` of `reference`.
+  Revealed: {
+    readonly reference: string
+    readonly generation: number
+    readonly value: Redacted.Redacted<string>
+  }
+  RevealRefused: { readonly reference: string; readonly generation: number; readonly problem: Problem }
+  // The Revealed value numbered `generation` has been drawn long enough.
+  RevealExpired: { readonly generation: number }
 }>
 
 const {
@@ -37,6 +46,9 @@ const {
   IdleTick,
   Suspend,
   Closed,
+  Revealed,
+  RevealRefused,
+  RevealExpired,
   $is,
   $match,
 } = Data.taggedEnum<Event>()
@@ -52,6 +64,9 @@ export const Event = {
   IdleTick,
   Suspend,
   Closed,
+  Revealed,
+  RevealRefused,
+  RevealExpired,
   $is,
   $match,
 } as const
