@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Schema } from "effect"
 
+import { VaultItems } from "../src/shared/Api.js"
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
 import { onPty, sandbox, type Sandbox } from "./sandbox.js"
 
@@ -48,6 +49,8 @@ const seeded = async (box: Sandbox, seen: (sentinel: Sentinel) => void) => {
 
   return result
 }
+
+const Listed = Schema.decodeUnknownSync(Schema.fromJsonString(VaultItems))
 
 const call = (path: string, status: number) => ({ method: "POST", path, status })
 const isoTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
@@ -118,7 +121,7 @@ describe("hush item create", () => {
   ] as const
 
   for (const created of kinds)
-    it(`creates a ${created.name}: Fields in Kind order, inventory lists it, a Token reads every Field`, () =>
+    it(`creates a ${created.name}: Fields in Kind order, item list shows it, a Token reads every Field`, () =>
       withSandbox(async (box, seen) => {
         await seeded(box, seen)
         const plainFlags = Object.entries(created.plain).flatMap(([label, text]) => [`--${label}`, text])
@@ -137,15 +140,18 @@ describe("hush item create", () => {
           created.fields.map((label, index) => ({ label, concealed: index === 0, ref: refs[index] })),
         )
 
-        const inventory = await box.run(["inventory"])
-        assert.strictEqual(inventory.code, 0, inventory.stderr)
+        const listed = await box.run(["item", "list", "Personal", "--passphrase-stdin"], { input: `${passphrase}\n` })
+        assert.strictEqual(listed.code, 0, listed.stderr)
 
         assert.deepStrictEqual(
-          JSON.parse(inventory.stdout).items.map(({ title, kind }: { title: string; kind: string }) => ({
-            title,
-            kind,
-          })),
-          [{ title: created.title, kind: created.kind }],
+          Listed(listed.stdout).items.map(({ title, kind, fields }) => ({ title, kind, fields })),
+          [
+            {
+              title: created.title,
+              kind: created.kind,
+              fields: created.fields.map((label, index) => ({ label, concealed: index === 0 })),
+            },
+          ],
         )
 
         const expected = new Map([...Object.entries(created.plain), ["password", value]])
