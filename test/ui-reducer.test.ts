@@ -189,7 +189,7 @@ describe("Reducer from Locked", () => {
 // Every key the UI binds, plus arbitrary typed text.
 const anyKey: fc.Arbitrary<Key> = fc.oneof(
   fc.string({ unit: "grapheme", minLength: 1, maxLength: 2 }).map(Key.char),
-  fc.constantFrom(..."qjk/idyc ".split("").map(Key.char)),
+  fc.constantFrom(..."qjk/idycnx ".split("").map(Key.char)),
   fc
     .constantFrom("return", "backspace", "escape", "up", "down", "tab", "pageup", "pagedown")
     .map((name) => Key.named(name)),
@@ -231,6 +231,9 @@ const withoutUnlock: fc.Arbitrary<Event> = fc.oneof(
   fc.boolean().map((copyable) => Event.TokenIssued({ receipt: receipt(issuedToken), copyable })),
   anyProblem.map((problem) => Event.IssueRefused({ problem })),
   fc.constantFrom("written", "unsupported", "failed").map((written) => Event.TokenCopied({ written })),
+  vaultName.map((name) => Event.ItemsChanged({ vault: name })),
+  anyProblem.map((problem) => Event.ChangeRefused({ problem })),
+  fc.constant(Event.Renamed({ receipt: { vault: "Personal", from: "a", to: "b", references: [] } })),
 )
 
 const anyEvent: fc.Arbitrary<Event> = fc.oneof(
@@ -465,6 +468,138 @@ describe("Reducer when Open", () => {
     assert.deepStrictEqual(State.$is("Open")(refused) ? refused.modals : undefined, [View.Modal.Notice({ problem })])
     const dismissed = press(refused, Key.named("escape")).state
     assert.deepStrictEqual(State.$is("Open")(dismissed) ? dismissed.modals : undefined, [])
+  })
+})
+
+// Personal listed again with `titles` and the Retired title keys `retired`, the Item rows focused.
+const listed = (titles: ReadonlyArray<string>, retired: ReadonlyArray<string> = []): State => {
+  const asking = press(opened(), Key.named("return")).state
+
+  const answered = Reducer.reduce(
+    asking,
+    Event.ItemsLoaded({ list: { vault: "Personal", items: titles.map(item), retired } }),
+  )
+
+  return press(answered.state, Key.named("tab")).state
+}
+
+// Every key but `y` and Ctrl-C (which quits from anywhere).
+const notYes = anyKey.filter((key) => !Key.is(key, "y") && !Key.is(key, "c", { ctrl: true }))
+
+// From `before`, `open` opens a Confirm modal; every key but `y` dismisses it and leaves `before` as it was.
+const assertCancels = (before: State, ...open: ReadonlyArray<Key>) => {
+  const confirming = press(before, ...open)
+
+  assert.deepStrictEqual(confirming.effects, [])
+
+  fc.assert(
+    fc.property(notYes, (key) => {
+      assert.deepStrictEqual(press(confirming.state, key), { state: before, effects: [] })
+    }),
+  )
+}
+
+const pane = (state: State) =>
+  Display.$match(Display.of(state), {
+    Locked: () => undefined,
+    Open: ({ rows, retired, detail }) => ({ rows: rows.map(({ title }) => title), retired, detail }),
+  })
+
+describe("Reducer rename, delete and release", () => {
+  it("deletes the Item under the cursor through a Confirm modal naming its title, only on y", () => {
+    const before = listed(["GitHub token", "Stripe live key"])
+    const confirming = press(before, Key.named("down"), Key.char("d"))
+
+    assert.include(modalText(confirming.state), '"Stripe live key"')
+    assert.include(modalText(confirming.state), "Personal")
+    const confirmed = press(confirming.state, Key.char("y"))
+    assert.deepStrictEqual(confirmed.effects, [
+      UiEffect.DeleteItem({ passphrase: Redacted.make("right"), vault: "Personal", item: "Stripe live key" }),
+    ])
+    assert.deepStrictEqual(State.$is("Open")(confirmed.state) ? confirmed.state.modals : undefined, [])
+    assertCancels(press(before, Key.named("down")).state, Key.char("d"))
+  })
+
+  it("deletes from the Item detail too, and refreshes the Vault's list once the delete is answered", () => {
+    const detail = press(listed(["Stripe live key"]), Key.named("return"), Key.char("d"), Key.char("y"))
+    assert.deepStrictEqual(asked(detail.effects), ["DeleteItem"])
+
+    const refreshed = Reducer.reduce(detail.state, Event.ItemsChanged({ vault: "Personal" }))
+    assert.deepStrictEqual(asked(refreshed.effects), ["Personal"])
+    assert.strictEqual(State.$is("Open")(refreshed.state) ? refreshed.state.view._tag : undefined, "ItemList")
+    assertCancels(press(listed(["Stripe live key"]), Key.named("return")).state, Key.char("d"))
+  })
+
+  it("lists the Retired titles below the Items and releases the one under the cursor only on y", () => {
+    const before = listed(["Stripe live key"], ["old key", "spare"])
+
+    assert.deepStrictEqual(pane(before)?.retired, [
+      { key: "old key", underCursor: false },
+      { key: "spare", underCursor: false },
+    ])
+    const onRetired = press(before, Key.named("down"), Key.named("down"))
+    assert.deepStrictEqual(pane(onRetired.state)?.retired, [
+      { key: "old key", underCursor: false },
+      { key: "spare", underCursor: true },
+    ])
+    assert.deepStrictEqual(press(onRetired.state, Key.char("d")).state, onRetired.state)
+
+    const confirming = press(onRetired.state, Key.char("x"))
+    assert.include(modalText(confirming.state), '"spare"')
+    assert.deepStrictEqual(press(confirming.state, Key.char("y")).effects, [
+      UiEffect.ReleaseTitle({ passphrase: Redacted.make("right"), vault: "Personal", title: "spare" }),
+    ])
+    assertCancels(onRetired.state, Key.char("x"))
+    assert.deepStrictEqual(press(before, Key.char("x")).state, before)
+  })
+
+  it("renames from a prompt with one request, then shows every old and new Reference until dismissed", () => {
+    const prompted = press(listed(["Stripe key"]), Key.char("n"), ...typing("Stripe live"))
+    assert.include(modalText(prompted.state), "Stripe live")
+
+    const sent = press(prompted.state, Key.named("return"))
+    assert.deepStrictEqual(sent.effects, [
+      UiEffect.RenameItem({
+        passphrase: Redacted.make("right"),
+        vault: "Personal",
+        item: "Stripe key",
+        newTitle: "Stripe live",
+      }),
+    ])
+    assert.deepStrictEqual(press(sent.state, Key.char("x"), Key.named("return")).effects, [])
+
+    const renamed = Reducer.reduce(
+      sent.state,
+      Event.Renamed({
+        receipt: {
+          vault: "Personal",
+          from: "Stripe key",
+          to: "Stripe live",
+          references: [{ old: "hush://Personal/Stripe key/credential", new: "hush://Personal/Stripe live/credential" }],
+        },
+      }),
+    )
+
+    assert.deepStrictEqual(asked(renamed.effects), ["Personal"])
+    assert.include(modalText(renamed.state), "hush://Personal/Stripe key/credential")
+    assert.include(modalText(renamed.state), "hush://Personal/Stripe live/credential")
+    const dismissed = press(renamed.state, Key.named("escape")).state
+    assert.deepStrictEqual(State.$is("Open")(dismissed) ? dismissed.modals : undefined, [])
+  })
+
+  it("sends no rename for an empty title, cancels on Escape, and takes keys again under a refusal's notice", () => {
+    const before = listed(["Stripe key"])
+
+    assert.deepStrictEqual(press(before, Key.char("n"), Key.named("return")).effects, [])
+    assert.deepStrictEqual(press(before, Key.char("n"), Key.char("a"), Key.named("escape")).state, before)
+
+    const sent = press(before, Key.char("n"), Key.char("a"), Key.named("return")).state
+    const problem = Problem.Failed({ message: "An Item titled a already exists in Vault Personal." })
+    const refused = Reducer.reduce(sent, Event.ChangeRefused({ problem })).state
+    assert.include(modalText(refused), "already exists")
+
+    const editing = press(refused, Key.named("escape"), Key.char("b"), Key.named("return"))
+    assert.deepStrictEqual(asked(editing.effects), ["RenameItem"])
   })
 })
 

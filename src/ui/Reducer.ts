@@ -1,6 +1,6 @@
 import { Redacted, Result } from "effect"
 
-import type { TokenIssueReceipt } from "../shared/Api.js"
+import type { ItemRenamed, TokenIssueReceipt } from "../shared/Api.js"
 import { Audit, type Move } from "./Audit.js"
 import type { Written } from "./Clipboard.js"
 import { Concealed } from "./Concealed.js"
@@ -174,6 +174,10 @@ const fromLocked = (state: Locked, event: Event): Step => {
     Revealed: () => stay(state),
     RevealRefused: () => stay(state),
     RevealExpired: () => stay(state),
+    // A rename, delete or release answered after a Lock: the change stands; the next Open lists it.
+    Renamed: () => stay(state),
+    ItemsChanged: () => stay(state),
+    ChangeRefused: () => stay(state),
   })
 }
 
@@ -339,8 +343,67 @@ const modalKey = (state: Open, top: Modal, key: Key): Step =>
       Key.is(key, "y") ? { state: dismissed(state), effects: [effect] } : stay(dismissed(state)),
     IssueForm: (form) => issueFormKey(state, form, key),
     Issued: (issued) => issuedKey(state, issued, key),
+    Rename: (rename) => renameKey(state, rename, key),
+    Renamed: () => (Key.is(key, "escape") || Key.is(key, "return") ? stay(dismissed(state)) : stay(state)),
     VaultName: (prompt) => vaultNameKey(state, prompt, key),
   })
+
+type RenameModal = Extract<Modal, { readonly _tag: "Rename" }>
+
+// Keys in the rename prompt: text edits the new title, Enter sends its one `items/rename` (nothing for an empty
+// title), Escape cancels. While the request is out, nothing but Ctrl-C does anything.
+const renameKey = (state: Open, top: RenameModal, key: Key): Step => {
+  if (top.phase === "sending") return stay(state)
+
+  if (Key.is(key, "escape")) return stay(dismissed(state))
+
+  if (Key.is(key, "return") && top.text !== "")
+    return {
+      state: withTop(state, { ...top, phase: "sending" }),
+      effects: [
+        UiEffect.RenameItem({ passphrase: state.passphrase, vault: top.vault, item: top.item, newTitle: top.text }),
+      ],
+    }
+
+  if (Key.is(key, "backspace")) return stay(withTop(state, { ...top, text: [...top.text].slice(0, -1).join("") }))
+  const typed = Key.printable(key)
+
+  return typed === undefined ? stay(state) : stay(withTop(state, { ...top, text: top.text + typed }))
+}
+
+// A Confirm modal over the state, held until `y` runs `effect`.
+const confirming = (state: Open, description: string, effect: UiEffect): Step =>
+  stay({ ...state, modals: [...state.modals, View.Modal.Confirm({ description, effect })] })
+
+// `n` prompts for a new title for `item` of `vault`, `d` asks to delete it; undefined for every other key.
+const itemKey = (state: Open, vault: string, item: string, key: Key): Step | undefined => {
+  if (Key.is(key, "n"))
+    return stay({
+      ...state,
+      modals: [...state.modals, View.Modal.Rename({ vault, item, text: "", phase: "editing" })],
+    })
+
+  if (!Key.is(key, "d")) return undefined
+
+  return confirming(
+    state,
+    `Delete Item "${item}" from Vault ${vault}? Its values are destroyed and its title is retired; this cannot be undone.`,
+    UiEffect.DeleteItem({ passphrase: state.passphrase, vault, item }),
+  )
+}
+
+// `x` on a Retired title asks to release it; on an Item row it does nothing.
+const releaseKey = (state: Open, view: ItemList): Step => {
+  const title = View.selectedRetired(view)
+
+  return title === undefined
+    ? stay(state)
+    : confirming(
+        state,
+        `Release the Retired title "${title}" in Vault ${view.vault}? Tokens can then create an Item with that title again.`,
+        UiEffect.ReleaseTitle({ passphrase: state.passphrase, vault: view.vault, title }),
+      )
+}
 
 // The issue form over the Tokens view; Labels of the listed Tokens can be replaced.
 const openIssueForm = (state: Open, view: TokensView): Step => {
@@ -497,7 +560,7 @@ const rowsKey = (state: Open, view: ItemList, row: number, key: Key): Step | und
   const withRow = (next: number) =>
     stay({ ...state, view: { ...view, focus: View.Focus.Rows({ row: Math.max(0, next) }) } })
 
-  const last = View.shown(view).length - 1
+  const last = View.rowCount(view) - 1
 
   if (Key.is(key, "up") || Key.is(key, "k")) return withRow(Math.min(row, last) - 1)
 
@@ -505,18 +568,21 @@ const rowsKey = (state: Open, view: ItemList, row: number, key: Key): Step | und
 
   if (Key.is(key, "tab") || Key.is(key, "left") || Key.is(key, "h"))
     return stay({ ...state, view: { ...view, focus: View.Focus.Sidebar() } })
+  const item = View.selectedItem(view)
+  const onItem = item === undefined ? undefined : itemKey(state, view.vault, item.title, key)
+
+  if (onItem !== undefined) return onItem
+
+  if (Key.is(key, "x")) return releaseKey(state, view)
 
   if (!Key.is(key, "return")) return undefined
-  const item = View.selectedItem(view)
 
   return item === undefined ? stay(state) : stay({ ...state, view: View.detail(view, item) })
 }
 
-// Tab (or Right) from the sidebar moves to the Item rows once some are shown.
+// Tab (or Right) from the sidebar moves to the rows once some are shown.
 const toRows = (state: Open, view: ItemList): Step =>
-  View.shown(view).length === 0
-    ? stay(state)
-    : stay({ ...state, view: { ...view, focus: View.Focus.Rows({ row: 0 }) } })
+  View.rowCount(view) === 0 ? stay(state) : stay({ ...state, view: { ...view, focus: View.Focus.Rows({ row: 0 }) } })
 
 type ItemDetail = Extract<View, { readonly _tag: "ItemDetail" }>
 
@@ -532,6 +598,9 @@ const detailKey = (state: Open, view: ItemDetail, key: Key): Step => {
   if (Key.is(key, "q")) return quit()
 
   if (View.Reveal.$is("Asking")(view.reveal)) return stay(state)
+  const onItem = itemKey(state, view.list.vault, view.item.title, key)
+
+  if (onItem !== undefined) return onItem
 
   if (Key.is(key, "up") || Key.is(key, "k")) return withDetail({ ...view, field: Math.max(0, view.field - 1) })
 
@@ -593,6 +662,9 @@ const openPaste = (state: Open, text: string): Step => {
   if (top !== undefined && View.Modal.$is("IssueForm")(top) && top.phase === "editing")
     return stay(withTop(state, { ...top, form: IssueForm.paste(top.form, firstLine(text)) }))
 
+  if (top !== undefined && View.Modal.$is("Rename")(top) && top.phase === "editing")
+    return stay(withTop(state, { ...top, text: top.text + firstLine(text) }))
+
   if (top !== undefined && View.Modal.$is("VaultName")(top) && top.phase === "editing")
     return stay(withTop(state, { ...top, text: top.text + firstLine(text) }))
 
@@ -643,6 +715,39 @@ const tokensAnswer = (state: Open, update: (view: TokensView) => Open): Step => 
   return View.$is("Tokens")(view) && View.TokenTable.$is("Loading")(view.table) ? stay(update(view)) : stay(state)
 }
 
+// The Item list of `vault` asked for again after a change to it, from the list or from one of its Items' detail;
+// any other view is left as it is.
+const refreshed = (state: Open, vault: string): Step => {
+  const { view } = state
+  const list = View.$is("ItemList")(view) ? view : View.$is("ItemDetail")(view) ? view.list : undefined
+
+  if (list === undefined || list.vault !== vault) return stay(state)
+
+  return {
+    state: { ...state, view: View.reloading(list) },
+    effects: [UiEffect.ListItems({ passphrase: state.passphrase, vault })],
+  }
+}
+
+// The rename's References in place of the prompt that asked for it, and the list refreshed under the new title.
+const renamed = (state: Open, receipt: ItemRenamed): Step =>
+  refreshed(
+    {
+      ...state,
+      modals: [...state.modals.filter((modal) => !View.Modal.$is("Rename")(modal)), View.Modal.Renamed({ receipt })],
+    },
+    receipt.vault,
+  )
+
+// A refused rename, delete or release: a rename prompt takes keys again, under the notice saying why.
+const changeRefused = (state: Open, problem: Problem): Step => {
+  const modals = state.modals.map((modal) =>
+    View.Modal.$is("Rename")(modal) ? View.Modal.Rename({ ...modal, phase: "editing" }) : modal,
+  )
+
+  return stay(withNotice({ ...state, modals }, problem))
+}
+
 const fromOpen = (state: Open, event: Event): Step =>
   Event.$match(event, {
     Key: ({ key }) => openKey(active(state), key),
@@ -650,7 +755,7 @@ const fromOpen = (state: Open, event: Event): Step =>
     ItemsLoaded: ({ list }) =>
       answerFor(state, list.vault, (view) => ({
         ...state,
-        view: { ...view, items: View.Items.Loaded({ items: list.items }) },
+        view: { ...view, items: View.Items.Loaded({ items: list.items, retired: list.retired }) },
       })),
     ItemsRefused: ({ vault, problem }) =>
       answerFor(state, vault, (view) => ({
@@ -695,6 +800,9 @@ const fromOpen = (state: Open, event: Event): Step =>
         }),
       ),
     RevealExpired: ({ generation }) => expired(state, generation),
+    Renamed: ({ receipt }) => renamed(state, receipt),
+    ItemsChanged: ({ vault }) => refreshed(state, vault),
+    ChangeRefused: ({ problem }) => changeRefused(state, problem),
   })
 
 export const reduce = (state: State, event: Event): Step =>

@@ -1,6 +1,6 @@
 import { Data, type Redacted } from "effect"
 
-import type { ItemMeta, TokenInfo } from "../shared/Api.js"
+import type { ItemMeta, ItemRenamed, TokenInfo } from "../shared/Api.js"
 import { Match } from "../shared/Match.js"
 import { Reference } from "../shared/Reference.js"
 import type * as AuditView from "./Audit.js"
@@ -19,10 +19,11 @@ export type Filter = Data.TaggedEnum<{
 
 const Filter = Data.taggedEnum<Filter>()
 
-// One Vault's Items: asked for, answered, or refused (the refusal itself is a modal).
+// One Vault's Items: asked for, answered, or refused (the refusal itself is a modal). `retired` holds the Vault's
+// Retired title keys (NFC, lowercased), as the list receipt sends them.
 export type Items = Data.TaggedEnum<{
   Loading: {}
-  Loaded: { readonly items: ReadonlyArray<ItemMeta> }
+  Loaded: { readonly items: ReadonlyArray<ItemMeta>; readonly retired: ReadonlyArray<string> }
   Refused: {}
 }>
 
@@ -41,7 +42,7 @@ const TokenTable = Data.taggedEnum<TokenTable>()
 export type Copy = "absent" | "ready" | "copying" | "copied"
 
 // Where Up/Down and Enter act while the Item list shows: the Vault sidebar, or the Item rows with the row under the
-// cursor (an index into the visible rows).
+// cursor (an index into the visible rows, then the Retired titles below them).
 export type Focus = Data.TaggedEnum<{
   Sidebar: {}
   Rows: { readonly row: number }
@@ -110,6 +111,15 @@ export type Modal = Data.TaggedEnum<{
     readonly replaced: boolean
     readonly copy: Copy
   }
+  // The new title for `item` of `vault`, being typed; while its one request is out it takes no key.
+  Rename: {
+    readonly vault: string
+    readonly item: string
+    readonly text: string
+    readonly phase: "editing" | "sending"
+  }
+  // A rename's old and new References, shown until dismissed so the Owner can update the templates that used them.
+  Renamed: { readonly receipt: ItemRenamed }
   // The name prompt of a new Vault (names are not secrets, so the text is drawn as typed); while its one request is
   // out it takes no key, so it cannot be sent twice.
   VaultName: { readonly text: string; readonly phase: "editing" | "sending" }
@@ -129,13 +139,30 @@ const visible = (items: ReadonlyArray<ItemMeta>, filter: Filter): ReadonlyArray<
 const shown = (list: ItemListOf): ReadonlyArray<ItemMeta> =>
   Items.$is("Loaded")(list.items) ? visible(list.items.items, list.filter) : []
 
-// The row under the cursor, kept on a visible row when the filter narrowed the list; undefined on the sidebar or
+// The Retired title keys the list shows below its Items: none until they are answered. The filter does not narrow
+// them, so a blocked name stays in sight.
+const retired = (list: ItemListOf): ReadonlyArray<string> => (Items.$is("Loaded")(list.items) ? list.items.retired : [])
+
+// How many rows the cursor can be on: the visible Items, then the Retired titles.
+const rowCount = (list: ItemListOf): number => shown(list).length + retired(list).length
+
+// The row under the cursor, kept on a shown row when the filter narrowed the list; undefined on the sidebar or
 // with no row shown.
 const cursorRow = (list: ItemListOf): number | undefined => {
-  const count = shown(list).length
+  const count = rowCount(list)
 
   return Focus.$is("Rows")(list.focus) && count > 0 ? Math.min(list.focus.row, count - 1) : undefined
 }
+
+// The Retired title under the row cursor, if any.
+const selectedRetired = (list: ItemListOf): string | undefined => {
+  const row = cursorRow(list)
+
+  return row === undefined ? undefined : retired(list)[row - shown(list).length]
+}
+
+// The same list asked for again, keeping its filter and row cursor.
+const reloading = (list: ItemListOf): View => ItemList({ ...list, items: Items.Loading() })
 
 // The Item under the row cursor, if any.
 const selectedItem = (list: ItemListOf): ItemMeta | undefined => {
@@ -186,6 +213,10 @@ export const View = {
   shown,
   cursorRow,
   selectedItem,
+  retired,
+  rowCount,
+  selectedRetired,
+  reloading,
   reference,
   detail,
   selectedField,
