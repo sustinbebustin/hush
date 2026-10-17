@@ -1,5 +1,5 @@
 import { createTestRenderer, TestRecorder, type MockInput } from "@opentui/core/testing"
-import { Effect, Exit } from "effect"
+import { Clock, Effect, Exit } from "effect"
 
 import { Target } from "../src/cli/Target.js"
 import { Ui } from "../src/ui/Ui.js"
@@ -7,7 +7,7 @@ import type { Call, Sandbox } from "./sandbox.js"
 
 // The UI's seam beside `sandbox()`: the real UI entry point in this process, drawn by OpenTUI's headless test
 // renderer and driven by its mock keyboard, against the sandbox's real Server (seeded through the CLI). The only
-// thing injected is the renderer, as in production.
+// thing injected is the renderer, as in production, plus Effect's own Clock, moved forward for idle tests.
 
 const settleTimeoutMs = 15_000
 const pollMs = 20
@@ -26,25 +26,57 @@ export interface Headless {
   readonly type: (text: string) => Promise<void>
   // The sandbox Server's request log so far.
   readonly calls: () => Promise<ReadonlyArray<Call>>
+  // Moves the UI's wall clock forward by `millis`; its timers still run in real time.
+  readonly advanceClock: (millis: number) => void
   // Resolves with the UI's exit once it has ended.
   readonly ended: Promise<Exit.Exit<void, unknown>>
   readonly close: () => Promise<void>
 }
 
+// The real Clock, `skew()` milliseconds ahead.
+const skewed = (skew: () => number): Clock.Clock => {
+  const real = Effect.runSync(Clock.clockWith(Effect.succeed))
+  const millis = () => real.currentTimeMillisUnsafe() + skew()
+  const nanos = () => real.currentTimeNanosUnsafe() + BigInt(skew()) * 1_000_000n
+
+  return {
+    currentTimeMillisUnsafe: millis,
+    currentTimeMillis: Effect.sync(millis),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: Effect.sync(nanos),
+    monotonicTimeNanosUnsafe: () => real.monotonicTimeNanosUnsafe(),
+    monotonicTimeNanos: real.monotonicTimeNanos,
+    sleep: (duration) => real.sleep(duration),
+  }
+}
+
 export const headless = async (
   box: Sandbox,
-  { width = 100, height = 30 }: { readonly width?: number; readonly height?: number } = {},
+  {
+    width = 100,
+    height = 30,
+    server = box.server.url,
+  }: {
+    readonly width?: number
+    readonly height?: number
+    // `HUSH_SERVER`: the sandbox's Server, or its proxy (`box.proxy.url`) to hold an answer in flight.
+    readonly server?: string
+  } = {},
 ): Promise<Headless> => {
-  const setup = await createTestRenderer({ width, height })
+  // `exitSignals: []` as `hush ui` runs it: the UI handles the exit signals itself.
+  const setup = await createTestRenderer({ width, height, exitSignals: [] })
   const recorder = new TestRecorder(setup.renderer)
   recorder.rec()
 
   // The CLI's own resolution with the sandbox's settings; `direct` keeps any proxy of the test host out.
-  const target = await Effect.runPromise(
-    Target.load({ HOME: box.home, HUSH_SERVER: box.server.url, HUSH_PROXY: "direct" }),
-  )
+  const target = await Effect.runPromise(Target.load({ HOME: box.home, HUSH_SERVER: server, HUSH_PROXY: "direct" }))
 
-  const ended = Effect.runPromiseExit(Ui.run({ renderer: setup.renderer, target }))
+  let skew = 0
+  const clock = skewed(() => skew)
+
+  const ended = Effect.runPromiseExit(
+    Effect.provideService(Ui.run({ renderer: setup.renderer, target }), Clock.Clock, clock),
+  )
 
   const waitUntil = async (predicate: (frame: string) => boolean) => {
     const deadline = Date.now() + settleTimeoutMs
@@ -69,6 +101,9 @@ export const headless = async (
     waitUntil,
     type: (text) => setup.mockInput.typeText(text),
     calls: box.calls,
+    advanceClock: (millis) => {
+      skew += millis
+    },
     ended,
     close: async () => {
       recorder.stop()

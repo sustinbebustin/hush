@@ -29,6 +29,21 @@ const quit = (): Step => ({ state: State.locked(), effects: [UiEffect.Quit()] })
 
 const isQuitChord = (key: Key) => Key.is(key, "c", { ctrl: true })
 
+const isSuspendChord = (key: Key) => Key.is(key, "z", { ctrl: true })
+
+// Ctrl-Z or SIGTSTP: Lock first, so nothing Open held survives the suspension, then suspend. `attempt` carries a
+// Locked prompt's count over, so a wait tick of an earlier attempt stays stale.
+const suspend = (attempt?: number): Step => ({ state: State.locked(attempt), effects: [UiEffect.Suspend()] })
+
+const idleLimit = 10 * 60 * 1_000
+
+// Locks once ten minutes have passed since the first tick after the last keypress.
+const idleTick = (state: Open, now: number): Step =>
+  State.Idle.$match(state.idle, {
+    Active: () => stay({ ...state, idle: State.Idle.Since({ since: now }) }),
+    Since: ({ since }) => (now - since >= idleLimit ? stay(State.locked()) : stay(state)),
+  })
+
 // The text a paste adds to a one-line input: everything before its first line break.
 const firstLine = (text: string) => text.split(/[\r\n]/, 1)[0] ?? ""
 
@@ -65,13 +80,22 @@ const select = (state: Open, cursor: number): Step => {
 
 // Open on the first Vault, if any.
 const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vault>): Step => {
-  const open = State.Open({ passphrase, vaults, cursor: 0, view: View.NoVaults(), modals: [] })
+  const open = State.Open({
+    passphrase,
+    vaults,
+    cursor: 0,
+    view: View.NoVaults(),
+    modals: [],
+    idle: State.Idle.Active(),
+  })
 
   return vaults.length === 0 ? stay(open) : select(open, 0)
 }
 
 const lockedKey = (state: Locked, key: Key): Step => {
   if (isQuitChord(key)) return quit()
+
+  if (isSuspendChord(key)) return suspend(state.attempt)
 
   if (State.Phase.$is("Checking")(state.phase)) return stay(state)
 
@@ -110,6 +134,10 @@ const fromLocked = (state: Locked, event: Event): Step => {
     ItemsRefused: () => stay(state),
     AuditListed: () => stay(state),
     AuditRefused: () => stay(state),
+    // Nothing to time out: Locked holds no Passphrase.
+    IdleTick: () => stay(state),
+    // The typed input goes too, and a check in flight is dropped when it answers.
+    Suspend: () => suspend(state.attempt),
     Closed: quit,
     // A Reveal answered after a Lock: dropped, value and all.
     Revealed: () => stay(state),
@@ -140,6 +168,8 @@ const openKey = (state: Open, key: Key): Step => {
   const { view } = state
 
   if (isQuitChord(key)) return quit()
+
+  if (isSuspendChord(key)) return suspend()
 
   if (state.modals.length > 0) return modalKey(state, key)
   const audit = View.$is("Audit")(view) ? Audit.key(view, key) : undefined
@@ -316,10 +346,13 @@ const auditAnswer = (
     : stay({ ...state, view: answered, modals: [...state.modals, ...notices] })
 }
 
+// Input restarts the idle time.
+const active = (state: Open): Open => ({ ...state, idle: State.Idle.Active() })
+
 const fromOpen = (state: Open, event: Event): Step =>
   Event.$match(event, {
-    Key: ({ key }) => openKey(state, key),
-    Paste: ({ text }) => openPaste(state, text),
+    Key: ({ key }) => openKey(active(state), key),
+    Paste: ({ text }) => openPaste(active(state), text),
     ItemsLoaded: ({ list }) =>
       answerFor(state, list.vault, (view) => ({
         ...state,
@@ -338,6 +371,8 @@ const fromOpen = (state: Open, event: Event): Step =>
     Unlocked: () => stay(state),
     UnlockRefused: () => stay(state),
     WaitTick: () => stay(state),
+    IdleTick: ({ now }) => idleTick(state, now),
+    Suspend: () => suspend(),
     Closed: quit,
     Revealed: (answer) => revealAnswer(state, answer, (view) => shownValue(state, view, answer)),
     RevealRefused: (answer) =>

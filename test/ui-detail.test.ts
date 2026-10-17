@@ -168,3 +168,24 @@ describe("Reveal", () => {
     assert.deepStrictEqual(late.effects, [])
   })
 })
+
+describe("Reveal and the lock paths", () => {
+  const tenMinutes = 10 * 60 * 1_000
+
+  const lockPaths: ReadonlyArray<readonly [string, ReadonlyArray<Event>]> = [
+    ["Ctrl-C", [Event.Key({ key: Key.named("c", { ctrl: true }) })]],
+    ["Ctrl-Z", [Event.Key({ key: Key.named("z", { ctrl: true }) })]],
+    ["SIGTSTP", [Event.Suspend()]],
+    ["an exit signal", [Event.Closed()]],
+    ["ten minutes idle", [Event.IdleTick({ now: 0 }), Event.IdleTick({ now: tenMinutes })]],
+  ]
+
+  for (const [path, events] of lockPaths)
+    it(`drops a Revealed value and the Passphrase on ${path}`, () => {
+      const locked = events.reduce((state, event) => Reducer.reduce(state, event).state, revealed().state)
+
+      assert.strictEqual(locked._tag, "Locked")
+      assert.notInclude(held(locked), sentinel)
+      assert.notInclude(held(locked), "right")
+    })
+})

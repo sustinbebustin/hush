@@ -291,3 +291,102 @@ describe("Reducer when Open", () => {
     assert.deepStrictEqual(State.$is("Open")(dismissed) ? dismissed.modals : undefined, [])
   })
 })
+
+const tenMinutes = 10 * 60 * 1_000
+
+// The idle clock's ticks at each time in turn (Unix milliseconds), from `state`.
+const ticks = (state: State, ...times: ReadonlyArray<number>) =>
+  times.reduce((current, now) => Reducer.reduce(current, Event.IdleTick({ now })).state, state)
+
+describe("Reducer idle timeout", () => {
+  it("locks an Open UI on the first tick ten minutes after the first tick without a keypress", () => {
+    const idle = ticks(opened(["a"]), 1_000, 1_000 + tenMinutes - 1)
+    assert.strictEqual(idle._tag, "Open")
+
+    const locked = Reducer.reduce(idle, Event.IdleTick({ now: 1_000 + tenMinutes }))
+    assert.deepStrictEqual(locked, { state: State.locked(), effects: [] })
+  })
+
+  it("restarts the idle time on a keypress or a paste", () => {
+    const pressed = press(ticks(opened(["a"]), 0, tenMinutes - 1), Key.named("down")).state
+    const pasted = Reducer.reduce(ticks(opened(["a"]), 0, tenMinutes - 1), Event.Paste({ text: "x" })).state
+
+    for (const input of [pressed, pasted]) {
+      assert.strictEqual(ticks(input, tenMinutes, 2 * tenMinutes - 1)._tag, "Open")
+      assert.strictEqual(ticks(input, tenMinutes, 2 * tenMinutes)._tag, "Locked")
+    }
+  })
+
+  it("counts time the host spent asleep, since the ticks carry the wall clock", () => {
+    assert.strictEqual(ticks(opened(["a"]), 0, 8 * 60 * 60 * 1_000)._tag, "Locked")
+  })
+
+  it("ignores ticks while Locked", () => {
+    const typed = press(State.initial, ...typing("pass")).state
+
+    assert.deepStrictEqual(Reducer.reduce(typed, Event.IdleTick({ now: 0 })), { state: typed, effects: [] })
+  })
+})
+
+describe("Reducer suspend", () => {
+  const suspendChord = Key.named("z", { ctrl: true })
+
+  it("locks an Open UI, then asks to suspend, on Ctrl-Z and on SIGTSTP", () => {
+    const filtering = press(opened(["a"]), Key.char("/"))
+
+    for (const step of [press(filtering.state, suspendChord), Reducer.reduce(filtering.state, Event.Suspend())])
+      assert.deepStrictEqual(step, { state: State.locked(), effects: [UiEffect.Suspend()] })
+  })
+
+  it("clears the typed input at the prompt and drops a check answered after it", () => {
+    const checking = press(State.initial, ...typing("right"), Key.named("return")).state
+    const suspended = Reducer.reduce(checking, Event.Suspend())
+    assert.deepStrictEqual(suspended, { state: State.locked(1), effects: [UiEffect.Suspend()] })
+
+    const late = Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [vault("Personal", 0)] })
+    assert.deepStrictEqual(Reducer.reduce(suspended.state, late), { state: State.locked(1), effects: [] })
+
+    const typed = press(State.initial, ...typing("half typed"), suspendChord)
+    assert.deepStrictEqual(typed, { state: State.locked(), effects: [UiEffect.Suspend()] })
+  })
+})
+
+// Each lock path, and whether it also locks from Locked (clearing the prompt) or only from Open: quit (Ctrl-C, or
+// `q` outside the filter), Ctrl-Z, SIGTSTP, an exit signal, and the idle timeout.
+const lockPath: fc.Arbitrary<{ readonly events: ReadonlyArray<Event>; readonly fromLocked: boolean }> = fc.constantFrom(
+  { events: [Event.Key({ key: Key.named("c", { ctrl: true }) })], fromLocked: true },
+  { events: [Event.Key({ key: Key.named("escape") }), Event.Key({ key: Key.char("q") })], fromLocked: false },
+  { events: [Event.Key({ key: Key.named("z", { ctrl: true }) })], fromLocked: true },
+  { events: [Event.Suspend()], fromLocked: true },
+  { events: [Event.Closed()], fromLocked: true },
+  { events: [Event.IdleTick({ now: 0 }), Event.IdleTick({ now: tenMinutes })], fromLocked: false },
+)
+
+// The Locked prompt as the UI starts: no Passphrase, no typed input (the one Redacted a Locked state has, and
+// deep equality does not look inside a Redacted), and nothing else.
+const assertFresh = (state: State | undefined) => {
+  if (state === undefined || !State.$is("Locked")(state)) return assert.fail(`expected Locked, got ${state?._tag}`)
+  assert.isUndefined(State.passphrase(state))
+  assert.strictEqual(Redacted.value(state.entered.value), "")
+  assert.deepStrictEqual(state, State.locked(state.attempt))
+}
+
+describe("Reducer lock paths", () => {
+  it("yields a fresh Locked state with no Passphrase and no held value on every path into Locked", () => {
+    fc.assert(
+      fc.property(fc.array(anyEvent, { maxLength: 30 }), lockPath, (events, path) => {
+        const before = run(events).at(-1)?.state ?? State.initial
+        const steps = run([...events, ...path.events])
+        const states = [State.initial, ...steps.map(({ state }) => state)]
+
+        steps.forEach(({ state }, index) => {
+          const previous = states[index]
+
+          if (State.$is("Locked")(state) && previous !== undefined && State.$is("Open")(previous)) assertFresh(state)
+        })
+
+        if (path.fromLocked || State.$is("Open")(before)) assertFresh(steps.at(-1)?.state)
+      }),
+    )
+  })
+})

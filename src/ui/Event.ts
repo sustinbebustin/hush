@@ -21,7 +21,13 @@ export type Event = Data.TaggedEnum<{
   AuditRefused: { readonly ask: Ask; readonly problem: Problem }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
-  // The renderer was destroyed from outside the reducer: an exit signal such as SIGHUP or SIGTERM.
+  // The idle clock's tick, every second for the UI's whole run: `now` is the wall clock in Unix milliseconds, so time
+  // the host spent asleep counts as idle.
+  IdleTick: { readonly now: number }
+  // SIGTSTP from outside (Ctrl-Z itself arrives as a key, the terminal being raw): Lock, then suspend.
+  Suspend: {}
+  // An exit signal (SIGHUP when the terminal detaches, SIGTERM and the rest), or the renderer destroyed from outside
+  // the reducer.
   Closed: {}
   // `admin/items/reveal` answered the Reveal numbered `generation` of `reference`.
   Revealed: {
@@ -44,6 +50,8 @@ const {
   AuditListed,
   AuditRefused,
   WaitTick,
+  IdleTick,
+  Suspend,
   Closed,
   Revealed,
   RevealRefused,
@@ -62,6 +70,8 @@ export const Event = {
   AuditListed,
   AuditRefused,
   WaitTick,
+  IdleTick,
+  Suspend,
   Closed,
   Revealed,
   RevealRefused,
