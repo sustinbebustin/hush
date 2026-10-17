@@ -39,7 +39,7 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 
 ```
 src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input, resizes (the renderer's size first), SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off, `exitSignals: []`
-src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack, `Idle`); both carry the terminal `Size`
+src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack, `Idle`); both carry the terminal `Size`; `idleLimitMillis` (ten minutes, ADR-0010)
 src/ui/Size.ts              the terminal's size and the 80x24 minimum; below it the UI draws one notice and takes only Ctrl-C and Ctrl-Z
 src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`, `Audit`, `ItemForm` with its phase), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`, `Rename`, `Renamed`, `VaultName`, `Help`), the Item rows then the Retired titles under one row cursor, the title filter (`Match.matches`) and Field References
 src/ui/Sidebar.ts           the sidebar's rows: the Vaults, then the fixed sections (`Tokens`, `Audit`)
@@ -49,7 +49,10 @@ src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock 
 src/ui/IssueForm.ts         the Token issue form as plain state: Label, one Grant choice per Vault, TTL, replacement; `submit` -> the `tokens/issue` fields or a `Problem`
 src/ui/ItemForm.ts          the Item form as plain state: a create (Kind, title, the concealed `Concealed` buffer, plain drafts) or an edit (one `Entry` for the Field under the cursor); `submit` -> the one `Save`, `sent` drops the buffer, `lines` -> what the screen draws (plain text in `Input`s, the concealed value only as a mask)
 src/ui/Clipboard.ts         the host clipboard (OpenTUI's native backends): `available`, `write`, `read` (`Pasted`); `none` where there is no backend, `host` for `launch`
-src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`; every Lock (idle ten minutes, Ctrl-Z or SIGTSTP, exit signal, quit) is a fresh `State.locked`
+src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`: the dispatcher, the Locked prompt (every answer for an Open UI dropped) and the Open core (sidebar cursor and selection, Item list and detail, Item form, modals, idle, suspend, quit); every Lock (idle limit, Ctrl-Z or SIGTSTP, exit signal, quit) is a fresh `State.locked`
+src/ui/Step.ts              a transition's `Step` (`{ state, effects }`) and the modal-stack moves the reducer, `Tokens` and `Vaults` share
+src/ui/Tokens.ts            the Tokens view's transitions: the table and its row cursor, revoke (confirmed), the issue form, the issued Token's modal and its copy key, and their answers (late ones dropped)
+src/ui/Vaults.ts            the Vault sidebar's transitions: the new Vault's name prompt, delete (confirmed), and the sidebar listed anew, keeping the cursor and the main pane where they still apply
 src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
 src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
