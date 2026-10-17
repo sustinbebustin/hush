@@ -29,11 +29,24 @@ export type UiEffect = Data.TaggedEnum<{
   Suspend: {}
   // `admin/items/reveal` of one Field; `generation` comes back with the answer.
   Reveal: { readonly passphrase: Redacted.Redacted<string>; readonly reference: string; readonly generation: number }
+  // `admin/items/rename` of one Item.
+  RenameItem: {
+    readonly passphrase: Redacted.Redacted<string>
+    readonly vault: string
+    readonly item: string
+    readonly newTitle: string
+  }
+  // `admin/items/delete` of one Item.
+  DeleteItem: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string; readonly item: string }
+  // `admin/items/release` of one Retired title.
+  ReleaseTitle: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string; readonly title: string }
 }>
 
 const { ListVaults, ListItems, ListAudit, After, Quit, Suspend, Reveal, $is, $match } = Data.taggedEnum<UiEffect>()
 
 const { ListTokens, RevokeToken, IssueToken, CopyToken } = Data.taggedEnum<UiEffect>()
+
+const { RenameItem, DeleteItem, ReleaseTitle } = Data.taggedEnum<UiEffect>()
 
 export const UiEffect = {
   ListVaults,
@@ -47,6 +60,9 @@ export const UiEffect = {
   Quit,
   Suspend,
   Reveal,
+  RenameItem,
+  DeleteItem,
+  ReleaseTitle,
   $is,
   $match,
 } as const

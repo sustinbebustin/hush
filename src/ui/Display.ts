@@ -28,6 +28,12 @@ export interface ItemRow {
   readonly underCursor: boolean
 }
 
+// One Retired title of the Item list: its key (NFC, lowercased), the only form the Server keeps.
+export interface RetiredRow {
+  readonly key: string
+  readonly underCursor: boolean
+}
+
 // One row of the Token table; times are UTC dates.
 export interface TokenRow {
   readonly label: string
@@ -51,6 +57,8 @@ export type Display = Data.TaggedEnum<{
     // The filter line: empty when no filter is applied or typed.
     readonly filter: string
     readonly rows: ReadonlyArray<ItemRow>
+    // The Item list's Retired titles, drawn in their own section below the rows; empty in every other view.
+    readonly retired: ReadonlyArray<RetiredRow>
     // Shown in place of rows: loading, refused or empty.
     readonly message: string
     // The Item detail, one line per entry; empty outside it.
@@ -72,8 +80,10 @@ const prompt = "hush Passphrase: "
 
 const lockedHints = "Enter unlock  Ctrl-C quit"
 const listHints = "Up/Down move  Enter open Vault  Tab Items  / filter  Esc clear filter  q quit"
-const rowsHints = "Up/Down move  Enter open Item  Tab Vaults  / filter  Esc clear filter  q quit"
-const detailHints = "Up/Down move  r reveal  Esc back  q quit"
+const rowsHints = "Up/Down move  Enter open  n rename  d delete  Tab Vaults  / filter  q quit"
+const retiredHints = "Up/Down move  x release  Tab Vaults  / filter  q quit"
+const detailHints = "Up/Down move  r reveal  n rename  d delete  Esc back  q quit"
+const renameHints = "Type the new title  Enter rename  Esc cancel"
 const shownHints = "Any key hides the value"
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
 const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
@@ -229,7 +239,34 @@ const modalShown = (top: Modal) =>
       ].join("\n"),
       hints: copy === "absent" ? "Enter or Esc dismiss" : "c copy  Enter or Esc dismiss",
     }),
+    Rename: ({ vault, item, text, phase }) => ({
+      title: "Rename",
+      text: [
+        `Rename Item "${item}" in Vault ${vault}. Its old title is then retired.`,
+        "",
+        `New title: ${text}${phase === "editing" ? "_" : ""}`,
+        ...(phase === "sending" ? ["", "Renaming..."] : []),
+      ].join("\n"),
+      hints: phase === "sending" ? "Renaming...  Ctrl-C quit" : renameHints,
+    }),
+    Renamed: ({ receipt }) => ({
+      title: "Renamed",
+      text: [
+        `Renamed "${receipt.from}" to "${receipt.to}" in Vault ${receipt.vault}. Update every template that used the old References:`,
+        "",
+        ...receipt.references.flatMap((reference) => [`  ${reference.old}`, `  -> ${reference.new}`]),
+      ].join("\n"),
+      hints: "Enter or Esc dismiss",
+    }),
   })
+
+const retiredRows = (view: View): ReadonlyArray<RetiredRow> => {
+  if (!View.$is("ItemList")(view)) return []
+  const cursor = View.cursorRow(view)
+  const items = View.shown(view).length
+
+  return View.retired(view).map((key, index) => ({ key, underCursor: items + index === cursor }))
+}
 
 const hintsFor = (state: Open) => {
   const top = state.modals.at(-1)
@@ -244,6 +281,8 @@ const hintsFor = (state: Open) => {
   if (View.$is("Audit")(view)) return Audit.editing(view) ? auditFilterHints : auditHints
 
   if (View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter)) return filterHints
+
+  if (View.$is("ItemList")(view) && View.selectedRetired(view) !== undefined) return retiredHints
 
   return View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus) ? rowsHints : listHints
 }
@@ -263,6 +302,7 @@ const open = (state: Open): Display => {
     })),
     tokens: tokenRows(state.view),
     ...pane(state.view),
+    retired: retiredRows(state.view),
     log: View.$is("Audit")(state.view) ? Audit.lines(state.view) : [],
     modal: top === undefined ? undefined : modalShown(top).text,
     modalTitle: top === undefined ? "" : modalShown(top).title,

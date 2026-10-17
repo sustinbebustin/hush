@@ -1,7 +1,7 @@
 import { Data, type Redacted } from "effect"
 
 import type { AuditQuery } from "../cli/Admin.js"
-import type { AuditPage, TokenIssueReceipt, TokenList, VaultItems, VaultList } from "../shared/Api.js"
+import type { AuditPage, ItemRenamed, TokenIssueReceipt, TokenList, VaultItems, VaultList } from "../shared/Api.js"
 import type { Ask } from "./Audit.js"
 import type { Written } from "./Clipboard.js"
 import type { Key as Keypress } from "./Key.js"
@@ -47,6 +47,12 @@ export type Event = Data.TaggedEnum<{
   RevealRefused: { readonly reference: string; readonly generation: number; readonly problem: Problem }
   // The Revealed value numbered `generation` has been drawn long enough.
   RevealExpired: { readonly generation: number }
+  // `admin/items/rename` answered, with the old and new Reference of every Field.
+  Renamed: { readonly receipt: ItemRenamed }
+  // `admin/items/delete` or `admin/items/release` changed `vault`'s Items or Retired titles.
+  ItemsChanged: { readonly vault: string }
+  // A rename, delete or release refused.
+  ChangeRefused: { readonly problem: Problem }
 }>
 
 const {
@@ -72,6 +78,8 @@ const {
 const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused, TokenIssued, IssueRefused, TokenCopied } =
   Data.taggedEnum<Event>()
 
+const { Renamed, ItemsChanged, ChangeRefused } = Data.taggedEnum<Event>()
+
 export const Event = {
   Key,
   Paste,
@@ -95,6 +103,9 @@ export const Event = {
   Revealed,
   RevealRefused,
   RevealExpired,
+  Renamed,
+  ItemsChanged,
+  ChangeRefused,
   $is,
   $match,
 } as const

@@ -1,6 +1,6 @@
 import { BoxRenderable, type CliRenderer, type KeyEvent, type PasteEvent, TextRenderable } from "@opentui/core"
 
-import { Display, type TokenRow } from "./Display.js"
+import { Display, type RetiredRow, type TokenRow } from "./Display.js"
 import type { Key } from "./Key.js"
 
 // The thin sync layer: one renderable tree built once, then each `Display` copied into it. It knows OpenTUI and
@@ -47,6 +47,12 @@ const mountTokenTable = (renderer: CliRenderer) => {
 
   return { box, draw }
 }
+
+// The Retired titles section under the Item rows, after a blank line and its heading; nothing when there is none.
+const retiredLines = (retired: ReadonlyArray<RetiredRow>): ReadonlyArray<string> =>
+  retired.length === 0
+    ? []
+    : ["", "Retired titles", ...retired.map(({ key, underCursor }) => `${underCursor ? ">" : " "} ${key}`)]
 
 const mount = (renderer: CliRenderer): Screen => {
   const root = new BoxRenderable(renderer, { width: "100%", height: "100%", flexDirection: "column" })
@@ -143,7 +149,10 @@ const mount = (renderer: CliRenderer): Screen => {
         filterLine.visible = shown.filter !== ""
         message.content = shown.message
         message.visible = shown.message !== ""
-        titles.content = shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`).join("\n")
+        titles.content = [
+          ...shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`),
+          ...retiredLines(shown.retired),
+        ].join("\n")
         kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
         rows.visible = shown.detail.length === 0 && shown.log.length === 0 && shown.tokens === undefined
         detail.content = shown.detail.join("\n")

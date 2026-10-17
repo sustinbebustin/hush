@@ -112,6 +112,30 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
           Effect.succeed(Event.RevealRefused({ reference, generation, problem: renderedOf(target)(error) })),
         ),
       ),
+    // Writes, so a lost answer reads as unverified (invariant 3); refusals read as the CLI's `item` commands say.
+    RenameItem: ({ passphrase, vault, item, newTitle }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) =>
+          client.admin.itemsRename({ payload: { passphrase, vault, item, newTitle } }),
+        ),
+      ).pipe(
+        Effect.map((receipt) => Event.Renamed({ receipt })),
+        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    DeleteItem: ({ passphrase, vault, item }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.itemsDelete({ payload: { passphrase, vault, item } })),
+      ).pipe(
+        Effect.map(() => Event.ItemsChanged({ vault })),
+        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    ReleaseTitle: ({ passphrase, vault, title }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.itemsRelease({ payload: { passphrase, vault, title } })),
+      ).pipe(
+        Effect.map(() => Event.ItemsChanged({ vault })),
+        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: renderedOf(target)(error) }))),
+      ),
   })
 }
 
