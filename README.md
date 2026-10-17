@@ -134,17 +134,18 @@ For agents, with a Token:
 
 For the Owner, with the Passphrase:
 
-| Command                     | What it does                                                   |
-| --------------------------- | -------------------------------------------------------------- |
-| `hush init`                 | initialise a new Server                                        |
-| `hush vault`                | create, list and delete Vaults                                 |
-| `hush item`                 | edit, rename, delete and release existing Items                |
-| `hush token issue`          | issue a Token with fixed Grants                                |
-| `hush token list`           | every Token with its Grants and state                          |
-| `hush token revoke <label>` | stop a Token at once                                           |
-| `hush audit`                | read the Audit Log, newest first                               |
-| `hush backup <file>`        | download a checked snapshot of the database                    |
-| `hush passphrase change`    | change the Passphrase; Vaults, Tokens and values are untouched |
+| Command                                                            | What it does                                                             |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `hush init`                                                        | initialise a new Server                                                  |
+| `hush vault`                                                       | create, list and delete Vaults                                           |
+| `hush item`                                                        | edit, rename, delete and release existing Items                          |
+| `hush item create <kind> --title <title> --vault <vault> --prompt` | create an Item without a Token, verified before commit; never overwrites |
+| `hush token issue`                                                 | issue a Token with fixed Grants                                          |
+| `hush token list`                                                  | every Token with its Grants and state                                    |
+| `hush token revoke <label>`                                        | stop a Token at once                                                     |
+| `hush audit`                                                       | read the Audit Log, newest first                                         |
+| `hush backup <file>`                                               | download a checked snapshot of the database                              |
+| `hush passphrase change`                                           | change the Passphrase; Vaults, Tokens and values are untouched           |
 
 Every Passphrase command reads it from a hidden prompt, or with `--passphrase-stdin` from a pipe.
 
