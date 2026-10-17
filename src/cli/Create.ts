@@ -37,7 +37,7 @@ export interface Receipt {
 const parse = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 
 // A plain flag must name a plain Field of the Kind and carry a non-blank value.
-const plainField = (kind: Kind, field: { readonly label: string; readonly value: string }) =>
+export const plainField = (kind: Kind, field: { readonly label: string; readonly value: string }) =>
   Effect.gen(function* () {
     const label = yield* parse("field", field.label)
     const spec = Kind.spec(kind, Name.key(label))

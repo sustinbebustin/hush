@@ -3,6 +3,8 @@ import { SqlClient } from "effect/sql"
 
 import type {
   ItemChange,
+  ItemCreateReceipt,
+  ItemCreateRequest,
   ItemDeleted,
   ItemEditReceipt,
   ItemEditRequest,
@@ -34,8 +36,8 @@ import { Items } from "./Items.js"
 import { Keys } from "./Keys.js"
 import { Passphrase } from "./Passphrase.js"
 
-// Items under the Passphrase: the Owner's only way to change an existing Item. Each is one Passphrase check and
-// one transaction with its audit row; the Kind never changes.
+// Items under the Passphrase: the Owner's create, and the only way to change an existing Item. Each is one
+// Passphrase check and one transaction with its audit row; the Kind never changes.
 
 const { rows } = Database
 
@@ -263,6 +265,53 @@ export const edit = (request: ItemEditRequest, peer: string | null, sealer: Seal
         return receipt
       }),
     recorded: (receipt) => ({ vaults: [receipt.vault], detail: { ...detail, title: receipt.title } }),
+  })
+}
+
+// `items/create` under the Passphrase: the same checks as a Token's create, a Retired title refused alike; each
+// Field sealed with K_v from the master key, then read back, opened and compared before commit (`setField`).
+export const create = (request: ItemCreateRequest, peer: string | null, sealer: Sealer = Keys) => {
+  const detail: Audit.Detail = {
+    title: nameOf(request.title),
+    fields: request.fields.flatMap(({ label }) => Audit.named(label)),
+  }
+
+  return Passphrase.audited({
+    passphrase: request.passphrase,
+    action: "item.create",
+    peer,
+    scope: { vaults: Audit.named(request.vault), detail },
+    exclusive: false,
+    checkpoint: false,
+    unlock: Keys.fromPassphrase,
+    operation: (unlocked) =>
+      Effect.gen(function* () {
+        const vault = yield* findVault(request.vault)
+        const title = yield* Effect.fromResult(parseName("title", request.title))
+        const fields = yield* Items.createdFields(request.kind, request.fields)
+        yield* Items.refuseRetired(vault, title)
+        const at = yield* Audit.now
+        const id = yield* Items.insertItem(vault, title, request.kind, at)
+        const item: ItemOfKind = { id, title, kind: request.kind }
+
+        for (const { spec, value } of fields)
+          yield* setField({ master: unlocked, sealer, at, vault, item, label: spec.label, value })
+
+        const receipt: ItemCreateReceipt = {
+          vault: vault.name,
+          title,
+          kind: request.kind,
+          fields: fields.map(({ spec }) => ({ label: spec.label, concealed: spec.role === "primary" })),
+          createdAt: at,
+          verified: true,
+        }
+
+        return receipt
+      }),
+    recorded: (receipt) => ({
+      vaults: [receipt.vault],
+      detail: { title: receipt.title, fields: receipt.fields.map(({ label }) => label) },
+    }),
   })
 }
 

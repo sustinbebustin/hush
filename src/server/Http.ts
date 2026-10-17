@@ -60,6 +60,7 @@ const AdminLive = HttpApiBuilder.group(Api, "admin", (handlers) =>
     .handle("itemsRename", withPeer(ItemAdmin.rename))
     .handle("itemsDelete", withPeer(ItemAdmin.remove))
     .handle("itemsRelease", withPeer(ItemAdmin.releaseTitle))
+    .handle("itemsCreate", withPeer(ItemAdmin.create))
     .handle("audit", withPeer(AuditLog.read)),
 )
 
