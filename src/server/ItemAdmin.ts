@@ -11,6 +11,8 @@ import type {
   ItemRenamed,
   ItemRenameRequest,
   ItemRequest,
+  VaultItems,
+  VaultRequest,
 } from "../shared/Api.js"
 import {
   FieldNotFound,
@@ -107,6 +109,41 @@ const ofKind = (vault: VaultFound, item: ItemFound): Effect.Effect<ItemOfKind, I
       onFailure: () => new IntegrityCheckFailed({ damaged: { what: "item", vault: vault.name, item: item.title } }),
     }),
   )
+
+// `admin/items/list`: one Vault's Items as `items/list` shows them, and its Retired titles. Nothing is unwrapped,
+// so the Passphrase check is the whole check.
+export const list = (request: VaultRequest, peer: string | null) =>
+  Passphrase.audited({
+    passphrase: request.passphrase,
+    action: "item.list",
+    peer,
+    scope: { vaults: Audit.named(request.vault) },
+    exclusive: false,
+    checkpoint: false,
+    unlock: Keys.fromPassphrase,
+    operation: () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const vault = yield* findVault(request.vault)
+        const [listed] = yield* Items.itemsOf([{ vaultId: vault.id, vault: vault.name }])
+
+        if (listed === undefined) return yield* Effect.die(new Error("list: itemsOf returned nothing for one Vault"))
+
+        const retired = yield* rows(
+          Items.RetiredRow,
+          sql`SELECT title_key FROM retired_titles WHERE vault_id = ${vault.id} ORDER BY title_key`,
+        )
+
+        const receipt: VaultItems = {
+          vault: vault.name,
+          items: listed.items,
+          retired: retired.map(({ title_key }) => title_key),
+        }
+
+        return receipt
+      }),
+    recorded: (receipt) => ({ vaults: [receipt.vault] }),
+  })
 
 // The Kind's spec for a requested label, or `UnknownField` listing the Kind's labels.
 const specFor = (kind: Kind, label: string): Result.Result<FieldSpec, UnknownField> => {

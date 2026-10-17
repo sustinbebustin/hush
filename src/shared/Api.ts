@@ -237,6 +237,7 @@ export const AuditAction = Schema.Literals([
   "vault.create",
   "vault.list",
   "vault.delete",
+  "item.list",
   "item.edit",
   "item.rename",
   "item.delete",
@@ -337,6 +338,27 @@ export const AuditPage = Schema.Struct({ entries: Schema.Array(AuditEntry), next
 export type AuditPage = typeof AuditPage.Type
 
 export const FieldMeta = Schema.Struct({ label: Schema.String, concealed: Schema.Boolean })
+
+// An Item's metadata: stored display names, Fields in Kind order, never a value.
+export const ItemMeta = Schema.Struct({
+  title: Schema.String,
+  kind: KindWire,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+  fields: Schema.Array(FieldMeta),
+})
+
+export type ItemMeta = typeof ItemMeta.Type
+
+// One Vault as the Owner sees it: its Items by title, and its Retired titles. A Retired title keeps only its key
+// (NFC, lowercased), so `retired` lists keys, sorted.
+export const VaultItems = Schema.Struct({
+  vault: Schema.String,
+  items: Schema.Array(ItemMeta),
+  retired: Schema.Array(Schema.String),
+})
+
+export type VaultItems = typeof VaultItems.Type
 
 // One change per edit: `set` replaces a Field's value or adds an absent plain Field; `remove` drops a
 // present plain Field.
@@ -478,6 +500,12 @@ export class Admin extends HttpApiGroup.make("admin")
       success: TokenRevoked,
       error: [...passphraseEndpointErrors, InvalidName, TokenNotFound],
     }),
+    // The Owner's view of one Vault without a Token (ADR-0010): metadata and Retired titles, never a value.
+    HttpApiEndpoint.post("itemsList", "/v1/admin/items/list", {
+      payload: VaultRequest,
+      success: VaultItems,
+      error: [...passphraseEndpointErrors, InvalidName, VaultNotFound, IntegrityCheckFailed],
+    }),
     HttpApiEndpoint.post("itemsEdit", "/v1/admin/items/edit", {
       payload: ItemEditRequest,
       success: ItemEditReceipt,
@@ -584,17 +612,6 @@ export type CreateReceipt = typeof CreateReceipt.Type
 export const ListRequest = Schema.Struct({ vaults: Schema.optionalKey(Schema.Array(Schema.String)) })
 
 export type ListRequest = typeof ListRequest.Type
-
-// An Item's metadata: stored display names, Fields in Kind order, never a value.
-export const ItemMeta = Schema.Struct({
-  title: Schema.String,
-  kind: KindWire,
-  createdAt: Schema.String,
-  updatedAt: Schema.String,
-  fields: Schema.Array(FieldMeta),
-})
-
-export type ItemMeta = typeof ItemMeta.Type
 
 // Every Vault listed, empty ones included, with the Token's Access to it.
 export const ItemList = Schema.Struct({

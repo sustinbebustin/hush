@@ -165,8 +165,19 @@ const itemArguments = {
 }
 
 const item = Command.make("item").pipe(
-  Command.withDescription("Change existing Items (the Owner only)"),
+  Command.withDescription("List and change existing Items (the Owner only)"),
   Command.withSubcommands([
+    Command.make("list", { vault: itemArguments.vault, ...passphraseLineFlags }, (flags) =>
+      withTarget((target) =>
+        ItemAdmin.itemList({ target, source: secretSource(flags.passphraseStdin), vault: flags.vault }).pipe(
+          Effect.flatMap(printJson),
+        ),
+      ),
+    ).pipe(
+      Command.withDescription(
+        "List a Vault's Items with their Fields (never a value) and its Retired titles, without a Token",
+      ),
+    ),
     Command.make(
       "edit",
       {
