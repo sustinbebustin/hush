@@ -1,9 +1,17 @@
 import { Data, type Redacted } from "effect"
 
 import type { AuditQuery } from "../cli/Admin.js"
-import type { AuditPage, TokenIssueReceipt, TokenList, VaultItems, VaultList } from "../shared/Api.js"
+import type {
+  AuditPage,
+  ItemCreateReceipt,
+  ItemEditReceipt,
+  TokenIssueReceipt,
+  TokenList,
+  VaultItems,
+  VaultList,
+} from "../shared/Api.js"
 import type { Ask } from "./Audit.js"
-import type { Written } from "./Clipboard.js"
+import type { Pasted, Written } from "./Clipboard.js"
 import type { Key as Keypress } from "./Key.js"
 import type { Problem } from "./Problem.js"
 
@@ -13,7 +21,12 @@ export type Event = Data.TaggedEnum<{
   // Bracketed paste, decoded as UTF-8.
   Paste: { readonly text: string }
   // `vaults/list` accepted the Passphrase it carried; the answer brings it back, so Locked never holds it.
-  Unlocked: { readonly passphrase: Redacted.Redacted<string>; readonly vaults: VaultList["vaults"] }
+  // `clipboard` says whether the host has a clipboard, so the paste key is offered only where it can work.
+  Unlocked: {
+    readonly passphrase: Redacted.Redacted<string>
+    readonly vaults: VaultList["vaults"]
+    readonly clipboard: boolean
+  }
   UnlockRefused: { readonly problem: Problem }
   ItemsLoaded: { readonly list: VaultItems }
   ItemsRefused: { readonly vault: string; readonly problem: Problem }
@@ -47,6 +60,14 @@ export type Event = Data.TaggedEnum<{
   RevealRefused: { readonly reference: string; readonly generation: number; readonly problem: Problem }
   // The Revealed value numbered `generation` has been drawn long enough.
   RevealExpired: { readonly generation: number }
+  // `admin/items/create` answered with `verified: true`.
+  ItemCreated: { readonly receipt: ItemCreateReceipt }
+  // `admin/items/edit` answered with `verified: true`.
+  ItemEdited: { readonly receipt: ItemEditReceipt }
+  // The Item form's write was refused before sending (a CLI check) or by the Server, or may not have happened.
+  ItemSaveRefused: { readonly problem: Problem }
+  // The host clipboard's answer to the paste key.
+  ClipboardRead: { readonly pasted: Pasted }
 }>
 
 const {
@@ -72,6 +93,8 @@ const {
 const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused, TokenIssued, IssueRefused, TokenCopied } =
   Data.taggedEnum<Event>()
 
+const { ItemCreated, ItemEdited, ItemSaveRefused, ClipboardRead } = Data.taggedEnum<Event>()
+
 export const Event = {
   Key,
   Paste,
@@ -95,6 +118,10 @@ export const Event = {
   Revealed,
   RevealRefused,
   RevealExpired,
+  ItemCreated,
+  ItemEdited,
+  ItemSaveRefused,
+  ClipboardRead,
   $is,
   $match,
 } as const

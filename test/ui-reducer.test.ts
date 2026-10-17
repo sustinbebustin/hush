@@ -55,6 +55,7 @@ const opened = (titles: ReadonlyArray<string> = []): State => {
     Event.Unlocked({
       passphrase: Redacted.make("right"),
       vaults: [vault("Personal", titles.length), vault("Work", 0)],
+      clipboard: false,
     }),
   ).state
 
@@ -135,7 +136,11 @@ describe("Reducer from Locked", () => {
 
     const { state, effects } = Reducer.reduce(
       checking,
-      Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [vault("Personal", 2), vault("Work", 0)] }),
+      Event.Unlocked({
+        passphrase: Redacted.make("right"),
+        vaults: [vault("Personal", 2), vault("Work", 0)],
+        clipboard: false,
+      }),
     )
 
     assert.strictEqual(state._tag, "Open")
@@ -145,7 +150,7 @@ describe("Reducer from Locked", () => {
 
   it("opens with no Item request when the Server has no Vault", () => {
     const checking = press(State.initial, ...typing("right"), Key.named("return")).state
-    const unlocked = Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [] })
+    const unlocked = Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [], clipboard: false })
     const { state, effects } = Reducer.reduce(checking, unlocked)
 
     assert.strictEqual(State.$is("Open")(state) ? state.view._tag : undefined, "NoVaults")
@@ -238,7 +243,7 @@ const anyEvent: fc.Arbitrary<Event> = fc.oneof(
   {
     arbitrary: fc
       .subarray([vault("Personal", 1), vault("Work", 0)])
-      .map((vaults) => Event.Unlocked({ passphrase: Redacted.make("held passphrase"), vaults })),
+      .map((vaults) => Event.Unlocked({ passphrase: Redacted.make("held passphrase"), vaults, clipboard: false })),
     weight: 1,
   },
 )
@@ -519,7 +524,12 @@ describe("Reducer suspend", () => {
     const suspended = Reducer.reduce(checking, Event.Suspend())
     assert.deepStrictEqual(suspended, { state: State.locked(1), effects: [UiEffect.Suspend()] })
 
-    const late = Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [vault("Personal", 0)] })
+    const late = Event.Unlocked({
+      passphrase: Redacted.make("right"),
+      vaults: [vault("Personal", 0)],
+      clipboard: false,
+    })
+
     assert.deepStrictEqual(Reducer.reduce(suspended.state, late), { state: State.locked(1), effects: [] })
 
     const typed = press(State.initial, ...typing("half typed"), suspendChord)

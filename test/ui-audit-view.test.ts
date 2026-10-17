@@ -64,7 +64,11 @@ const selected = (): ReturnType<typeof press> => {
 
   const open = Reducer.reduce(
     checking,
-    Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [vault("Personal"), vault("Work")] }),
+    Event.Unlocked({
+      passphrase: Redacted.make("right"),
+      vaults: [vault("Personal"), vault("Work")],
+      clipboard: false,
+    }),
   ).state
 
   return press(open, Key.named("down"), Key.named("down"), Key.named("down"), Key.named("return"))

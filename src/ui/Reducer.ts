@@ -1,17 +1,18 @@
 import { Redacted, Result } from "effect"
 
-import type { TokenIssueReceipt } from "../shared/Api.js"
+import type { ItemEditReceipt, ItemMeta, TokenIssueReceipt } from "../shared/Api.js"
 import { Audit, type Move } from "./Audit.js"
-import type { Written } from "./Clipboard.js"
+import { Clipboard, type Pasted, type Written } from "./Clipboard.js"
 import { Concealed } from "./Concealed.js"
 import { Event } from "./Event.js"
 import { IssueForm } from "./IssueForm.js"
+import { ItemForm } from "./ItemForm.js"
 import { Key } from "./Key.js"
 import { Problem } from "./Problem.js"
 import { Sidebar } from "./Sidebar.js"
 import { State, type Locked, type Open, type Vault } from "./State.js"
 import { UiEffect } from "./UiEffect.js"
-import { type Filter, type Modal, View } from "./View.js"
+import { type Filter, type ItemListOf, type Modal, View } from "./View.js"
 
 type ItemList = Extract<View, { readonly _tag: "ItemList" }>
 
@@ -98,7 +99,7 @@ const select = (state: Open, cursor: number): Step => {
 }
 
 // Open on the first Vault, if any.
-const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vault>): Step => {
+const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vault>, clipboard: boolean): Step => {
   const open = State.Open({
     passphrase,
     vaults,
@@ -106,6 +107,7 @@ const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vau
     view: View.NoVaults(),
     modals: [],
     idle: State.Idle.Active(),
+    clipboard,
   })
 
   return vaults.length === 0 ? stay(open) : select(open, 0)
@@ -142,7 +144,7 @@ const fromLocked = (state: Locked, event: Event): Step => {
     Paste: ({ text }) =>
       checking ? stay(state) : stay({ ...state, entered: Concealed.append(state.entered, firstLine(text)) }),
     // An unlock answered after a quit or a newer attempt is dropped, Passphrase and all.
-    Unlocked: ({ passphrase, vaults }) => (checking ? openOn(passphrase, vaults) : stay(state)),
+    Unlocked: ({ passphrase, vaults, clipboard }) => (checking ? openOn(passphrase, vaults, clipboard) : stay(state)),
     UnlockRefused: ({ problem }) => (checking ? refusedWith(state, problem) : stay(state)),
     WaitTick: ({ attempt }) =>
       attempt === state.attempt && State.Phase.$is("Refused")(state.phase)
@@ -170,6 +172,12 @@ const fromLocked = (state: Locked, event: Event): Step => {
     Revealed: () => stay(state),
     RevealRefused: () => stay(state),
     RevealExpired: () => stay(state),
+    // A write answered after a Lock: dropped. The Item list shows it on the next unlock.
+    ItemCreated: () => stay(state),
+    ItemEdited: () => stay(state),
+    ItemSaveRefused: () => stay(state),
+    // A clipboard read answered after a Lock: dropped, text and all.
+    ClipboardRead: () => stay(state),
   })
 }
 
@@ -356,7 +364,12 @@ const openKey = (state: Open, key: Key): Step => {
 
   if (View.$is("ItemDetail")(view)) return detailKey(state, view, key)
 
+  if (View.$is("ItemForm")(view)) return formKey(state, view, key)
+
   if (Key.is(key, "q")) return quit()
+
+  if (View.$is("ItemList")(view) && Key.is(key, "c"))
+    return stay({ ...state, view: View.ItemForm({ list: view, form: ItemForm.create(view.vault), phase: "editing" }) })
 
   if (View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus)) {
     const onRows = rowsKey(state, view, view.focus.row, key)
@@ -441,6 +454,16 @@ const detailKey = (state: Open, view: ItemDetail, key: Key): Step => {
     return withDetail({ ...view, field: Math.min(view.item.fields.length - 1, view.field + 1) })
   const field = View.selectedField(view)
 
+  if (Key.is(key, "e"))
+    return stay({
+      ...state,
+      view: View.ItemForm({
+        list: view.list,
+        form: ItemForm.edit(view.list.vault, view.item, field?.label),
+        phase: "editing",
+      }),
+    })
+
   if (!Key.is(key, "r") || field === undefined) return stay(state)
   const generation = view.reveals + 1
   const reference = View.reference(view.list.vault, view.item, field.label)
@@ -498,6 +521,12 @@ const openPaste = (state: Open, text: string): Step => {
   if (state.modals.length === 0 && View.$is("Audit")(view))
     return stay({ ...state, view: Audit.paste(view, firstLine(text)) })
 
+  // Into the Item form: all of it into the concealed buffer, never drawn, or a first line into a text row.
+  if (state.modals.length === 0 && View.$is("ItemForm")(view))
+    return view.phase === "editing"
+      ? stay({ ...state, view: { ...view, form: ItemForm.paste(view.form, text) } })
+      : stay(state)
+
   if (state.modals.length > 0 || !View.$is("ItemList")(view) || !View.Filter.$is("Editing")(view.filter))
     return stay(state)
 
@@ -540,6 +569,122 @@ const tokensAnswer = (state: Open, update: (view: TokensView) => Open): Step => 
   const { view } = state
 
   return View.$is("Tokens")(view) && View.TokenTable.$is("Loading")(view.table) ? stay(update(view)) : stay(state)
+}
+
+type ItemFormView = Extract<View, { readonly _tag: "ItemForm" }>
+
+const noPaste = Problem.Failed({
+  message:
+    "This machine has no clipboard the UI can read (it needs macOS, Wayland or X11), so nothing was pasted. Type the value, or use your terminal's own paste.",
+})
+
+const pasteFailed = {
+  Empty: Problem.Failed({
+    message: "The clipboard holds no text, so nothing was pasted. Copy the value first, then press Ctrl-V again.",
+  }),
+  Unsupported: noPaste,
+  Failed: Problem.Failed({
+    message:
+      "Could not read the clipboard (the read timed out, the text was too large, or the platform refused it); nothing was pasted. Press Ctrl-V to try again, or type the value.",
+  }),
+} as const
+
+const isPasteChord = (key: Key) => Key.is(key, "v", { ctrl: true })
+
+// The detail of `item`, its cursor on the Field labelled `label` (the first when the Item has no such Field).
+const detailOn = (list: ItemListOf, item: ItemMeta, label: string): View =>
+  View.ItemDetail({
+    list,
+    item,
+    field: Math.max(
+      0,
+      item.fields.findIndex((field) => field.label === label),
+    ),
+    reveal: View.Reveal.Hidden(),
+    reveals: 0,
+  })
+
+// Where Escape leaves the form: the Item list a create was opened from, or the detail of the Item an edit changes.
+const leftForm = ({ list, form }: ItemFormView): View =>
+  ItemForm.$match(form, {
+    Create: () => View.ItemList(list),
+    Edit: (editing) => detailOn(list, editing.item, ItemForm.focusedLabel(editing)),
+  })
+
+// Keys in the Item form: Escape leaves it, Enter sends its one write (the concealed buffer leaves the state with
+// it), Ctrl-V reads the host clipboard into the concealed buffer, anything else edits it. While a write or a read
+// is out, nothing but Ctrl-C and Ctrl-Z does anything.
+const formKey = (state: Open, view: ItemFormView, key: Key): Step => {
+  if (view.phase !== "editing") return stay(state)
+
+  if (Key.is(key, "escape")) return stay({ ...state, view: leftForm(view) })
+
+  if (isPasteChord(key)) {
+    if (!ItemForm.hiddenFocused(view.form)) return stay(state)
+
+    if (!state.clipboard) return stay(withNotice(state, noPaste))
+
+    return { state: { ...state, view: { ...view, phase: "pasting" } }, effects: [UiEffect.ReadClipboard()] }
+  }
+
+  if (!Key.is(key, "return")) return stay({ ...state, view: { ...view, form: ItemForm.key(view.form, key) } })
+
+  return {
+    state: { ...state, view: { ...view, form: ItemForm.sent(view.form), phase: "sending" } },
+    effects: [UiEffect.SaveItem({ passphrase: state.passphrase, save: ItemForm.submit(view.form) })],
+  }
+}
+
+// `update` applied to the Item form while it waits in `phase`; an answer after the Owner left it is dropped.
+const formAnswer = (state: Open, phase: ItemFormView["phase"], update: (view: ItemFormView) => Step): Step => {
+  const { view } = state
+
+  return View.$is("ItemForm")(view) && view.phase === phase ? update(view) : stay(state)
+}
+
+// A verified create: the Vault's Item list fetched again to show the new Item, and its count one higher.
+const created = (state: Open, view: ItemFormView): Step => {
+  const { vault } = view.list
+  const vaults = state.vaults.map((row) => (row.vault === vault ? { ...row, items: row.items + 1 } : row))
+
+  return {
+    state: { ...state, vaults, view: View.loading(vault) },
+    effects: [UiEffect.ListItems({ passphrase: state.passphrase, vault })],
+  }
+}
+
+// A verified edit: the Item's detail as the receipt describes it, in the list too.
+const edited = (state: Open, view: ItemFormView, receipt: ItemEditReceipt): Step => {
+  const { form, list } = view
+
+  if (!ItemForm.$is("Edit")(form)) return stay(state)
+  const old = form.item
+
+  const item: ItemMeta = {
+    title: receipt.title,
+    kind: receipt.kind,
+    createdAt: old.createdAt,
+    updatedAt: receipt.updatedAt,
+    fields: receipt.fields,
+  }
+
+  const items = View.Items.$is("Loaded")(list.items)
+    ? View.Items.Loaded({ items: list.items.items.map((each) => (each === old ? item : each)) })
+    : list.items
+
+  return stay({ ...state, view: detailOn({ ...list, items }, item, ItemForm.focusedLabel(form)) })
+}
+
+const pastedInto = (state: Open, view: ItemFormView, pasted: Pasted): Step => {
+  const editing = { ...view, phase: "editing" as const }
+
+  return Clipboard.Pasted.$match(pasted, {
+    Text: ({ text }) =>
+      stay({ ...state, view: { ...editing, form: ItemForm.appendHidden(view.form, Redacted.value(text)) } }),
+    Empty: () => stay(withNotice({ ...state, view: editing }, pasteFailed.Empty)),
+    Unsupported: () => stay(withNotice({ ...state, view: editing }, pasteFailed.Unsupported)),
+    Failed: () => stay(withNotice({ ...state, view: editing }, pasteFailed.Failed)),
+  })
 }
 
 const fromOpen = (state: Open, event: Event): Step =>
@@ -591,6 +736,13 @@ const fromOpen = (state: Open, event: Event): Step =>
         }),
       ),
     RevealExpired: ({ generation }) => expired(state, generation),
+    ItemCreated: () => formAnswer(state, "sending", (view) => created(state, view)),
+    ItemEdited: ({ receipt }) => formAnswer(state, "sending", (view) => edited(state, view, receipt)),
+    ItemSaveRefused: ({ problem }) =>
+      formAnswer(state, "sending", (view) =>
+        stay(withNotice({ ...state, view: { ...view, phase: "editing" } }, problem)),
+      ),
+    ClipboardRead: ({ pasted }) => formAnswer(state, "pasting", (view) => pastedInto(state, view, pasted)),
   })
 
 export const reduce = (state: State, event: Event): Step =>

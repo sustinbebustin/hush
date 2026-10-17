@@ -40,20 +40,21 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 ```
 src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input, SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off, `exitSignals: []`
 src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack, `Idle`)
-src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`, `Audit`), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`), the title filter (`Match.matches`) and Field References
+src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`, `Audit`, `ItemForm` with its phase), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`), the title filter (`Match.matches`) and Field References
 src/ui/Sidebar.ts           the sidebar's rows: the Vaults, then the fixed sections (`Tokens`, `Audit`)
 src/ui/Audit.ts             the Audit view's pure transitions (filters, PgUp/PgDn, the page below `next` at the bottom, late answers dropped) and its row text
-src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, clipboard writes, wait ticks, idle ticks (wall clock), `Suspend` (SIGTSTP), `Closed` (an exit signal, or the renderer destroyed)
-src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `ListAudit`, `ListTokens`, `RevokeToken`, `IssueToken`, `CopyToken`, `Reveal`, `After` (timer), `Quit`, `Suspend`; each request carries its Passphrase
+src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, clipboard reads and writes, wait ticks, idle ticks (wall clock), `Suspend` (SIGTSTP), `Closed` (an exit signal, or the renderer destroyed)
+src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `ListAudit`, `ListTokens`, `RevokeToken`, `IssueToken`, `CopyToken`, `Reveal`, `SaveItem`, `ReadClipboard`, `After` (timer), `Quit`, `Suspend`; each request carries its Passphrase
 src/ui/IssueForm.ts         the Token issue form as plain state: Label, one Grant choice per Vault, TTL, replacement; `submit` -> the `tokens/issue` fields or a `Problem`
-src/ui/Clipboard.ts         the host clipboard (OpenTUI's native backends): `available`, `write`; `none` where there is no backend, `host` for `launch`
+src/ui/ItemForm.ts          the Item form as plain state: a create (Kind, title, the concealed `Concealed` buffer, plain drafts) or an edit (one `Entry` for the Field under the cursor); `submit` -> the one `Save`, `sent` drops the buffer, `lines` -> what the screen draws (plain text in `Input`s, the concealed value only as a mask)
+src/ui/Clipboard.ts         the host clipboard (OpenTUI's native backends): `available`, `write`, `read` (`Pasted`); `none` where there is no backend, `host` for `launch`
 src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`; every Lock (idle ten minutes, Ctrl-Z or SIGTSTP, exit signal, quit) is a fresh `State.locked`
 src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
 src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
 src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but a Revealed value or an issued Token while the state holds it
 src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
-src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer; `ListAudit` filters resolved by `Admin.auditQuery`, as `hush audit` does), `CopyToken` through `Clipboard`, and `After`; every outcome is one `Event`
+src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer; `ListAudit` filters resolved by `Admin.auditQuery`, as `hush audit` does), `SaveItem` after the CLI's own value checks (`Create.plainField`, `PrivateInput.value`; a lost or undecodable answer is `ChangeUnverified`), `CopyToken` and `ReadClipboard` through `Clipboard`, and `After`; every outcome is one `Event`
 ```
 
 ## Shared (`src/shared/`)

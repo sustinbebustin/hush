@@ -52,14 +52,21 @@ const skewed = (skew: () => number): Clock.Clock => {
   }
 }
 
-// A host clipboard that records what is written to it, in place of the machine's.
+// A host clipboard that records what is written to it and answers reads with what a test put on it, in place of
+// the machine's.
 export interface FakeClipboard {
   readonly clipboard: Clipboard
   readonly copies: () => ReadonlyArray<string>
+  // What the next reads answer: `text`, or empty after `put(undefined)`.
+  readonly put: (text: string | undefined) => void
+  // How many reads the UI made.
+  readonly reads: () => number
 }
 
 export const fakeClipboard = (): FakeClipboard => {
   const copies: Array<string> = []
+  let content: string | undefined
+  let reads = 0
 
   return {
     clipboard: {
@@ -70,8 +77,19 @@ export const fakeClipboard = (): FakeClipboard => {
 
           return "written" as const
         }),
+      read: Effect.sync(() => {
+        reads += 1
+
+        return content === undefined
+          ? Clipboard.Pasted.Empty()
+          : Clipboard.Pasted.Text({ text: Redacted.make(content) })
+      }),
     },
     copies: () => copies,
+    put: (text) => {
+      content = text
+    },
+    reads: () => reads,
   }
 }
 

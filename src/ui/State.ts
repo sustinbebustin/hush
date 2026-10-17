@@ -46,6 +46,8 @@ export type State = Data.TaggedEnum<{
     // Topmost last; keys go to the topmost modal.
     readonly modals: ReadonlyArray<Modal>
     readonly idle: Idle
+    // Whether the host has a clipboard: the paste key is offered only then.
+    readonly clipboard: boolean
   }
 }>
 
