@@ -45,13 +45,11 @@ const suspend = (size: Size, attempt?: number): Step => ({
   effects: [UiEffect.Suspend()],
 })
 
-const idleLimit = 10 * 60 * 1_000
-
-// Locks once ten minutes have passed since the first tick after the last keypress.
+// Locks once the idle limit has passed since the first tick after the last keypress.
 const idleTick = (state: Open, now: number): Step =>
   State.Idle.$match(state.idle, {
     Active: () => stay({ ...state, idle: State.Idle.Since({ since: now }) }),
-    Since: ({ since }) => (now - since >= idleLimit ? stay(State.locked(0, state.size)) : stay(state)),
+    Since: ({ since }) => (now - since >= State.idleLimitMillis ? stay(State.locked(0, state.size)) : stay(state)),
   })
 
 // The text a paste adds to a one-line input: everything before its first line break.

@@ -29,6 +29,9 @@ export type Idle = Data.TaggedEnum<{
 
 const Idle = Data.taggedEnum<Idle>()
 
+// How long an Open UI goes without a keypress before it Locks: ten minutes, the figure ADR-0010 sets.
+const idleLimitMillis = 10 * 60 * 1_000
+
 export type Vault = VaultList["vaults"][number]
 
 export type State = Data.TaggedEnum<{
@@ -71,4 +74,4 @@ const initial: State = locked()
 const passphrase = (state: State): Redacted.Redacted<string> | undefined =>
   $is("Open")(state) ? state.passphrase : undefined
 
-export const State = { Locked, Open, $is, $match, Phase, Idle, locked, initial, passphrase } as const
+export const State = { Locked, Open, $is, $match, Phase, Idle, idleLimitMillis, locked, initial, passphrase } as const
