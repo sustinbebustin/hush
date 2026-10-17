@@ -2,6 +2,7 @@ import { Data, Redacted } from "effect"
 
 import type { ItemMeta } from "../shared/Api.js"
 import { Kind } from "../shared/Kind.js"
+import type { Name } from "../shared/Name.js"
 import { Concealed } from "./Concealed.js"
 import { Key } from "./Key.js"
 
@@ -10,9 +11,9 @@ import { Key } from "./Key.js"
 // the screen draws only as a mask, never text an OpenTUI `Input` holds. `submit` turns the form into the one write
 // it sends; every check of the values is the CLI's own, made by the interpreter before sending.
 
-// A plain Field of a create: its label and the text typed so far (empty: not sent).
+// A plain Field of a create: its label (the Kind's) and the text typed so far (empty: not sent).
 export interface Draft {
-  readonly label: string
+  readonly label: Name
   readonly text: string
 }
 
@@ -44,12 +45,12 @@ export type ItemForm = Data.TaggedEnum<{
 const { Create, Edit, $is, $match } = Data.taggedEnum<ItemForm>()
 
 // A row of the form: the Kind picker, the title, the concealed Field, or a plain Field (`index` into a create's
-// drafts).
+// drafts). Field labels are the Kind's, parsed once in `Kind`.
 export type Row = Data.TaggedEnum<{
   Kind: {}
   Title: {}
-  Hidden: { readonly label: string }
-  Plain: { readonly label: string; readonly index: number }
+  Hidden: { readonly label: Name }
+  Plain: { readonly label: Name; readonly index: number }
 }>
 
 const Row = Data.taggedEnum<Row>()
