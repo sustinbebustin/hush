@@ -3,6 +3,7 @@ import { Data } from "effect"
 import type { AuditQuery } from "../cli/Admin.js"
 import type { AuditEntry, AuditPage } from "../shared/Api.js"
 import { Key } from "./Key.js"
+import type { Size } from "./Size.js"
 import { View } from "./View.js"
 
 // The Audit view: the Audit Log newest first under three filters (Vault, Label, since), read a page at a time.
@@ -68,9 +69,11 @@ export interface Move {
   readonly ask: Ask | undefined
 }
 
-// How far PageUp and PageDown move, and so the fewest rows the pane shows at 80x24; when the last loaded entry is
-// within this many rows of the top, the bottom is in view and the next page is fetched.
-const pageRows = 10
+// The Audit rows the main pane shows at least at `size`, and so how far PageUp and PageDown move: the frame less the
+// hint bar, the pane's border, its filter line, a status line wrapped to two lines at 80 columns, and the column
+// header. When the last loaded entry is within this many rows of the top, the bottom is in view and the next page
+// is fetched.
+const rowsAt = (size: Size): number => Math.max(1, size.height - 7)
 
 const firstPage = (filters: Filters): Move => ({
   view: View.Audit({ filters, form: Form.Shut(), log: Log.Loading(), top: 0 }),
@@ -82,15 +85,15 @@ const start = (): Move => firstPage(noFilters)
 
 const stay = (view: AuditView): Move => ({ view, ask: undefined })
 
-// The view scrolled to `top`; reaching the bottom with a page left below fetches it, once.
-const scrolled = (view: AuditView, top: number): Move => {
+// The view scrolled to `top` in a pane of `rows` rows; reaching the bottom with a page left below fetches it, once.
+const scrolled = (view: AuditView, top: number, rows: number): Move => {
   const { log } = view
 
   if (!Log.$is("Loaded")(log)) return stay(view)
-  const clamped = Math.max(0, Math.min(top, log.entries.length - pageRows))
+  const clamped = Math.max(0, Math.min(top, log.entries.length - rows))
   const moved = { ...view, top: clamped }
 
-  if (clamped + pageRows < log.entries.length || !Rest.$is("More")(log.rest)) return stay(moved)
+  if (clamped + rows < log.entries.length || !Rest.$is("More")(log.rest)) return stay(moved)
 
   return {
     view: { ...moved, log: { ...log, rest: Rest.Fetching({ before: log.rest.next }) } },
@@ -120,17 +123,17 @@ const editingKey = (view: AuditView, draft: Filters, field: Field, key: Key): Mo
   return typed === undefined ? stay(view) : edit(draft[field] + typed)
 }
 
-// A key in the Audit view, or undefined for one it leaves to the sidebar and the rest of the UI.
-const key = (view: AuditView, pressed: Key): Move | undefined => {
+// A key in the Audit view showing `rows` rows, or undefined for one it leaves to the sidebar and the rest of the UI.
+const key = (view: AuditView, pressed: Key, rows: number): Move | undefined => {
   const { form } = view
 
   if (Form.$is("Editing")(form)) return editingKey(view, form.draft, form.field, pressed)
 
   if (Key.is(pressed, "/")) return stay({ ...view, form: Form.Editing({ draft: view.filters, field: "vault" }) })
 
-  if (Key.is(pressed, "pagedown")) return scrolled(view, view.top + pageRows)
+  if (Key.is(pressed, "pagedown")) return scrolled(view, view.top + rows, rows)
 
-  if (Key.is(pressed, "pageup")) return scrolled(view, view.top - pageRows)
+  if (Key.is(pressed, "pageup")) return scrolled(view, view.top - rows, rows)
 
   if (Key.is(pressed, "escape")) return sameFilters(view.filters, noFilters) ? stay(view) : firstPage(noFilters)
 
@@ -283,6 +286,7 @@ export const Audit = {
   Log,
   Ask,
   start,
+  rowsAt,
   key,
   paste,
   listed,

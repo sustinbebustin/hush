@@ -3,6 +3,7 @@ import { Redacted } from "effect"
 
 import { Event } from "../src/ui/Event.js"
 import { Reducer } from "../src/ui/Reducer.js"
+import { Size } from "../src/ui/Size.js"
 import { State, type Vault } from "../src/ui/State.js"
 import { View } from "../src/ui/View.js"
 
@@ -17,6 +18,7 @@ const vault = (name: string): Vault => ({
 
 const open = (cursor: number, view: View, ...names: ReadonlyArray<string>): State =>
   State.Open({
+    size: Size.minimum,
     passphrase: Redacted.make("right"),
     vaults: names.map(vault),
     cursor,

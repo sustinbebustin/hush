@@ -6,7 +6,8 @@ import { ItemForm, type Line as FormLine } from "./ItemForm.js"
 import { Problem } from "./Problem.js"
 import { type Section, Sidebar } from "./Sidebar.js"
 import { type Open, type Phase, State } from "./State.js"
-import { type Modal, View } from "./View.js"
+import { Size } from "./Size.js"
+import { type Copy, type Modal, View } from "./View.js"
 
 // What the screen shows for a state, as plain text: the model the sync layer (`Screen`) copies into renderables.
 // It is pure and holds no secret but a Revealed value or a freshly issued Token, while the state holds one (ADR-0009:
@@ -74,29 +75,119 @@ export type Display = Data.TaggedEnum<{
     readonly modalTitle: string
     readonly hints: string
   }
+  // A frame below 80x24: one notice in place of the layout, which would not fit.
+  TooSmall: { readonly notice: string }
 }>
 
-const { Locked, Open: OpenDisplay, $match } = Data.taggedEnum<Display>()
+const { Locked, Open: OpenDisplay, TooSmall, $match } = Data.taggedEnum<Display>()
 
 // The CLI's own prompt text, so the Owner meets the same words in both.
 const prompt = "hush Passphrase: "
 
+// Each hint bar fits 80 columns; where `?` opens the help, the bar names the commonest keys and the help lists every
+// one. Where `?` is typed or cancels, the bar lists every key.
 const lockedHints = "Enter unlock  Ctrl-C quit"
-const listHints = "Up/Down move  Enter open  Tab Items  c create Vault  d delete Vault  / filter  q quit"
-const rowsHints = "Up/Down move  Enter open  c create  n rename  d delete  Tab Vaults  / filter  q quit"
-const retiredHints = "Up/Down move  x release  c create  Tab Vaults  / filter  q quit"
-const detailHints = "Up/Down move  r reveal  e edit  n rename  d delete  Esc back  q quit"
+const listHints = "Up/Down move  Enter open  c create Vault  d delete Vault  ? help  q quit"
+const rowsHints = "Up/Down move  Enter open  c create  n rename  d delete  / filter  ? help  q quit"
+const retiredHints = "Up/Down move  x release  Tab Vaults  ? help  q quit"
+const detailHints = "Up/Down move  r reveal  e edit  n rename  d delete  Esc back  ? help  q quit"
 const renameHints = "Type the new title  Enter rename  Esc cancel"
 const shownHints = "Any key hides the value"
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
-const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
-const auditHints = "Up/Down move  Enter open  / filter  PgUp/PgDn scroll  Esc clear filters  q quit"
+const modalHints = "Enter or Esc dismiss  ? help  Ctrl-C quit"
+const auditHints = "Up/Down move  Enter open  / filter  PgUp/PgDn scroll  ? help  q quit"
 const auditFilterHints = "Type a filter  Tab next field  Enter apply  Esc cancel"
 const confirmHints = "y confirm  any other key cancels"
-const tableHints = "Up/Down move  i issue  d revoke  Tab or Esc sidebar  q quit"
-const tokensSidebarHints = "Up/Down move  Enter open  Tab Tokens  i issue  q quit"
+const tableHints = "Up/Down move  i issue  d revoke  Esc sidebar  ? help  q quit"
+const tokensSidebarHints = "Up/Down move  Enter open  Tab Tokens  i issue  ? help  q quit"
 const issueFormHints = "Up/Down move  Space change  Enter issue  Esc cancel"
 const vaultNameHints = "Type a name  Enter create  Esc cancel"
+const helpHints = "Any key closes the help"
+
+// One help line: the keys, then what they do.
+type HelpLine = readonly [keys: string, action: string]
+
+const helpKeyWidth = 14
+
+// Keys every view takes; a modal takes Ctrl-C and Ctrl-Z but not `q`.
+const viewKeys: ReadonlyArray<HelpLine> = [
+  ["Ctrl-Z", "lock and suspend"],
+  ["q, Ctrl-C", "quit"],
+]
+
+const modalKeys: ReadonlyArray<HelpLine> = [
+  ["Ctrl-Z", "lock and suspend"],
+  ["Ctrl-C", "quit"],
+]
+
+const sidebarHelp: ReadonlyArray<HelpLine> = [
+  ["Up/Down, j/k", "move the cursor"],
+  ["Enter", "open the Vault, Tokens or Audit"],
+  ["Tab, Right, l", "go to the Item rows"],
+  ["c", "create a Vault"],
+  ["d", "delete the Vault under the cursor"],
+  ["/, Esc", "filter the titles, clear the filter"],
+  ...viewKeys,
+]
+
+const rowsHelp: ReadonlyArray<HelpLine> = [
+  ["Up/Down, j/k", "move the cursor"],
+  ["Enter", "open the Item"],
+  ["c", "create an Item"],
+  ["n", "rename the Item"],
+  ["d", "delete the Item"],
+  ["x", "release the Retired title"],
+  ["Tab, Left, h", "back to the Vaults"],
+  ["/, Esc", "filter the titles, clear the filter"],
+  ...viewKeys,
+]
+
+const detailHelp: ReadonlyArray<HelpLine> = [
+  ["Up/Down, j/k", "move the Field cursor"],
+  ["r", "reveal the Field; any key hides it"],
+  ["e", "edit the Field"],
+  ["n", "rename the Item"],
+  ["d", "delete the Item"],
+  ["Esc", "back to the Item list"],
+  ...viewKeys,
+]
+
+const tokensSidebarHelp: ReadonlyArray<HelpLine> = [
+  ["Up/Down, j/k", "move the cursor"],
+  ["Enter", "open the Vault, Tokens or Audit"],
+  ["Tab, Right, l", "go to the Token rows"],
+  ["i", "issue a Token"],
+  ...viewKeys,
+]
+
+const tableHelp: ReadonlyArray<HelpLine> = [
+  ["Up/Down, j/k", "move the cursor"],
+  ["i", "issue a Token"],
+  ["d", "revoke the Token"],
+  ["Esc, Tab, h", "back to the sidebar"],
+  ...viewKeys,
+]
+
+const auditHelp: ReadonlyArray<HelpLine> = [
+  ["Up/Down, j/k", "move the sidebar cursor"],
+  ["Enter", "open the Vault, Tokens or Audit"],
+  ["/", "edit the filters: Vault, Label, since"],
+  ["Tab", "next filter, while editing"],
+  ["Enter", "apply the filters, while editing"],
+  ["Esc", "drop the edit, or clear the filters"],
+  ["PgUp, PgDn", "scroll a page"],
+  ...viewKeys,
+]
+
+const noticeHelp: ReadonlyArray<HelpLine> = [["Enter, Esc", "dismiss the notice"], ...modalKeys]
+
+const renamedHelp: ReadonlyArray<HelpLine> = [["Enter, Esc", "dismiss the References"], ...modalKeys]
+
+const issuedHelp = (copy: Copy): ReadonlyArray<HelpLine> => [
+  ...(copy === "absent" ? [] : [["c", "copy the Token to the clipboard"] as const]),
+  ["Enter, Esc", "dismiss; the Token is wiped"],
+  ...modalKeys,
+]
 
 const lockedNotice = (phase: Phase): string =>
   State.Phase.$match(phase, {
@@ -231,9 +322,40 @@ const tokenRows = (view: View): ReadonlyArray<TokenRow> | undefined => {
   }))
 }
 
-// The topmost modal's box title, text and key hints.
-const modalShown = (top: Modal) =>
+// The help lines for what the Owner sees: the topmost modal, else the view and where its focus is.
+const helpFor = (state: Open): ReadonlyArray<HelpLine> => {
+  const top = state.modals.at(-1)
+  const { view } = state
+
+  if (top !== undefined)
+    return View.Modal.$is("Issued")(top)
+      ? issuedHelp(top.copy)
+      : View.Modal.$is("Renamed")(top)
+        ? renamedHelp
+        : noticeHelp
+
+  if (View.$is("Tokens")(view)) return View.Focus.$is("Rows")(view.focus) ? tableHelp : tokensSidebarHelp
+
+  if (View.$is("ItemDetail")(view)) return detailHelp
+
+  if (View.$is("Audit")(view)) return auditHelp
+
+  return View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus) ? rowsHelp : sidebarHelp
+}
+
+const helpText = (state: Open): string =>
+  helpFor(state)
+    .map(([keys, action]) => `${keys.padEnd(helpKeyWidth)}${action}`)
+    .join("\n")
+
+// The topmost modal's box title, text and key hints; the help describes the state under it.
+const modalShown = (state: Open, top: Modal) =>
   View.Modal.$match(top, {
+    Help: () => ({
+      title: "Help",
+      text: helpText({ ...state, modals: state.modals.slice(0, -1) }),
+      hints: helpHints,
+    }),
     Notice: ({ problem }) => ({ title: "Notice", text: Problem.message(problem), hints: modalHints }),
     Confirm: ({ description }) => ({ title: "Confirm", text: description, hints: confirmHints }),
     IssueForm: ({ form, phase }) => ({
@@ -251,7 +373,7 @@ const modalShown = (top: Modal) =>
         "Shown once: hand it to the agent now. It is saved nowhere, and dismissing this wipes it from the UI.",
         ...(copy === "copied" ? ["Copied to the clipboard."] : []),
       ].join("\n"),
-      hints: copy === "absent" ? "Enter or Esc dismiss" : "c copy  Enter or Esc dismiss",
+      hints: copy === "absent" ? "Enter or Esc dismiss  ? help" : "c copy  Enter or Esc dismiss  ? help",
     }),
     Rename: ({ vault, item, text, phase }) => ({
       title: "Rename",
@@ -270,7 +392,7 @@ const modalShown = (top: Modal) =>
         "",
         ...receipt.references.flatMap((reference) => [`  ${reference.old}`, `  -> ${reference.new}`]),
       ].join("\n"),
-      hints: "Enter or Esc dismiss",
+      hints: "Enter or Esc dismiss  ? help",
     }),
     VaultName: ({ text, phase }) => ({
       title: "Create a Vault",
@@ -303,7 +425,7 @@ const retiredRows = (view: View): ReadonlyArray<RetiredRow> => {
 const hintsFor = (state: Open) => {
   const top = state.modals.at(-1)
 
-  if (top !== undefined) return modalShown(top).hints
+  if (top !== undefined) return modalShown(state, top).hints
   const { view } = state
 
   if (View.$is("Tokens")(view)) return View.Focus.$is("Rows")(view.focus) ? tableHints : tokensSidebarHints
@@ -323,6 +445,7 @@ const hintsFor = (state: Open) => {
 
 const open = (state: Open): Display => {
   const top = state.modals.at(-1)
+  const modal = top === undefined ? undefined : modalShown(state, top)
 
   return OpenDisplay({
     vaults: state.vaults.map(({ vault, items }, index) => ({
@@ -339,17 +462,24 @@ const open = (state: Open): Display => {
     retired: retiredRows(state.view),
     log: View.$is("Audit")(state.view) ? Audit.lines(state.view) : [],
     form: View.$is("ItemForm")(state.view) ? ItemForm.lines(state.view.form) : undefined,
-    modal: top === undefined ? undefined : modalShown(top).text,
-    modalTitle: top === undefined ? "" : modalShown(top).title,
+    modal: modal?.text,
+    modalTitle: modal?.title ?? "",
     hints: hintsFor(state),
   })
 }
 
-const of = (state: State): Display =>
-  State.$match(state, {
-    Locked: ({ entered, phase }) =>
-      Locked({ prompt, mask: "*".repeat(entered.length), notice: lockedNotice(phase), hints: lockedHints }),
-    Open: open,
+const tooSmall = ({ width, height }: Size) =>
+  TooSmall({
+    notice: `hush ui needs ${Size.minimum.width}x${Size.minimum.height}; this terminal is ${width}x${height}. Enlarge it; Ctrl-C quits.`,
   })
+
+const of = (state: State): Display =>
+  Size.fits(state.size)
+    ? State.$match(state, {
+        Locked: ({ entered, phase }) =>
+          Locked({ prompt, mask: "*".repeat(entered.length), notice: lockedNotice(phase), hints: lockedHints }),
+        Open: open,
+      })
+    : tooSmall(state.size)
 
 export const Display = { of, $match } as const

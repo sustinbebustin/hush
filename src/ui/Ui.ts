@@ -27,16 +27,20 @@ const exitSignals: ReadonlyArray<NodeJS.Signals> = [
   "SIGBUS",
 ]
 
-// Listens for input, SIGTSTP, the exit signals and the renderer's destruction; on release, stops listening and
-// destroys the renderer (which restores the terminal), then waits for it to finish.
+// Listens for input, resizes, SIGTSTP, the exit signals and the renderer's destruction, starting with the size the
+// renderer has; on release, stops listening and destroys the renderer (which restores the terminal), then waits for
+// it to finish.
 const attach = (renderer: CliRenderer, send: (event: Event) => void) => {
   const onKey = (key: KeyEvent) => send(Event.Key({ key: Screen.key(key) }))
   const onPaste = (paste: PasteEvent) => send(Event.Paste({ text: Screen.pasted(paste) }))
+  const onResize = (width: number, height: number) => send(Event.Resize({ width, height }))
   const onStop = () => send(Event.Suspend())
   const onDestroy = () => send(Event.Closed())
 
   return Effect.acquireRelease(
     Effect.sync(() => {
+      onResize(renderer.width, renderer.height)
+      renderer.on("resize", onResize)
       renderer.keyInput.on("keypress", onKey)
       renderer.keyInput.on("paste", onPaste)
       process.on("SIGTSTP", onStop)
@@ -46,6 +50,7 @@ const attach = (renderer: CliRenderer, send: (event: Event) => void) => {
     }),
     () =>
       Effect.promise(() => {
+        renderer.off("resize", onResize)
         renderer.keyInput.off("keypress", onKey)
         renderer.keyInput.off("paste", onPaste)
         process.off("SIGTSTP", onStop)

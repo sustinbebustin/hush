@@ -47,6 +47,7 @@ const opened = (): State => {
 
   return run(checking, [
     Event.Unlocked({
+      attempt: 1,
       passphrase: Redacted.make("right"),
       vaults: [{ vault: "Personal", items: 1, activeTokens: 0, createdAt: "2026-10-01T00:00:00.000Z" }],
       clipboard: true,

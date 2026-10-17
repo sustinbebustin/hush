@@ -3,6 +3,7 @@ import { Data, type Redacted } from "effect"
 import type { VaultList } from "../shared/Api.js"
 import { Concealed } from "./Concealed.js"
 import type { Problem } from "./Problem.js"
+import { Size } from "./Size.js"
 import type { Modal, View } from "./View.js"
 
 // The UI's one state: Locked (the Passphrase prompt; holds no Passphrase) or Open (holds it as Redacted, with the
@@ -34,10 +35,12 @@ export type State = Data.TaggedEnum<{
   Locked: {
     readonly entered: Concealed
     readonly phase: Phase
-    // Counts Passphrase submissions, so a wait tick from an earlier attempt is ignored.
+    // Counts Passphrase submissions, so a wait tick or an answer from an earlier attempt is ignored.
     readonly attempt: number
+    readonly size: Size
   }
   Open: {
+    readonly size: Size
     readonly passphrase: Redacted.Redacted<string>
     readonly vaults: ReadonlyArray<Vault>
     // The sidebar row under the cursor.
@@ -57,8 +60,10 @@ export type Locked = Extract<State, { readonly _tag: "Locked" }>
 
 export type Open = Extract<State, { readonly _tag: "Open" }>
 
-// A Locked UI with an empty prompt: the start, and every Lock or quit.
-const locked = (attempt = 0): State => Locked({ entered: Concealed.empty, phase: Phase.Ready(), attempt })
+// A Locked UI with an empty prompt: the start, and every Lock or quit. It keeps only the attempt count and the
+// terminal's size.
+const locked = (attempt = 0, size: Size = Size.minimum): State =>
+  Locked({ entered: Concealed.empty, phase: Phase.Ready(), attempt, size })
 
 const initial: State = locked()
 

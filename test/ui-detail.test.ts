@@ -50,6 +50,7 @@ const opened = (): State => {
   const open = Reducer.reduce(
     checking,
     Event.Unlocked({
+      attempt: 1,
       passphrase: Redacted.make("right"),
       vaults: [{ vault: "Personal", items: 2, activeTokens: 0, createdAt: "2026-10-01T00:00:00.000Z" }],
       clipboard: false,

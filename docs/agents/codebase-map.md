@@ -38,12 +38,13 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 `hush ui`, on `@opentui/core` (Core API only). The reducer side (`State` to `Display`) imports neither OpenTUI nor the Client; `Screen`, `Interpreter` and `Clipboard` are the only modules that touch the outside.
 
 ```
-src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input, SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off, `exitSignals: []`
-src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack, `Idle`)
-src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`, `Audit`, `ItemForm` with its phase), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`, `Rename`, `Renamed`, `VaultName`), the Item rows then the Retired titles under one row cursor, the title filter (`Match.matches`) and Field References
+src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input, resizes (the renderer's size first), SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off, `exitSignals: []`
+src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack, `Idle`); both carry the terminal `Size`
+src/ui/Size.ts              the terminal's size and the 80x24 minimum; below it the UI draws one notice and takes only Ctrl-C and Ctrl-Z
+src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`, `Audit`, `ItemForm` with its phase), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`, `Rename`, `Renamed`, `VaultName`, `Help`), the Item rows then the Retired titles under one row cursor, the title filter (`Match.matches`) and Field References
 src/ui/Sidebar.ts           the sidebar's rows: the Vaults, then the fixed sections (`Tokens`, `Audit`)
-src/ui/Audit.ts             the Audit view's pure transitions (filters, PgUp/PgDn, the page below `next` at the bottom, late answers dropped) and its row text
-src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, clipboard reads and writes, wait ticks, idle ticks (wall clock), `Suspend` (SIGTSTP), `Closed` (an exit signal, or the renderer destroyed)
+src/ui/Audit.ts             the Audit view's pure transitions (filters, PgUp/PgDn by the pane's rows at the current `Size`, the page below `next` at the bottom, late answers dropped) and its row text
+src/ui/Event.ts             what the reducer reacts to: keys, pastes, `Resize`, Server answers (an unlock's tagged with its attempt), clipboard reads and writes, wait ticks, idle ticks (wall clock), `Suspend` (SIGTSTP), `Closed` (an exit signal, or the renderer destroyed)
 src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `ListAudit`, `ListTokens`, `RevokeToken`, `IssueToken`, `CopyToken`, `CreateVault`, `DeleteVault`, `RefreshVaults`, `Reveal`, `SaveItem`, `ReadClipboard`, `RenameItem`, `DeleteItem`, `ReleaseTitle`, `After` (timer), `Quit`, `Suspend`; each request carries its Passphrase
 src/ui/IssueForm.ts         the Token issue form as plain state: Label, one Grant choice per Vault, TTL, replacement; `submit` -> the `tokens/issue` fields or a `Problem`
 src/ui/ItemForm.ts          the Item form as plain state: a create (Kind, title, the concealed `Concealed` buffer, plain drafts) or an edit (one `Entry` for the Field under the cursor); `submit` -> the one `Save`, `sent` drops the buffer, `lines` -> what the screen draws (plain text in `Input`s, the concealed value only as a mask)
@@ -52,9 +53,9 @@ src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }
 src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
 src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
-src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but a Revealed value or an issued Token while the state holds it
+src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows (`Locked`, `Open`, or `TooSmall` below 80x24), never a secret but a Revealed value or an issued Token while the state holds it; the hint bars (80 columns at most) and the `?` help of each view and modal
 src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
-src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer; `ListAudit` filters resolved by `Admin.auditQuery`, as `hush audit` does), `SaveItem` after the CLI's own value checks (`Create.plainField`, `PrivateInput.value`; a lost or undecodable answer is `ChangeUnverified`), `CopyToken` and `ReadClipboard` through `Clipboard`, and `After`; every outcome is one `Event`
+src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer; `ListAudit` filters resolved by `Admin.auditQuery`, as `hush audit` does), `SaveItem` after the CLI's own value checks (`Create.plainField`, `PrivateInput.value`; a lost or undecodable answer is `ChangeUnverified`), `CopyToken` and `ReadClipboard` through `Clipboard`, and `After`; every outcome is one `Event`; every refusal in an Open UI is a notice with the CLI's own message (`CliError.render` / `renderServer`), the unlock's Passphrase waits excepted
 ```
 
 ## Shared (`src/shared/`)
@@ -113,8 +114,8 @@ src/server/Log.ts           the Server's stderr log: one JSON object per line, t
 
 ```
 test/sandbox.ts             the seam: real CLI subprocess (temp HOME, PATH of sh, cat and fakes; `tty` runs on a pty, optionally as a job under `set -m` for Ctrl-Z and `fg`) against a real Server subprocess on a port below the ephemeral range, so a restart gets it back
-test/headless.ts            the UI seam beside `sandbox()`: `Ui.run` in-process on OpenTUI's `createTestRenderer` against the sandbox Server; `keys` (mockInput), `frame`, `frames` (every committed frame, for leak scans), `waitFor`, `calls`, `advanceClock` (a skewed Effect Clock), `server` (e.g. the proxy); no host clipboard unless a test passes one (`fakeClipboard` records writes)
-test/proxy.ts               the loopback test proxy, as `HUSH_SERVER` (origin-form) or `HTTP_PROXY` (absolute-form): request-line log, dropped, altered or held answers
+test/headless.ts            the UI seam beside `sandbox()`: `Ui.run` in-process on OpenTUI's `createTestRenderer` against the sandbox Server; `keys` (mockInput), `frame`, `frames` (every committed frame, for leak scans), `waitFor`, `calls`, `advanceClock` (a skewed Effect Clock), `resize`, `width`/`height`, `server` (e.g. the proxy); no host clipboard unless a test passes one (`fakeClipboard` records writes)
+test/proxy.ts               the loopback test proxy, as `HUSH_SERVER` (origin-form) or `HTTP_PROXY` (absolute-form): request-line log, dropped, altered, held or garbled (undecodable) answers
 test/leaks.ts               per-target sentinel scan for `observable()`
 test/arbitraries.ts         shared fast-check arbitraries and Unicode fixtures
 test/vectors.ts             the fixed crypto vectors as one table, run by `vectors.test.ts` and `scripts/crypto-vectors.ts`
@@ -134,9 +135,9 @@ SECURITY.md                 the threat model (ADR-0003) and the agent isolation 
 skills/hush/SKILL.md        the agent skill we ship; keep it in sync with the CLI
 scripts/build.sh            `bun run build`: `bun build --compile` per target into `dist/hush-<target>`; Linux targets define `OPENTUI_LIBC=glibc`
 scripts/homebrew-formula.sh the Homebrew formula for a release from its `SHA256SUMS`, pushed to `sustinbebustin/homebrew-tap` by `release.yml`
-scripts/smoke-binary.sh     compiled-binary smoke test (`bun run smoke [binary]`): crypto vectors compiled, start, Init, create, resolve, both backups, `hush ui` Locked prompt on a pty, restart
+scripts/smoke-binary.sh     compiled-binary smoke test (`bun run smoke [binary]`): crypto vectors compiled, start, Init, create, resolve, both backups, `hush ui` on a pty (Locked prompt, unlock, `q` exits 0), restart
 scripts/crypto-vectors.ts   the crypto vectors outside vitest, compiled and run by the smoke test
-scripts/smoke-docker.sh     Docker smoke test (`bun run smoke:docker <binary>`): image config, Compose up, Init, create, resolve, backup, core limit, Token-saving refusal
+scripts/smoke-docker.sh     Docker smoke test (`bun run smoke:docker <binary>`): image config, Compose up, Init, create, resolve, backup, core limit, Token-saving refusal, `hush ui` Locked prompt from the image on a host pty (the native library loads; needs an exec /tmp)
 deploy/hush.service         the hardened systemd unit (DynamicUser); `hush-static-user.conf` its drop-in for LXC nesting=0
 deploy/hush-backup.*        daily `hush server backup` as root into /var/backups/hush (service and timer)
 deploy/Dockerfile           the multi-stage image (builder cross-compiles for TARGETARCH); base images pinned by digest

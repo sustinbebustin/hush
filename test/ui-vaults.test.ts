@@ -183,7 +183,8 @@ describe.skipIf(!serverSupported)("hush ui Vaults", () => {
     withUi(seeded, async (ui) => {
       await unlock(ui)
       ui.keys.pressTab()
-      await ui.waitFor("Tab Vaults")
+      // The Item rows' hint bar.
+      await ui.waitFor("n rename")
       const before = (await ui.calls()).length
 
       await ui.type("c")

@@ -49,11 +49,11 @@ Never guess at Effect APIs. Check every Effect API name you use (module, functio
 
 Security properties. Do not weaken them.
 
-1. Secret values never appear in argv, stdout (except `read` and `item reveal`), stderr, error messages, Server logs or the Audit Log. Values reach the Server only in request bodies; `env resolve` writes them only to its target file; `run` children get them only in their env.
+1. Secret values never appear in argv, stdout (except `read`, `item reveal`, and a Reveal that `hush ui` draws on the alternate screen until a key or its timer hides it), stderr, error messages, Server logs or the Audit Log. Values reach the Server only in request bodies; `env resolve` writes them only to its target file; `run` children get them only in their env.
 2. Server response bodies never reach a CLI error verbatim; the CLI renders messages from typed fields it decoded; anything undecodable is a fixed message. The Server never puts a value, Token, Passphrase or Init code in an error.
 3. Writes run once. `create` is read back through resolve under the same Token and compared in memory; `item edit` opens and compares its new seal inside the transaction before commit; any failure after sending says unverified, do not retry. No automatic retries anywhere.
 4. No preflight: the requested operation is the capability check.
-5. One Server request per command: `find`/`inventory` one `items/list`; env resolution and `run` one `secrets/resolve` (plus `create`'s one write and one read-back).
+5. One Server request per command: `find`/`inventory` one `items/list`; env resolution and `run` one `secrets/resolve` (plus `create`'s one write and one read-back). The UI sends one request per Owner action, plus one refresh after a write (the unlock's `vaults/list` also lists the first Vault's Items); a late answer is dropped, never retried.
 6. Credential failures fail closed: a bad token file, an invalid `HUSH_TOKEN` or a rejected Token is reported and no other source is tried.
 7. Results are JSON on stdout, notices on stderr; every expected error is tagged and printed `hush: <message>` with exit 1.
 
