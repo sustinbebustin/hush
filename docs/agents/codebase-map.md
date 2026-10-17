@@ -17,7 +17,7 @@ src/cli/Settings.ts         `hush config get|set`: no request
 src/cli/Client.ts           typed client of the shared Api over the route; maps transport, 413 and undecodable answers to CLI errors; no retries; `backup` for the raw route (10 min to headers)
 src/cli/Admin.ts            the Owner's commands, each through `passphraseCommand` (prepare, secrets, one request): `hush init [--vault]`, `vault`, `passphrase change`, `token issue|list|revoke`, `audit`; plus `token status|save|forget` (no Passphrase)
 src/cli/Terminal.ts         the hidden reader on `/dev/tty`: the pure key reducer `feed` and `hidden`
-src/cli/ItemAdmin.ts        the Owner's `item edit|rename|delete|release|reveal`, each through `passphraseCommand`
+src/cli/ItemAdmin.ts        the Owner's `item create|edit|rename|delete|release|reveal`, each through `passphraseCommand`
 src/cli/PassphraseStdin.ts  `--passphrase-stdin`: TTY refusal, strict UTF-8, one secret per line, nothing after but an `--stdin` value
 src/cli/PrivateInput.ts     one value from exactly one source flag: `--stdin`, `--prompt` or `--clipboard` (macOS)
 src/cli/TokenStore.ts       `HUSH_TOKEN`, else this origin's entry in `~/.config/hush/tokens.json`; `checkSavable`, `checkReplaceable`, `save`, `forget`, `context`, `health`
@@ -73,7 +73,7 @@ src/server/Backoff.ts       the pure Passphrase backoff schedule and reservation
 src/server/Padding.ts       value padding before sealing, so ciphertext length hides the exact value length
 src/server/Tokens.ts        `tokens/issue` (Grants, `replaces`, `keepGrants`), `TokenAuth`'s steps, the in-transaction revocation re-check, and `audited` (one row per Token request)
 src/server/Items.ts         `items/list`, `secrets/resolve` (with `ReferenceNotFound` suggestions) and `items/create` under a Token (refuses a Retired title)
-src/server/ItemAdmin.ts     `items/edit` (seal verified before commit), `items/rename|delete` (retire the title), `items/release` and `items/reveal` (one Field opened with K_v from MK) under the Passphrase
+src/server/ItemAdmin.ts     `items/create` and `items/edit` (seals verified before commit), `items/rename|delete` (retire the title), `items/release` and `items/reveal` (one Field opened with K_v from MK) under the Passphrase
 src/server/Vaults.ts        `vaults/create`, `vaults/list` and `vaults/delete` under the Passphrase
 src/server/Audit.ts         audit row insert inside the caller's transaction; failure is `AuditUnavailable`
 src/server/AuditLog.ts      `admin/audit`, the Audit Log reader under the Passphrase: Vault, Label and `since` filters, newest first, `before`/`next` paging

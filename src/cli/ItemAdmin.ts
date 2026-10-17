@@ -2,15 +2,18 @@ import { Data, Effect, Redacted, Result } from "effect"
 
 import { Api, type ItemChange } from "../shared/Api.js"
 import { parseName } from "../shared/ApiError.js"
+import { Kind } from "../shared/Kind.js"
 import { Name } from "../shared/Name.js"
 import { Reference } from "../shared/Reference.js"
 import { passphraseCommand, passphraseOnly, type SecretSource, unverifiedOnTransport } from "./Admin.js"
 import { Client } from "./Client.js"
+import { Create } from "./Create.js"
 import {
   EditFlagsInvalid,
   type InputSourceConflict,
   type InputSourceRequired,
   InvalidReference,
+  type Outcome,
   releaseCommand,
   UnexpectedResponse,
 } from "./CliError.js"
@@ -18,7 +21,7 @@ import { PassphraseStdin } from "./PassphraseStdin.js"
 import { PrivateInput } from "./PrivateInput.js"
 import type { Target } from "./Target.js"
 
-// The Owner's Item commands:`item edit|rename|delete|release|reveal`, each one Passphrase request.
+// The Owner's Item commands: `item create|edit|rename|delete|release|reveal`, each one Passphrase request.
 
 const parse = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 
@@ -44,8 +47,27 @@ const editOf = (
   return Result.fail(new EditFlagsInvalid())
 }
 
-// The Passphrase and the change to send. With `--passphrase-stdin` and `--stdin` both, the value is everything
-// after the Passphrase line;otherwise the Passphrase comes first, then the value from its own source.
+// The Passphrase and one value for `label`. With `--passphrase-stdin` and `--stdin` both, the value is everything
+// after the Passphrase line; otherwise the Passphrase comes first, then the value from its own source.
+const passphraseAndValue =
+  (from: PrivateInput.PrivateSource, label: Name, outcome: Outcome) => (command: string, source: SecretSource) =>
+    Effect.gen(function* () {
+      const wording = { noun: `value for ${label}`, outcome }
+
+      if (source === "stdin" && from === "stdin") {
+        const piped = yield* PassphraseStdin.readWithValue(command)
+        const value = yield* Effect.fromResult(PrivateInput.value(piped.value, wording))
+
+        return { passphrase: Redacted.make(piped.passphrase), value }
+      }
+
+      const passphrase = yield* passphraseOnly(command, source)
+      const value = yield* PrivateInput.read({ source: from, wording, prompt: `Value for ${label}: ` })
+
+      return { passphrase, value }
+    })
+
+// The Passphrase and the change to send.
 const editSecrets = (edit: Edit, label: Name) => (command: string, source: SecretSource) =>
   Effect.gen(function* () {
     if (Edit.$is("Remove")(edit)) {
@@ -54,18 +76,7 @@ const editSecrets = (edit: Edit, label: Name) => (command: string, source: Secre
       return { passphrase: yield* passphraseOnly(command, source), change }
     }
 
-    const wording = { noun: `value for ${label}`, outcome: "changed" } as const
-
-    if (source === "stdin" && edit.from === "stdin") {
-      const piped = yield* PassphraseStdin.readWithValue(command)
-      const value = yield* Effect.fromResult(PrivateInput.value(piped.value, wording))
-      const change: ItemChange = { set: { label, value } }
-
-      return { passphrase: Redacted.make(piped.passphrase), change }
-    }
-
-    const passphrase = yield* passphraseOnly(command, source)
-    const value = yield* PrivateInput.read({ source: edit.from, wording, prompt: `Value for ${label}: ` })
+    const { passphrase, value } = yield* passphraseAndValue(edit.from, label, "changed")(command, source)
     const change: ItemChange = { set: { label, value } }
 
     return { passphrase, change }
@@ -130,6 +141,55 @@ export const itemEdit = (input: ItemEditInput) =>
           )
 
           return { ...edited, fields }
+        }),
+    })
+  })
+
+export interface ItemCreateInput {
+  readonly target: Target
+  readonly source: SecretSource
+  readonly kind: Kind
+  readonly vault: string
+  readonly title: string
+  readonly sources: PrivateInput.SourceFlags
+  readonly plain: ReadonlyArray<{ readonly label: string; readonly value: string }>
+}
+
+// `hush item create <kind> --vault V --title T (--stdin | --prompt | --clipboard)`: the checks of `hush create`
+// that need no Server, then the Passphrase and the value, then one `admin/items/create`, which verifies every new
+// seal before commit, so no read-back follows.
+export const itemCreate = (input: ItemCreateInput) =>
+  Effect.gen(function* () {
+    const from = yield* Effect.fromResult(PrivateInput.source(input.sources, "created"))
+    const primary = Kind.primary(input.kind).label
+
+    return yield* passphraseCommand({
+      command: "item create",
+      source: input.source,
+      secrets: passphraseAndValue(from, primary, "created"),
+      prepare: Effect.all({
+        vault: parse("vault", input.vault),
+        title: parse("title", input.title),
+        plain: Effect.forEach(input.plain, (field) => Create.plainField(input.kind, field)),
+      }),
+      send: ({ vault, title, plain }, { passphrase, value }) =>
+        Effect.gen(function* () {
+          const fields = [{ label: primary, value }, ...plain]
+
+          const created = yield* unverifiedOnTransport(
+            Client.request(Api, input.target, (client) =>
+              client.admin.itemsCreate({ payload: { passphrase, vault, title, kind: input.kind, fields } }),
+            ),
+          )
+
+          const withRefs = yield* Effect.forEach(created.fields, (field) =>
+            Effect.map(
+              referenceOf(input.target, { vault: created.vault, item: created.title, field: field.label }),
+              (ref) => ({ ...field, ref }),
+            ),
+          )
+
+          return { ...created, fields: withRefs }
         }),
     })
   })
