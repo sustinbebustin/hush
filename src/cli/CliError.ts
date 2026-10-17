@@ -251,6 +251,11 @@ export class NoTerminal extends Schema.TaggedError<NoTerminal>()("NoTerminal", {
   ]),
 }) {}
 
+// `hush ui` started with stdin or stdout piped or redirected, as an agent's shell runs it.
+export class UiNeedsTerminal extends Schema.TaggedError<UiNeedsTerminal>()("UiNeedsTerminal", {
+  stream: Schema.Literals(["stdin", "stdout", "stdin and stdout"]),
+}) {}
+
 // Ctrl-C, or Ctrl-D on an empty line, at a hidden prompt; the terminal mode is restored.
 export class PromptCancelled extends Schema.TaggedError<PromptCancelled>()("PromptCancelled", {}) {}
 
@@ -283,6 +288,7 @@ export type CliError =
   | StdinIsTerminal
   | InitCodeEmpty
   | NoTerminal
+  | UiNeedsTerminal
   | PromptCancelled
   | PassphraseMismatch
   | ClipboardUnsupported
@@ -590,6 +596,8 @@ export const render = (cliError: CliError, token?: TokenContext): string =>
       error.prompt.for === "passphrase"
         ? `hush ${error.prompt.command} needs a human with the Passphrase at a terminal; nothing was changed. Run it from an interactive terminal (or pipe secrets with \`--passphrase-stdin\`). Agents cannot run it.`
         : `\`--prompt\` needs a terminal and there is none; nothing was ${error.prompt.outcome}. Pipe the value with \`--stdin\` instead.`,
+    UiNeedsTerminal: (error) =>
+      `\`hush ui\` needs an interactive terminal, but ${error.stream} ${error.stream === "stdin and stdout" ? "are" : "is"} not one; nothing was started. Run it yourself in a terminal, without pipes or redirection; agents cannot run it. Scripts use \`hush vault list\` and \`hush item list <vault>\` with \`--passphrase-stdin\`.`,
     PromptCancelled: () => "Cancelled at the prompt; nothing was changed.",
     PassphraseMismatch: () => "The two new Passphrases differ; nothing was changed.",
     ClipboardUnsupported: (error) =>

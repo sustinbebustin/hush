@@ -10,6 +10,7 @@ import { auditLimit } from "../shared/Api.js"
 import { type ApiError, isApiError } from "../shared/ApiError.js"
 import { Kind, type PlainLabel } from "../shared/Kind.js"
 import { Version } from "../shared/Version.js"
+import { Ui } from "../ui/Ui.js"
 import { Admin } from "./Admin.js"
 import { decodeTrailingArguments, normalizeTrailingArguments } from "./arguments.js"
 import { Backup } from "./Backup.js"
@@ -320,6 +321,12 @@ const item = Command.make("item").pipe(
       Command.withDescription("Reveal one Field's value on stdout under the Passphrase; audited by its Reference"),
     ),
   ]),
+)
+
+const ui = Command.make("ui", {}, () => withTarget(Ui.launch)).pipe(
+  Command.withDescription(
+    "Open the full-screen terminal UI to browse Vaults and Items with the Passphrase (the Owner only, at a terminal)",
+  ),
 )
 
 const passphrase = Command.make("passphrase").pipe(
@@ -763,6 +770,7 @@ const root = Command.make("hush").pipe(
     init,
     vault,
     item,
+    ui,
     passphrase,
     token,
     config,
