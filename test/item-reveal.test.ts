@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import type { Schema } from "effect"
 
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
 import { sandbox, type Sandbox } from "./sandbox.js"
@@ -183,7 +184,7 @@ describe("a refused item reveal prints nothing on stdout", () => {
     }))
 })
 
-const post = (box: Sandbox, body: object, token?: string) => {
+const post = (box: Sandbox, body: Schema.Json, token?: string) => {
   const headers = new Headers({ "content-type": "application/json" })
 
   if (token !== undefined) headers.set("authorization", `Bearer ${token}`)
