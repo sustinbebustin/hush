@@ -228,13 +228,15 @@ describe.skipIf(!serverSupported)("hush ui Tokens", () => {
       assert.strictEqual((await ui.calls()).length, before)
     }))
 
-  it("shows LimitExceeded with the CLI's message when the chosen Grants pass 64", () =>
+  // Each Vault create runs the Passphrase check (Argon2), so on a loaded machine the seeding alone can take most of
+  // the default 60 s: the timeout is wider, and the Vaults are the fewest that pass the limit (65).
+  it("shows LimitExceeded with the CLI's message when the chosen Grants pass 64", { timeout: 180_000 }, () =>
     withUi(
       async (box) => {
         await seeded(box)
 
         // Over raw HTTP: a CLI process per Vault would make this the slowest test by far.
-        for (let index = 0; index < 64; index += 1) {
+        for (let index = 0; index < 63; index += 1) {
           const response = await box.fetch("/v1/admin/vaults/create", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -246,12 +248,12 @@ describe.skipIf(!serverSupported)("hush ui Tokens", () => {
       },
       async (ui) => {
         await unlock(ui)
-        await openTokens(ui, 66)
+        await openTokens(ui, 65)
         await ui.type("i")
         await ui.waitFor("Issue a Token")
         await ui.type("wide")
 
-        for (let row = 0; row < 66; row += 1) {
+        for (let row = 0; row < 65; row += 1) {
           ui.keys.pressArrow("down")
           await ui.type(" ")
         }
@@ -260,7 +262,8 @@ describe.skipIf(!serverSupported)("hush ui Tokens", () => {
 
         assert.include(await ui.waitFor("A Token can hold at most 64 Grants"), "Notice")
       },
-    ))
+    ),
+  )
 
   it("revokes the Token under the cursor only on y, then lists the Tokens once more", () =>
     withUi(seeded, async (ui, box) => {

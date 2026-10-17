@@ -617,10 +617,12 @@ describe("denied requests from a dead Token", () => {
       assert.strictEqual((await timesOf(box, first.label)).last_used_at, row?.last_at)
     }))
 
-  it("resolves with a --ttl 1s Token once, then refuses it as expired, audited denied, listed expired", () =>
+  // A 5 s TTL, not 1 s: the first read must land before expiry even when a loaded machine takes seconds to start
+  // the CLI process; the wait after it runs to the Server's own `expiresAt`, so the test stays as short as it can.
+  it("resolves with a --ttl 5s Token once, then refuses it as expired, audited denied, listed expired", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen, { items: [{ kind: "api-credential", title: "Key", value }] })
-      const issued = await issuePrinted(box, seen, ["--label", "brief", "--read", "Personal", "--ttl", "1s"])
+      const issued = await issuePrinted(box, seen, ["--label", "brief", "--read", "Personal", "--ttl", "5s"])
       const env = { HUSH_TOKEN: issued.receipt.token }
       const fresh = await box.run(["read", "hush://Personal/Key/credential"], { env, secretStdout: true })
       assert.strictEqual(fresh.code, 0, fresh.stderr)
