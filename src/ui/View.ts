@@ -1,7 +1,8 @@
-import { Data } from "effect"
+import { Data, type Redacted } from "effect"
 
 import type { ItemMeta, TokenInfo } from "../shared/Api.js"
 import { Match } from "../shared/Match.js"
+import type { IssueForm } from "./IssueForm.js"
 import type { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
 
@@ -35,6 +36,9 @@ export type TokenTable = Data.TaggedEnum<{
 
 const TokenTable = Data.taggedEnum<TokenTable>()
 
+// The issued Token's copy key: absent (no host clipboard), ready, writing, or done.
+export type Copy = "absent" | "ready" | "copying" | "copied"
+
 // Where Up and Down go in the Tokens view: the sidebar, or the table's rows.
 export type Focus = "sidebar" | "table"
 
@@ -51,6 +55,16 @@ export type Modal = Data.TaggedEnum<{
   Notice: { readonly problem: Problem }
   // A destructive step held until the Owner answers: `y` runs `effect`, any other key cancels it.
   Confirm: { readonly description: string; readonly effect: UiEffect }
+  // The Token issue form; while its one request is out it takes no key, so it cannot be sent twice.
+  IssueForm: { readonly form: IssueForm; readonly phase: "editing" | "sending" }
+  // A Token just issued, its only showing: dismissing the modal drops the last reference to it.
+  Issued: {
+    readonly label: string
+    readonly token: Redacted.Redacted<string>
+    // Whether the issue revoked a Token with the same Label.
+    readonly replaced: boolean
+    readonly copy: Copy
+  }
 }>
 
 const Modal = Data.taggedEnum<Modal>()

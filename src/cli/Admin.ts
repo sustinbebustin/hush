@@ -11,6 +11,7 @@ import {
   type TokenRevoked,
 } from "../shared/Api.js"
 import { type InvalidName, parseName } from "../shared/ApiError.js"
+import { Duration } from "../shared/Duration.js"
 import { Name } from "../shared/Name.js"
 import { Passphrase } from "../shared/Passphrase.js"
 import { Token } from "../shared/Token.js"
@@ -454,22 +455,9 @@ const sendInit = (input: {
     })
   })
 
-const ttlUnits = { s: 1, m: 60, h: 3_600, d: 86_400, w: 604_800 } as const
-
-const isTtlUnit = (unit: string): unit is keyof typeof ttlUnits => Object.hasOwn(ttlUnits, unit)
-
-// A duration such as `90d` (`^[1-9]\d*[smhdw]$`) in seconds; undefined for anything else.
-const durationSeconds = (text: string): number | undefined => {
-  const [, count, unit] = /^([1-9]\d*)([smhdw])$/.exec(text) ?? []
-
-  if (count === undefined || unit === undefined || !isTtlUnit(unit)) return undefined
-
-  return Number(count) * ttlUnits[unit]
-}
-
 // `--ttl`: a duration of at most 3650 days, in seconds.
 export const parseTtl = (ttl: string): Result.Result<number, IssueFlagsInvalid> => {
-  const seconds = durationSeconds(ttl)
+  const seconds = Duration.seconds(ttl)
 
   return seconds === undefined || seconds > maxTtlSeconds
     ? Result.fail(new IssueFlagsInvalid({ problem: { reason: "ttl", ttl } }))
@@ -494,7 +482,7 @@ const isoTime = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|
 // `--since`: a duration back from `nowMs`, or an ISO 8601 time, as the instant the Server compares.
 // A duration reaching back before 1970 means from the start of the log.
 export const parseSince = (since: string, nowMs: number): Result.Result<string, AuditFlagsInvalid> => {
-  const seconds = durationSeconds(since)
+  const seconds = Duration.seconds(since)
   const ms = seconds === undefined ? (isoTime.test(since) ? Date.parse(since) : Number.NaN) : nowMs - seconds * 1000
 
   return Number.isNaN(ms)

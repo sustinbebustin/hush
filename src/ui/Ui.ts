@@ -3,6 +3,7 @@ import { Effect, FiberSet, Queue } from "effect"
 
 import { UiNeedsTerminal } from "../cli/CliError.js"
 import type { Target } from "../cli/Target.js"
+import { Clipboard } from "./Clipboard.js"
 import { Display } from "./Display.js"
 import { Event } from "./Event.js"
 import { Interpreter } from "./Interpreter.js"
@@ -40,10 +41,14 @@ const attach = (renderer: CliRenderer, send: (event: Event) => void) => {
 }
 
 // Runs the UI on `renderer` until the reducer quits; the renderer is destroyed when it returns.
-export const run = (input: { readonly renderer: CliRenderer; readonly target: Target }): Effect.Effect<void> =>
+export const run = (input: {
+  readonly renderer: CliRenderer
+  readonly target: Target
+  readonly clipboard: Clipboard
+}): Effect.Effect<void> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { renderer, target } = input
+      const { renderer, target, clipboard } = input
       const events = yield* Queue.unbounded<Event>()
       yield* attach(renderer, (event) => Queue.offerUnsafe(events, event))
       // Released before the renderer: an answer still in flight is interrupted, never applied.
@@ -61,7 +66,7 @@ export const run = (input: { readonly renderer: CliRenderer; readonly target: Ta
           if (UiEffect.$is("Quit")(effect)) return
 
           yield* FiberSet.run(work)(
-            Effect.flatMap(Interpreter.run(target, effect), (event) => Queue.offer(events, event)),
+            Effect.flatMap(Interpreter.run(target, effect, clipboard), (event) => Queue.offer(events, event)),
           )
         }
       }
@@ -78,18 +83,21 @@ const notTerminal = (stdin: boolean, stdout: boolean): UiNeedsTerminal["stream"]
 
 // `hush ui`: refuses unless stdin and stdout are terminals, then runs on the alternate screen. Ctrl-C reaches the
 // reducer (`exitOnCtrlC` off) so quitting drops the Passphrase; the default exit signals destroy the renderer,
-// which the reducer sees as `Closed`.
+// which the reducer sees as `Closed`. The host clipboard lives as long as the UI.
 export const launch = (target: Target): Effect.Effect<void, UiNeedsTerminal> =>
-  Effect.gen(function* () {
-    const stream = notTerminal(process.stdin.isTTY, process.stdout.isTTY)
+  Effect.scoped(
+    Effect.gen(function* () {
+      const stream = notTerminal(process.stdin.isTTY, process.stdout.isTTY)
 
-    if (stream !== undefined) return yield* new UiNeedsTerminal({ stream })
+      if (stream !== undefined) return yield* new UiNeedsTerminal({ stream })
+      const clipboard = yield* Clipboard.host(process.platform, process.env)
 
-    const renderer = yield* Effect.promise(() =>
-      createCliRenderer({ exitOnCtrlC: false, screenMode: "alternate-screen" }),
-    )
+      const renderer = yield* Effect.promise(() =>
+        createCliRenderer({ exitOnCtrlC: false, screenMode: "alternate-screen" }),
+      )
 
-    return yield* run({ renderer, target })
-  })
+      return yield* run({ renderer, target, clipboard })
+    }),
+  )
 
 export * as Ui from "./Ui.js"

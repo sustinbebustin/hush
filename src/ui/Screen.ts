@@ -127,6 +127,7 @@ const mount = (renderer: CliRenderer): Screen => {
           .join("\n")
         vaultCounts.content = shown.vaults.map(({ items }) => String(items)).join("\n")
         tokenTable.draw(shown.tokens)
+        rows.visible = shown.tokens === undefined
         main.title = shown.title
         filterLine.content = shown.filter
         filterLine.visible = shown.filter !== ""

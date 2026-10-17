@@ -1,11 +1,13 @@
-import { Data } from "effect"
+import { Data, Redacted } from "effect"
 
+import { IssueForm } from "./IssueForm.js"
 import { Problem } from "./Problem.js"
 import { type Open, type Phase, State } from "./State.js"
 import { type Modal, View } from "./View.js"
 
 // What the screen shows for a state, as plain text: the model the sync layer (`Screen`) copies into renderables.
-// It is pure and holds no secret: concealed input appears only as its mask, so a test can scan it.
+// It is pure and holds no secret, so a test can scan it: concealed input appears only as its mask. The one
+// exception is a freshly issued Token, drawn while its modal is up (ADR-0009: on the alternate screen only).
 
 export interface VaultRow {
   readonly name: string
@@ -66,8 +68,9 @@ const listHints = "Up/Down move  Enter open Vault  / filter  Esc clear filter  q
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
 const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
 const confirmHints = "y confirm  any other key cancels"
-const tableHints = "Up/Down move  d revoke  Esc sidebar  q quit"
-const tokensSidebarHints = "Up/Down move  Enter open  q quit"
+const tableHints = "Up/Down move  i issue  d revoke  Esc sidebar  q quit"
+const tokensSidebarHints = "Up/Down move  Enter open  i issue  q quit"
+const issueFormHints = "Up/Down move  Space change  Enter issue  Esc cancel"
 
 const lockedNotice = (phase: Phase): string =>
   State.Phase.$match(phase, {
@@ -136,6 +139,23 @@ const modalShown = (top: Modal) =>
   View.Modal.$match(top, {
     Notice: ({ problem }) => ({ title: "Notice", text: Problem.message(problem), hints: modalHints }),
     Confirm: ({ description }) => ({ title: "Confirm", text: description, hints: confirmHints }),
+    IssueForm: ({ form, phase }) => ({
+      title: "Issue a Token",
+      text: phase === "sending" ? `${IssueForm.lines(form)}\n\nIssuing the Token...` : IssueForm.lines(form),
+      hints: phase === "sending" ? "Issuing the Token...  Ctrl-C quit" : issueFormHints,
+    }),
+    Issued: ({ label, token, replaced, copy }) => ({
+      title: "Token issued",
+      text: [
+        `Token ${label}${replaced ? " (the Token it replaces was revoked)" : ""}:`,
+        "",
+        Redacted.value(token),
+        "",
+        "Shown once: hand it to the agent now. It is saved nowhere, and dismissing this wipes it from the UI.",
+        ...(copy === "copied" ? ["Copied to the clipboard."] : []),
+      ].join("\n"),
+      hints: copy === "absent" ? "Enter or Esc dismiss" : "c copy  Enter or Esc dismiss",
+    }),
   })
 
 const hintsFor = (state: Open) => {

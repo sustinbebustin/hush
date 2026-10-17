@@ -2,7 +2,8 @@ import { assert, describe, it } from "@effect/vitest"
 import { Redacted } from "effect"
 import * as fc from "fast-check"
 
-import type { ItemMeta, TokenInfo } from "../src/shared/Api.js"
+import type { ItemMeta, TokenInfo, TokenIssueReceipt } from "../src/shared/Api.js"
+import { Display } from "../src/ui/Display.js"
 import { Event } from "../src/ui/Event.js"
 import { Key } from "../src/ui/Key.js"
 import { Problem } from "../src/ui/Problem.js"
@@ -75,6 +76,28 @@ const tokensOpened = (labels: ReadonlyArray<string> = ["agent on box"]): State =
 
   return Reducer.reduce(listing, Event.TokensLoaded({ list: { tokens: labels.map(tokenInfo) } })).state
 }
+
+const issuedToken = `hush_${"A".repeat(42)}A`
+
+const receipt = (token: string): TokenIssueReceipt => ({
+  token: Redacted.make(token),
+  label: "deploy bot",
+  grants: [{ vault: "Personal", access: "read" }],
+  createdAt: "2026-10-01T00:00:00.000Z",
+  expiresAt: null,
+  replaced: false,
+})
+
+// Whether the state holds the issued Token `text`: only an Issued modal can hold one.
+const holds = (state: State, text: string): boolean =>
+  State.$is("Open")(state) &&
+  state.modals.some((modal) => View.Modal.$is("Issued")(modal) && Redacted.value(modal.token) === text)
+
+// Opens the issue form on `tokensOpened()`, presses `keys`, then Enter.
+const submitted = (...keys: ReadonlyArray<Key>) => press(tokensOpened(), Key.char("i"), ...keys, Key.named("return"))
+
+const modalText = (state: State): string =>
+  Display.$match(Display.of(state), { Locked: () => "", Open: ({ modal }) => modal ?? "" })
 
 // The titles the Item list shows.
 const shown = (state: State): ReadonlyArray<string> | undefined => {
@@ -164,7 +187,7 @@ describe("Reducer from Locked", () => {
 // Every key the UI binds, plus arbitrary typed text.
 const anyKey: fc.Arbitrary<Key> = fc.oneof(
   fc.string({ unit: "grapheme", minLength: 1, maxLength: 2 }).map(Key.char),
-  fc.constantFrom(..."qjk/".split("").map(Key.char)),
+  fc.constantFrom(..."qjk/idyc ".split("").map(Key.char)),
   fc.constantFrom("return", "backspace", "escape", "up", "down", "tab").map((name) => Key.named(name)),
   fc.constantFrom(Key.named("c", { ctrl: true }), Key.named("d", { ctrl: true }), Key.named("x", { meta: true })),
 )
@@ -188,6 +211,15 @@ const withoutUnlock: fc.Arbitrary<Event> = fc.oneof(
   fc.tuple(vaultName, anyProblem).map(([name, problem]) => Event.ItemsRefused({ vault: name, problem })),
   fc.nat({ max: 3 }).map((attempt) => Event.WaitTick({ attempt })),
   fc.constant(Event.Closed()),
+  fc
+    .array(fc.constantFrom("agent on box", "deploy bot"), { maxLength: 2 })
+    .map((labels) => Event.TokensLoaded({ list: { tokens: labels.map(tokenInfo) } })),
+  anyProblem.map((problem) => Event.TokensRefused({ problem })),
+  fc.constant(Event.TokenRevoked({ label: "agent on box" })),
+  anyProblem.map((problem) => Event.RevokeRefused({ problem })),
+  fc.boolean().map((copyable) => Event.TokenIssued({ receipt: receipt(issuedToken), copyable })),
+  anyProblem.map((problem) => Event.IssueRefused({ problem })),
+  fc.constantFrom("written", "unsupported", "failed").map((written) => Event.TokenCopied({ written })),
 )
 
 const anyEvent: fc.Arbitrary<Event> = fc.oneof(
@@ -218,12 +250,13 @@ describe("Reducer properties", () => {
         for (const { state } of run(events)) {
           assert.strictEqual(state._tag, "Locked")
           assert.isUndefined(State.passphrase(state))
+          assert.isFalse(holds(state, issuedToken))
         }
       }),
     )
   })
 
-  it("holds no Passphrase and an empty prompt after a quit from any state", () => {
+  it("holds no Passphrase, issued Token or prompt text after a quit from any state", () => {
     const quitting = fc.constantFrom(Event.Key({ key: Key.named("c", { ctrl: true }) }), Event.Closed())
 
     fc.assert(
@@ -233,6 +266,7 @@ describe("Reducer properties", () => {
 
         for (const { state, effects } of quitSteps) {
           assert.isUndefined(State.passphrase(state))
+          assert.isFalse(holds(state, issuedToken))
           assert.strictEqual(State.$is("Locked")(state) ? state.entered.length : -1, 0)
           assert.deepStrictEqual(asked(effects), ["Quit"])
         }
@@ -279,6 +313,97 @@ describe("Reducer when Open", () => {
         assert.deepStrictEqual(State.$is("Open")(cancelled.state) ? cancelled.state.modals : undefined, [])
       }),
     )
+  })
+
+  it("holds an issued Token as Redacted in its modal only, and drops it from state on dismissal", () => {
+    const sent = submitted(...typing("deploy bot"), Key.named("down"), Key.char(" "))
+    assert.deepStrictEqual(asked(sent.effects), ["IssueToken"])
+
+    const issued = Reducer.reduce(sent.state, Event.TokenIssued({ receipt: receipt(issuedToken), copyable: true }))
+    const modals = State.$is("Open")(issued.state) ? issued.state.modals : []
+    assert.deepStrictEqual(asked(issued.effects), ["ListTokens"])
+    assert.deepStrictEqual(
+      modals.map(({ _tag }) => _tag),
+      ["Issued"],
+    )
+    const [modal] = modals
+    assert.isTrue(modal?._tag === "Issued" && Redacted.isRedacted(modal.token))
+    assert.isTrue(holds(issued.state, issuedToken))
+
+    for (const dismiss of [Key.named("escape"), Key.named("return")]) {
+      const dismissed = press(issued.state, dismiss).state
+      assert.deepStrictEqual(State.$is("Open")(dismissed) ? dismissed.modals : undefined, [])
+      assert.isFalse(holds(dismissed, issuedToken))
+    }
+  })
+
+  it("copies the issued Token on c through one CopyToken, and shows a notice instead when there is no clipboard", () => {
+    const issue = (copyable: boolean) =>
+      Reducer.reduce(tokensOpened(), Event.TokenIssued({ receipt: receipt(issuedToken), copyable })).state
+
+    const copying = press(issue(true), Key.char("c"))
+    const [copy] = copying.effects
+    assert.strictEqual(copy?._tag === "CopyToken" ? Redacted.value(copy.token) : undefined, issuedToken)
+    assert.deepStrictEqual(press(copying.state, Key.char("c")).effects, [])
+    const copied = Reducer.reduce(copying.state, Event.TokenCopied({ written: "written" })).state
+    assert.include(modalText(copied), "Copied to the clipboard.")
+    assert.include(modalText(copied), issuedToken)
+
+    const absent = press(issue(false), Key.char("c"))
+    assert.deepStrictEqual(absent.effects, [])
+    const modals = State.$is("Open")(absent.state) ? absent.state.modals : []
+    assert.deepStrictEqual(
+      modals.map(({ _tag }) => _tag),
+      ["Issued", "Notice"],
+    )
+    assert.notInclude(
+      Display.$match(Display.of(issue(false)), { Locked: () => "", Open: ({ hints }) => hints }),
+      "c copy",
+    )
+    assert.include(Display.$match(Display.of(issue(true)), { Locked: () => "", Open: ({ hints }) => hints }), "c copy")
+  })
+
+  it("offers to replace a listed Label, keeping its Grants or starting the picker from them", () => {
+    // Personal, Work, TTL, then the replace row that a listed Label adds.
+    const toReplace = [...typing("AGENT ON BOX"), ...Array.from({ length: 4 }, () => Key.named("down"))]
+    const [kept] = submitted(...toReplace, Key.char(" ")).effects
+    assert.deepStrictEqual(kept?._tag === "IssueToken" ? kept.fields : undefined, {
+      label: "AGENT ON BOX",
+      grants: [],
+      replaces: true,
+      keepGrants: true,
+    })
+
+    const [edited] = submitted(...toReplace, Key.char(" "), Key.char(" ")).effects
+    assert.deepStrictEqual(edited?._tag === "IssueToken" ? edited.fields : undefined, {
+      label: "AGENT ON BOX",
+      grants: [{ vault: "Personal", access: "read+create" }],
+      replaces: true,
+    })
+
+    const [fresh] = submitted(...typing("other"), Key.named("down"), Key.char(" ")).effects
+    assert.deepStrictEqual(fresh?._tag === "IssueToken" ? fresh.fields : undefined, {
+      label: "other",
+      grants: [{ vault: "Personal", access: "read" }],
+    })
+  })
+
+  it("sends nothing for a form without a Label, a Grant or a valid TTL", () => {
+    const grant = [Key.named("down"), Key.char(" ")]
+    const ttl = (text: string) => [...typing("bot"), ...grant, Key.named("down"), Key.named("down"), ...typing(text)]
+    const refusals = [submitted(...grant), submitted(...typing("bot")), submitted(...ttl("90 days"))]
+
+    for (const refused of [...refusals, submitted(...ttl("3651d"))]) {
+      assert.deepStrictEqual(refused.effects, [])
+      const modals = State.$is("Open")(refused.state) ? refused.state.modals : []
+      assert.deepStrictEqual(
+        modals.map(({ _tag }) => _tag),
+        ["IssueForm", "Notice"],
+      )
+    }
+
+    const [sent] = submitted(...ttl("3650d")).effects
+    assert.strictEqual(sent?._tag === "IssueToken" ? sent.fields.ttlSeconds : undefined, 3650 * 86_400)
   })
 
   it("asks for one Token list when Enter selects the Tokens entry, and drops a late Item answer", () => {

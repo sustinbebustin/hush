@@ -35,21 +35,23 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 
 ## UI (`src/ui/`)
 
-`hush ui`, on `@opentui/core` (Core API only). The reducer side (`State` to `Display`) imports neither OpenTUI nor the Client; `Screen` and `Interpreter` are the only modules that touch the outside.
+`hush ui`, on `@opentui/core` (Core API only). The reducer side (`State` to `Display`) imports neither OpenTUI nor the Client; `Screen`, `Interpreter` and `Clipboard` are the only modules that touch the outside.
 
 ```
-src/ui/Ui.ts                `run({ renderer, target })`: input -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `launch` (the command): TTY check (`UiNeedsTerminal`), alternate screen, `exitOnCtrlC` off
-src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack)
-src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter` and `Items`), the `Modal`s, and the title filter (`Match.matches`)
-src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, wait ticks, `Closed` (renderer destroyed by a signal)
-src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `After` (timer), `Quit`; each request carries its Passphrase
+src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off
+src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack); `entries`, the sidebar rows below the Vaults
+src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter` and `Items`, `Tokens` with its `TokenTable`), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`), and the title filter (`Match.matches`)
+src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, clipboard writes, wait ticks, `Closed` (renderer destroyed by a signal)
+src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `ListTokens`, `RevokeToken`, `IssueToken`, `CopyToken`, `After` (timer), `Quit`; each request carries its Passphrase
+src/ui/IssueForm.ts         the Token issue form as plain state: Label, one Grant choice per Vault, TTL, replacement; `submit` -> the `tokens/issue` fields or a `Problem`
+src/ui/Clipboard.ts         the host clipboard (OpenTUI's native backends): `available`, `write`; `none` where there is no backend, `host` for `launch`
 src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`
 src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
 src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
-src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret
+src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but an issued Token while its modal is up
 src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
-src/ui/Interpreter.ts       runs `ListVaults` and `ListItems` through `Client` (one request, no retry) and `After`; every outcome is one `Event`
+src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer), `CopyToken` through `Clipboard`, and `After`; every outcome is one `Event`
 ```
 
 ## Shared (`src/shared/`)
@@ -68,6 +70,7 @@ src/shared/Kind.ts          the three Kinds and their Field specs
 src/shared/Access.ts        Access (`read | read+create`) and Grant
 src/shared/Version.ts       package version and API version
 src/shared/Match.ts         title matching and near-miss suggestions
+src/shared/Duration.ts      a typed duration such as `90d` in seconds (`--ttl`, `--since`, the UI's TTL)
 ```
 
 ## Server (`src/server/`)
@@ -107,7 +110,7 @@ src/server/Log.ts           the Server's stderr log: one JSON object per line, t
 
 ```
 test/sandbox.ts             the seam: real CLI subprocess (temp HOME, PATH of sh, cat and fakes; `tty` runs on a pty) against a real Server subprocess on a port below the ephemeral range, so a restart gets it back
-test/headless.ts            the UI seam beside `sandbox()`: `Ui.run` in-process on OpenTUI's `createTestRenderer` against the sandbox Server; `keys` (mockInput), `frame`, `frames` (every committed frame, for leak scans), `waitFor`, `calls`
+test/headless.ts            the UI seam beside `sandbox()`: `Ui.run` in-process on OpenTUI's `createTestRenderer` against the sandbox Server; `keys` (mockInput), `frame`, `frames` (every committed frame, for leak scans), `waitFor`, `calls`; no host clipboard unless a test passes one (`fakeClipboard` records writes)
 test/proxy.ts               the loopback test proxy, as `HUSH_SERVER` (origin-form) or `HTTP_PROXY` (absolute-form): request-line log, dropped or altered answers
 test/leaks.ts               per-target sentinel scan for `observable()`
 test/arbitraries.ts         shared fast-check arbitraries and Unicode fixtures

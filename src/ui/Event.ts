@@ -1,6 +1,7 @@
 import { Data, type Redacted } from "effect"
 
-import type { TokenList, VaultItems, VaultList } from "../shared/Api.js"
+import type { TokenIssueReceipt, TokenList, VaultItems, VaultList } from "../shared/Api.js"
+import type { Written } from "./Clipboard.js"
 import type { Key as Keypress } from "./Key.js"
 import type { Problem } from "./Problem.js"
 
@@ -18,6 +19,10 @@ export type Event = Data.TaggedEnum<{
   TokensRefused: { readonly problem: Problem }
   TokenRevoked: { readonly label: string }
   RevokeRefused: { readonly problem: Problem }
+  // `tokens/issue` answered; `copyable` says whether the host has a clipboard to copy the Token to.
+  TokenIssued: { readonly receipt: TokenIssueReceipt; readonly copyable: boolean }
+  IssueRefused: { readonly problem: Problem }
+  TokenCopied: { readonly written: Written }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
   // The renderer was destroyed from outside the reducer: an exit signal such as SIGHUP or SIGTERM.
@@ -27,7 +32,8 @@ export type Event = Data.TaggedEnum<{
 const { Key, Paste, Unlocked, UnlockRefused, ItemsLoaded, ItemsRefused, WaitTick, Closed, $is, $match } =
   Data.taggedEnum<Event>()
 
-const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused } = Data.taggedEnum<Event>()
+const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused, TokenIssued, IssueRefused, TokenCopied } =
+  Data.taggedEnum<Event>()
 
 export const Event = {
   Key,
@@ -40,6 +46,9 @@ export const Event = {
   TokensRefused,
   TokenRevoked,
   RevokeRefused,
+  TokenIssued,
+  IssueRefused,
+  TokenCopied,
   WaitTick,
   Closed,
   $is,

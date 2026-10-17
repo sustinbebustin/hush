@@ -1,7 +1,10 @@
-import { Redacted } from "effect"
+import { Redacted, Result } from "effect"
 
+import type { TokenIssueReceipt } from "../shared/Api.js"
+import type { Written } from "./Clipboard.js"
 import { Concealed } from "./Concealed.js"
 import { Event } from "./Event.js"
+import { IssueForm } from "./IssueForm.js"
 import { Key } from "./Key.js"
 import { Problem } from "./Problem.js"
 import { State, type Locked, type Open, type Vault } from "./State.js"
@@ -117,6 +120,10 @@ const fromLocked = (state: Locked, event: Event): Step => {
     TokensRefused: () => stay(state),
     TokenRevoked: () => stay(state),
     RevokeRefused: () => stay(state),
+    // An issue answered after a Lock: the Token is dropped unseen, and stays valid until revoked.
+    TokenIssued: () => stay(state),
+    IssueRefused: () => stay(state),
+    TokenCopied: () => stay(state),
     Closed: quit,
   })
 }
@@ -138,6 +145,52 @@ const filterKey = (state: Open, view: ItemList, text: string, key: Key): Step =>
 // The state without its topmost modal.
 const dismissed = (state: Open): Open => ({ ...state, modals: state.modals.slice(0, -1) })
 
+// The state with its topmost modal replaced by `modal`.
+const withTop = (state: Open, modal: Modal): Open => ({ ...state, modals: [...state.modals.slice(0, -1), modal] })
+
+const withNotice = (state: Open, problem: Problem): Open => ({
+  ...state,
+  modals: [...state.modals, View.Modal.Notice({ problem })],
+})
+
+type IssueFormModal = Extract<Modal, { readonly _tag: "IssueForm" }>
+
+type IssuedModal = Extract<Modal, { readonly _tag: "Issued" }>
+
+// Keys in the issue form: Escape cancels it, Enter sends its one `tokens/issue` (or says why it cannot), anything
+// else edits it. While the request is out, nothing but Ctrl-C does anything.
+const issueFormKey = (state: Open, top: IssueFormModal, key: Key): Step => {
+  if (top.phase === "sending") return stay(state)
+
+  if (Key.is(key, "escape")) return stay(dismissed(state))
+
+  if (!Key.is(key, "return")) return stay(withTop(state, { ...top, form: IssueForm.key(top.form, key) }))
+
+  return Result.match(IssueForm.submit(top.form), {
+    onFailure: (problem) => stay(withNotice(state, problem)),
+    onSuccess: (fields) => ({
+      state: withTop(state, { ...top, phase: "sending" }),
+      effects: [UiEffect.IssueToken({ passphrase: state.passphrase, fields })],
+    }),
+  })
+}
+
+const noClipboard = Problem.Failed({
+  message:
+    "This machine has no clipboard the UI can write to (it needs macOS, Wayland or X11), so the Token was not copied. Copy it from the screen instead; it stays shown until you dismiss it.",
+})
+
+// Keys on the issued Token: Escape or Enter dismisses it for good; `c` copies it to the host clipboard.
+const issuedKey = (state: Open, top: IssuedModal, key: Key): Step => {
+  if (Key.is(key, "escape") || Key.is(key, "return")) return stay(dismissed(state))
+
+  if (!Key.is(key, "c") || top.copy === "copying") return stay(state)
+
+  if (top.copy === "absent") return stay(withNotice(state, noClipboard))
+
+  return { state: withTop(state, { ...top, copy: "copying" }), effects: [UiEffect.CopyToken({ token: top.token })] }
+}
+
 // The topmost modal takes every key: Escape or Enter dismisses a notice; `y` runs a confirmation's effect and any
 // other key cancels it.
 const modalKey = (state: Open, top: Modal, key: Key): Step =>
@@ -145,7 +198,70 @@ const modalKey = (state: Open, top: Modal, key: Key): Step =>
     Notice: () => (Key.is(key, "escape") || Key.is(key, "return") ? stay(dismissed(state)) : stay(state)),
     Confirm: ({ effect }) =>
       Key.is(key, "y") ? { state: dismissed(state), effects: [effect] } : stay(dismissed(state)),
+    IssueForm: (form) => issueFormKey(state, form, key),
+    Issued: (issued) => issuedKey(state, issued, key),
   })
+
+// The issue form over the Tokens view; Labels of the listed Tokens can be replaced.
+const openIssueForm = (state: Open, view: TokensView): Step => {
+  const tokens = View.TokenTable.$is("Loaded")(view.table) ? view.table.tokens : []
+
+  return stay({
+    ...state,
+    modals: [
+      ...state.modals,
+      View.Modal.IssueForm({
+        form: IssueForm.open(
+          state.vaults.map(({ vault }) => vault),
+          tokens,
+        ),
+        phase: "editing",
+      }),
+    ],
+  })
+}
+
+// The issued Token's modal in place of the form that asked for it, and the table refreshed to list the Token.
+const issued = (state: Open, receipt: TokenIssueReceipt, copyable: boolean): Step => {
+  const shown = View.Modal.Issued({
+    label: receipt.label,
+    token: receipt.token,
+    replaced: receipt.replaced,
+    copy: copyable ? "ready" : "absent",
+  })
+
+  const next = { ...state, modals: [...state.modals.filter((modal) => !View.Modal.$is("IssueForm")(modal)), shown] }
+
+  return View.$is("Tokens")(next.view) ? listTokens(next) : stay(next)
+}
+
+// A refused issue: the form takes keys again, under the notice saying why.
+const issueRefused = (state: Open, problem: Problem): Step => {
+  const modals = state.modals.map((modal) =>
+    View.Modal.$is("IssueForm")(modal) ? View.Modal.IssueForm({ ...modal, phase: "editing" }) : modal,
+  )
+
+  return stay(withNotice({ ...state, modals }, problem))
+}
+
+const copyFailed = {
+  unsupported: noClipboard,
+  failed: Problem.Failed({
+    message:
+      "Could not write the Token to the clipboard (the write timed out or the platform refused it); it was not copied. Press c to try again, or copy it from the screen.",
+  }),
+} as const
+
+// A copy's answer, for the issued Token still on screen; after a dismissal it is dropped.
+const copied = (state: Open, written: Written): Step => {
+  const top = state.modals.at(-1)
+
+  if (top === undefined || !View.Modal.$is("Issued")(top) || top.copy !== "copying") return stay(state)
+
+  return written === "written"
+    ? stay(withTop(state, { ...top, copy: "copied" }))
+    : stay(withNotice(withTop(state, { ...top, copy: "ready" }), copyFailed[written]))
+}
 
 // Keys while the Token table has the focus: Up and Down move its row, Escape hands the focus back to the sidebar.
 const tableKey = (state: Open, view: TokensView, key: Key): Step => {
@@ -194,6 +310,8 @@ const openKey = (state: Open, key: Key): Step => {
 
   if (Key.is(key, "q")) return quit()
 
+  if (View.$is("Tokens")(view) && Key.is(key, "i")) return openIssueForm(state, view)
+
   if (View.$is("Tokens")(view) && view.focus === "table") return tableKey(state, view, key)
 
   if (Key.is(key, "up") || Key.is(key, "k")) return stay({ ...state, cursor: Math.max(0, state.cursor - 1) })
@@ -212,9 +330,13 @@ const openKey = (state: Open, key: Key): Step => {
   return stay(state)
 }
 
-// A paste into the filter being typed; ignored anywhere else.
+// A paste into the filter being typed or a text row of the issue form; ignored anywhere else.
 const openPaste = (state: Open, text: string): Step => {
   const { view } = state
+  const top = state.modals.at(-1)
+
+  if (top !== undefined && View.Modal.$is("IssueForm")(top) && top.phase === "editing")
+    return stay(withTop(state, { ...top, form: IssueForm.paste(top.form, firstLine(text)) }))
 
   if (state.modals.length > 0 || !View.$is("ItemList")(view) || !View.Filter.$is("Editing")(view.filter))
     return stay(state)
@@ -279,7 +401,10 @@ const fromOpen = (state: Open, event: Event): Step =>
       })),
     // A revoke answered while the Tokens view is up refreshes its table.
     TokenRevoked: () => (View.$is("Tokens")(state.view) ? listTokens(state) : stay(state)),
-    RevokeRefused: ({ problem }) => stay({ ...state, modals: [...state.modals, View.Modal.Notice({ problem })] }),
+    RevokeRefused: ({ problem }) => stay(withNotice(state, problem)),
+    TokenIssued: ({ receipt, copyable }) => issued(state, receipt, copyable),
+    IssueRefused: ({ problem }) => issueRefused(state, problem),
+    TokenCopied: ({ written }) => copied(state, written),
     // Locked-only events: none reaches an Open UI except late, and none changes it.
     Unlocked: () => stay(state),
     UnlockRefused: () => stay(state),
