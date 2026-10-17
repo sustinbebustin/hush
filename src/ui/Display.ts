@@ -6,8 +6,8 @@ import { type Open, type Phase, State } from "./State.js"
 import { type Modal, View } from "./View.js"
 
 // What the screen shows for a state, as plain text: the model the sync layer (`Screen`) copies into renderables.
-// It is pure and holds no secret, so a test can scan it: concealed input appears only as its mask. The one
-// exception is a freshly issued Token, drawn while its modal is up (ADR-0009: on the alternate screen only).
+// It is pure and holds no secret but a Revealed value or a freshly issued Token, while the state holds one (ADR-0009:
+// drawn on the alternate screen only): concealed input appears only as its mask, so a test can scan it.
 
 export interface VaultRow {
   readonly name: string
@@ -18,6 +18,7 @@ export interface VaultRow {
 export interface ItemRow {
   readonly title: string
   readonly kind: string
+  readonly underCursor: boolean
 }
 
 // A sidebar row below the Vaults, such as Tokens.
@@ -50,6 +51,8 @@ export type Display = Data.TaggedEnum<{
     readonly rows: ReadonlyArray<ItemRow>
     // Shown in place of rows: loading, refused or empty.
     readonly message: string
+    // The Item detail, one line per entry; empty outside it.
+    readonly detail: ReadonlyArray<string>
     // The topmost modal's text, or undefined when there is none.
     readonly modal: string | undefined
     // The topmost modal's box title, or empty when there is none.
@@ -64,12 +67,15 @@ const { Locked, Open: OpenDisplay, $match } = Data.taggedEnum<Display>()
 const prompt = "hush Passphrase: "
 
 const lockedHints = "Enter unlock  Ctrl-C quit"
-const listHints = "Up/Down move  Enter open Vault  / filter  Esc clear filter  q quit"
+const listHints = "Up/Down move  Enter open Vault  Tab Items  / filter  Esc clear filter  q quit"
+const rowsHints = "Up/Down move  Enter open Item  Tab Vaults  / filter  Esc clear filter  q quit"
+const detailHints = "Up/Down move  r reveal  Esc back  q quit"
+const shownHints = "Any key hides the value"
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
 const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
 const confirmHints = "y confirm  any other key cancels"
-const tableHints = "Up/Down move  i issue  d revoke  Esc sidebar  q quit"
-const tokensSidebarHints = "Up/Down move  Enter open  i issue  q quit"
+const tableHints = "Up/Down move  i issue  d revoke  Tab or Esc sidebar  q quit"
+const tokensSidebarHints = "Up/Down move  Enter open  Tab Tokens  i issue  q quit"
 const issueFormHints = "Up/Down move  Space change  Enter issue  Esc cancel"
 
 const lockedNotice = (phase: Phase): string =>
@@ -82,28 +88,80 @@ const lockedNotice = (phase: Phase): string =>
 
 const noVaults = "This Server has no Vault yet. Create one with `hush vault create <name>`."
 
-const pane = (view: View): Pick<Extract<Display, { _tag: "Open" }>, "title" | "filter" | "rows" | "message"> =>
+// A concealed Field as the detail shows it while hidden: a fixed mask, so its length is not shown either.
+const concealedMask = "********"
+
+// A plain Field's value is not in the Item list's answer; Reveal shows it as it shows the concealed one.
+const plainHidden = "(r shows it)"
+
+type ItemDetail = Extract<View, { readonly _tag: "ItemDetail" }>
+
+// The Item detail: Kind and times, then each Field in Kind order with its value or mask and its Reference.
+const detailLines = ({ list, item, field, reveal }: ItemDetail): ReadonlyArray<string> => {
+  const width = Math.max(...item.fields.map(({ label }) => label.length))
+
+  const fields = item.fields.flatMap(({ label, concealed }, index) => {
+    const reference = View.reference(list.vault, item, label)
+
+    const value = View.Reveal.$match(reveal, {
+      Hidden: () => undefined,
+      Asking: (asking) => (asking.reference === reference ? "Revealing..." : undefined),
+      Shown: (shown) => (shown.reference === reference ? Redacted.value(shown.value) : undefined),
+    })
+
+    const drawn = value ?? (concealed ? concealedMask : plainHidden)
+
+    return [`${index === field ? ">" : " "} ${label.padEnd(width)}  ${drawn}`, `    ${reference}`]
+  })
+
+  return [`Kind     ${item.kind}`, `Created  ${item.createdAt}`, `Updated  ${item.updatedAt}`, "", ...fields]
+}
+
+const pane = (
+  view: View,
+): Pick<Extract<Display, { _tag: "Open" }>, "title" | "filter" | "rows" | "message" | "detail"> =>
   View.$match(view, {
-    NoVaults: () => ({ title: "", filter: "", rows: [], message: noVaults }),
-    ItemList: ({ vault, filter, items }) => {
+    NoVaults: () => ({ title: "", filter: "", rows: [], message: noVaults, detail: [] }),
+    ItemList: (list) => {
+      const { vault, filter, items } = list
+
       const filterLine = View.Filter.$match(filter, {
         Applied: ({ text }) => (text === "" ? "" : `Filter: ${text}`),
         Editing: ({ text }) => `/${text}_`,
       })
 
       return View.Items.$match(items, {
-        Loading: () => ({ title: vault, filter: filterLine, rows: [], message: "Loading..." }),
-        Refused: () => ({ title: vault, filter: filterLine, rows: [], message: "Could not list this Vault's Items." }),
+        Loading: () => ({ title: vault, filter: filterLine, rows: [], message: "Loading...", detail: [] }),
+        Refused: () => ({
+          title: vault,
+          filter: filterLine,
+          rows: [],
+          message: "Could not list this Vault's Items.",
+          detail: [],
+        }),
         Loaded: ({ items: all }) => {
-          const rows = View.visible(all, filter).map(({ title, kind }) => ({ title, kind }))
+          const cursor = View.cursorRow(list)
+
+          const rows = View.visible(all, filter).map(({ title, kind }, index) => ({
+            title,
+            kind,
+            underCursor: index === cursor,
+          }))
 
           const message =
             rows.length > 0 ? "" : all.length === 0 ? "No Items in this Vault." : "No Items match the filter."
 
-          return { title: vault, filter: filterLine, rows, message }
+          return { title: vault, filter: filterLine, rows, message, detail: [] }
         },
       })
     },
+    ItemDetail: (detail) => ({
+      title: `${detail.list.vault} / ${detail.item.title}`,
+      filter: "",
+      rows: [],
+      message: "",
+      detail: detailLines(detail),
+    }),
     Tokens: ({ table }) => ({
       title: "Tokens",
       filter: "",
@@ -113,6 +171,7 @@ const pane = (view: View): Pick<Extract<Display, { _tag: "Open" }>, "title" | "f
         Refused: () => "Could not list the Tokens.",
         Loaded: ({ tokens }) => (tokens.length === 0 ? "No Tokens yet. Press i to issue one." : ""),
       }),
+      detail: [],
     }),
   })
 
@@ -120,17 +179,18 @@ const date = (time: string) => time.slice(0, "YYYY-MM-DD".length)
 
 const tokenRows = (view: View): ReadonlyArray<TokenRow> | undefined => {
   if (!View.$is("Tokens")(view)) return undefined
-  const { table, focus } = view
+  const { table } = view
+  const selected = View.selectedToken(view)
 
   if (!View.TokenTable.$is("Loaded")(table)) return []
 
-  return table.tokens.map((token, index) => ({
+  return table.tokens.map((token) => ({
     label: token.label,
     grants: token.grants.map(({ vault, access }) => `${vault} (${access})`).join(", "),
     state: token.state,
     created: date(token.createdAt),
     expires: token.expiresAt === null ? "never" : date(token.expiresAt),
-    underCursor: focus === "table" && index === table.row,
+    underCursor: token === selected,
   }))
 }
 
@@ -164,9 +224,13 @@ const hintsFor = (state: Open) => {
   if (top !== undefined) return modalShown(top).hints
   const { view } = state
 
-  if (View.$is("Tokens")(view)) return view.focus === "table" ? tableHints : tokensSidebarHints
+  if (View.$is("Tokens")(view)) return View.Focus.$is("Rows")(view.focus) ? tableHints : tokensSidebarHints
 
-  return View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter) ? filterHints : listHints
+  if (View.$is("ItemDetail")(view)) return View.Reveal.$is("Shown")(view.reveal) ? shownHints : detailHints
+
+  if (View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter)) return filterHints
+
+  return View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus) ? rowsHints : listHints
 }
 
 const open = (state: Open): Display => {

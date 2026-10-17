@@ -59,7 +59,7 @@ const select = (state: Open, cursor: number): Step => {
 // The Tokens view, and its one `tokens/list`; a refresh keeps the table's row.
 const listTokens = (state: Open): Step => {
   const { view } = state
-  const row = View.$is("Tokens")(view) && View.TokenTable.$is("Loaded")(view.table) ? view.table.row : 0
+  const row = View.$is("Tokens")(view) && View.Focus.$is("Rows")(view.focus) ? view.focus.row : 0
 
   return {
     state: { ...state, view: View.tokensLoading(row) },
@@ -125,6 +125,10 @@ const fromLocked = (state: Locked, event: Event): Step => {
     IssueRefused: () => stay(state),
     TokenCopied: () => stay(state),
     Closed: quit,
+    // A Reveal answered after a Lock: dropped, value and all.
+    Revealed: () => stay(state),
+    RevealRefused: () => stay(state),
+    RevealExpired: () => stay(state),
   })
 }
 
@@ -263,15 +267,20 @@ const copied = (state: Open, written: Written): Step => {
     : stay(withNotice(withTop(state, { ...top, copy: "ready" }), copyFailed[written]))
 }
 
-// Keys while the Token table has the focus: Up and Down move its row, Escape hands the focus back to the sidebar.
-const tableKey = (state: Open, view: TokensView, key: Key): Step => {
-  const { table } = view
-  const withView = (next: TokensView) => stay({ ...state, view: next })
+// Keys on the Token rows: Up and Down move the row cursor, `d` asks to revoke the Token under it, and Escape or
+// Tab (or Left) hand the focus back to the sidebar.
+const tableKey = (state: Open, view: TokensView, row: number, key: Key): Step => {
+  const withRow = (next: number) =>
+    stay({ ...state, view: { ...view, focus: View.Focus.Rows({ row: Math.max(0, next) }) } })
 
-  if (Key.is(key, "escape")) return withView({ ...view, focus: "sidebar" })
+  if (Key.is(key, "escape") || Key.is(key, "tab") || Key.is(key, "left") || Key.is(key, "h"))
+    return stay({ ...state, view: { ...view, focus: View.Focus.Sidebar() } })
+  const last = View.TokenTable.$is("Loaded")(view.table) ? view.table.tokens.length - 1 : 0
 
-  if (!View.TokenTable.$is("Loaded")(table)) return stay(state)
-  const token = table.tokens[table.row]
+  if (Key.is(key, "up") || Key.is(key, "k")) return withRow(Math.min(row, last) - 1)
+
+  if (Key.is(key, "down") || Key.is(key, "j")) return withRow(Math.min(last, row + 1))
+  const token = View.selectedToken(view)
 
   if (Key.is(key, "d") && token !== undefined)
     return stay({
@@ -283,15 +292,6 @@ const tableKey = (state: Open, view: TokensView, key: Key): Step => {
           effect: UiEffect.RevokeToken({ passphrase: state.passphrase, label: token.label }),
         }),
       ],
-    })
-
-  if (Key.is(key, "up") || Key.is(key, "k"))
-    return withView({ ...view, table: { ...table, row: Math.max(0, table.row - 1) } })
-
-  if (Key.is(key, "down") || Key.is(key, "j"))
-    return withView({
-      ...view,
-      table: { ...table, row: Math.max(0, Math.min(table.tokens.length - 1, table.row + 1)) },
     })
 
   return stay(state)
@@ -308,11 +308,25 @@ const openKey = (state: Open, key: Key): Step => {
   if (View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter))
     return filterKey(state, view, view.filter.text, key)
 
+  if (View.$is("ItemDetail")(view)) return detailKey(state, view, key)
+
   if (Key.is(key, "q")) return quit()
+
+  if (View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus)) {
+    const onRows = rowsKey(state, view, view.focus.row, key)
+
+    if (onRows !== undefined) return onRows
+  }
+
+  if (View.$is("ItemList")(view) && (Key.is(key, "tab") || Key.is(key, "right") || Key.is(key, "l")))
+    return toRows(state, view)
 
   if (View.$is("Tokens")(view) && Key.is(key, "i")) return openIssueForm(state, view)
 
-  if (View.$is("Tokens")(view) && view.focus === "table") return tableKey(state, view, key)
+  if (View.$is("Tokens")(view) && View.Focus.$is("Rows")(view.focus)) return tableKey(state, view, view.focus.row, key)
+
+  if (View.$is("Tokens")(view) && (Key.is(key, "tab") || Key.is(key, "right") || Key.is(key, "l")))
+    return stay({ ...state, view: { ...view, focus: View.Focus.Rows({ row: 0 }) } })
 
   if (Key.is(key, "up") || Key.is(key, "k")) return stay({ ...state, cursor: Math.max(0, state.cursor - 1) })
 
@@ -328,6 +342,103 @@ const openKey = (state: Open, key: Key): Step => {
     return stay({ ...state, view: { ...view, filter: View.Filter.Applied({ text: "" }) } })
 
   return stay(state)
+}
+
+// How long a Revealed value stays drawn unless a key hides it first.
+const revealMillis = 10_000
+
+// Keys on the Item rows that move the row cursor, open the Item under it, or go back to the sidebar; undefined for
+// every other key, which the Item list handles as on the sidebar.
+const rowsKey = (state: Open, view: ItemList, row: number, key: Key): Step | undefined => {
+  const withRow = (next: number) =>
+    stay({ ...state, view: { ...view, focus: View.Focus.Rows({ row: Math.max(0, next) }) } })
+
+  const last = View.shown(view).length - 1
+
+  if (Key.is(key, "up") || Key.is(key, "k")) return withRow(Math.min(row, last) - 1)
+
+  if (Key.is(key, "down") || Key.is(key, "j")) return withRow(Math.min(last, row + 1))
+
+  if (Key.is(key, "tab") || Key.is(key, "left") || Key.is(key, "h"))
+    return stay({ ...state, view: { ...view, focus: View.Focus.Sidebar() } })
+
+  if (!Key.is(key, "return")) return undefined
+  const item = View.selectedItem(view)
+
+  return item === undefined ? stay(state) : stay({ ...state, view: View.detail(view, item) })
+}
+
+// Tab (or Right) from the sidebar moves to the Item rows once some are shown.
+const toRows = (state: Open, view: ItemList): Step =>
+  View.shown(view).length === 0
+    ? stay(state)
+    : stay({ ...state, view: { ...view, focus: View.Focus.Rows({ row: 0 }) } })
+
+type ItemDetail = Extract<View, { readonly _tag: "ItemDetail" }>
+
+// Keys in the Item detail. While a value is drawn, any key only hides it; otherwise Up/Down move the Field cursor,
+// `r` Reveals the Field under it (one request), Escape returns to the Item list and `q` quits.
+const detailKey = (state: Open, view: ItemDetail, key: Key): Step => {
+  const withDetail = (next: ItemDetail) => stay({ ...state, view: next })
+
+  if (View.Reveal.$is("Shown")(view.reveal)) return withDetail({ ...view, reveal: View.Reveal.Hidden() })
+
+  if (Key.is(key, "escape")) return stay({ ...state, view: View.ItemList(view.list) })
+
+  if (Key.is(key, "q")) return quit()
+
+  if (View.Reveal.$is("Asking")(view.reveal)) return stay(state)
+
+  if (Key.is(key, "up") || Key.is(key, "k")) return withDetail({ ...view, field: Math.max(0, view.field - 1) })
+
+  if (Key.is(key, "down") || Key.is(key, "j"))
+    return withDetail({ ...view, field: Math.min(view.item.fields.length - 1, view.field + 1) })
+  const field = View.selectedField(view)
+
+  if (!Key.is(key, "r") || field === undefined) return stay(state)
+  const generation = view.reveals + 1
+  const reference = View.reference(view.list.vault, view.item, field.label)
+
+  return {
+    state: { ...state, view: { ...view, reveal: View.Reveal.Asking({ generation, reference }), reveals: generation } },
+    effects: [UiEffect.Reveal({ passphrase: state.passphrase, reference, generation })],
+  }
+}
+
+// `update` applied to the Item detail while it waits for the Reveal numbered `generation` of `reference`; an answer
+// for any other Reveal, or after the Owner left the detail, is dropped with its value.
+const revealAnswer = (
+  state: Open,
+  answer: { readonly reference: string; readonly generation: number },
+  update: (view: ItemDetail) => Step,
+): Step => {
+  const { view } = state
+
+  return View.$is("ItemDetail")(view) &&
+    View.Reveal.$is("Asking")(view.reveal) &&
+    view.reveal.generation === answer.generation &&
+    view.reveal.reference === answer.reference
+    ? update(view)
+    : stay(state)
+}
+
+// The Revealed value of the Reveal numbered `generation`, drawn until its hide tick.
+const shownValue = (
+  state: Open,
+  view: ItemDetail,
+  { reference, generation, value }: Extract<Event, { readonly _tag: "Revealed" }>,
+): Step => ({
+  state: { ...state, view: { ...view, reveal: View.Reveal.Shown({ generation, reference, value }) } },
+  effects: [UiEffect.After({ millis: revealMillis, event: Event.RevealExpired({ generation }) })],
+})
+
+// The hide tick of the value drawn now; a tick of an earlier Reveal changes nothing.
+const expired = (state: Open, generation: number): Step => {
+  const { view } = state
+
+  return View.$is("ItemDetail")(view) && View.Reveal.$is("Shown")(view.reveal) && view.reveal.generation === generation
+    ? stay({ ...state, view: { ...view, reveal: View.Reveal.Hidden() } })
+    : stay(state)
 }
 
 // A paste into the filter being typed or a text row of the issue form; ignored anywhere else.
@@ -358,13 +469,10 @@ const answerFor = (state: Open, vault: string, update: (view: ItemList) => Open)
 }
 
 // `update` applied to the Tokens view while its table is being fetched; an answer after the Owner moved on is dropped.
-// `row` is the row the table returns to.
-const tokensAnswer = (state: Open, update: (view: TokensView, row: number) => Open): Step => {
+const tokensAnswer = (state: Open, update: (view: TokensView) => Open): Step => {
   const { view } = state
 
-  return View.$is("Tokens")(view) && View.TokenTable.$is("Loading")(view.table)
-    ? stay(update(view, view.table.row))
-    : stay(state)
+  return View.$is("Tokens")(view) && View.TokenTable.$is("Loading")(view.table) ? stay(update(view)) : stay(state)
 }
 
 const fromOpen = (state: Open, event: Event): Step =>
@@ -383,16 +491,7 @@ const fromOpen = (state: Open, event: Event): Step =>
         modals: [...state.modals, View.Modal.Notice({ problem })],
       })),
     TokensLoaded: ({ list }) =>
-      tokensAnswer(state, (view, row) => ({
-        ...state,
-        view: {
-          ...view,
-          table: View.TokenTable.Loaded({
-            tokens: list.tokens,
-            row: Math.max(0, Math.min(list.tokens.length - 1, row)),
-          }),
-        },
-      })),
+      tokensAnswer(state, (view) => ({ ...state, view: { ...view, table: View.TokenTable.Loaded(list) } })),
     TokensRefused: ({ problem }) =>
       tokensAnswer(state, (view) => ({
         ...state,
@@ -410,6 +509,16 @@ const fromOpen = (state: Open, event: Event): Step =>
     UnlockRefused: () => stay(state),
     WaitTick: () => stay(state),
     Closed: quit,
+    Revealed: (answer) => revealAnswer(state, answer, (view) => shownValue(state, view, answer)),
+    RevealRefused: (answer) =>
+      revealAnswer(state, answer, (view) =>
+        stay({
+          ...state,
+          view: { ...view, reveal: View.Reveal.Hidden() },
+          modals: [...state.modals, View.Modal.Notice({ problem: answer.problem })],
+        }),
+      ),
+    RevealExpired: ({ generation }) => expired(state, generation),
   })
 
 export const reduce = (state: State, event: Event): Step =>

@@ -78,11 +78,13 @@ const mount = (renderer: CliRenderer): Screen => {
   const titles = column(renderer, { flexGrow: 1 })
   const kinds = column(renderer, { width: kindWidth })
   const message = new TextRenderable(renderer, { content: "", wrapMode: "word" })
+  const detail = new TextRenderable(renderer, { content: "", wrapMode: "char" })
   rows.add(titles)
   rows.add(kinds)
   main.add(filterLine)
   main.add(message)
   main.add(rows)
+  main.add(detail)
   const tokenTable = mountTokenTable(renderer)
   main.add(tokenTable.box)
   open.add(sidebar)
@@ -127,14 +129,16 @@ const mount = (renderer: CliRenderer): Screen => {
           .join("\n")
         vaultCounts.content = shown.vaults.map(({ items }) => String(items)).join("\n")
         tokenTable.draw(shown.tokens)
-        rows.visible = shown.tokens === undefined
         main.title = shown.title
         filterLine.content = shown.filter
         filterLine.visible = shown.filter !== ""
         message.content = shown.message
         message.visible = shown.message !== ""
-        titles.content = shown.rows.map(({ title }) => title).join("\n")
+        titles.content = shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`).join("\n")
         kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
+        rows.visible = shown.detail.length === 0 && shown.tokens === undefined
+        detail.content = shown.detail.join("\n")
+        detail.visible = shown.detail.length > 0
         modal.visible = shown.modal !== undefined
         modalText.content = shown.modal ?? ""
         modal.title = shown.modalTitle

@@ -22,9 +22,11 @@ export type UiEffect = Data.TaggedEnum<{
   After: { readonly millis: number; readonly event: Event }
   // Destroy the renderer and end the UI.
   Quit: {}
+  // `admin/items/reveal` of one Field; `generation` comes back with the answer.
+  Reveal: { readonly passphrase: Redacted.Redacted<string>; readonly reference: string; readonly generation: number }
 }>
 
-const { ListVaults, ListItems, After, Quit, $is, $match } = Data.taggedEnum<UiEffect>()
+const { ListVaults, ListItems, After, Quit, Reveal, $is, $match } = Data.taggedEnum<UiEffect>()
 
 const { ListTokens, RevokeToken, IssueToken, CopyToken } = Data.taggedEnum<UiEffect>()
 
@@ -37,6 +39,7 @@ export const UiEffect = {
   CopyToken,
   After,
   Quit,
+  Reveal,
   $is,
   $match,
 } as const

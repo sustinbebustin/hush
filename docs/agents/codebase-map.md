@@ -40,16 +40,16 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 ```
 src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off
 src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack); `entries`, the sidebar rows below the Vaults
-src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter` and `Items`, `Tokens` with its `TokenTable`), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`), and the title filter (`Match.matches`)
+src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`), the title filter (`Match.matches`) and Field References
 src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, clipboard writes, wait ticks, `Closed` (renderer destroyed by a signal)
-src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `ListTokens`, `RevokeToken`, `IssueToken`, `CopyToken`, `After` (timer), `Quit`; each request carries its Passphrase
+src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `Reveal`, `ListTokens`, `RevokeToken`, `IssueToken`, `CopyToken`, `After` (timer), `Quit`; each request carries its Passphrase
 src/ui/IssueForm.ts         the Token issue form as plain state: Label, one Grant choice per Vault, TTL, replacement; `submit` -> the `tokens/issue` fields or a `Problem`
 src/ui/Clipboard.ts         the host clipboard (OpenTUI's native backends): `available`, `write`; `none` where there is no backend, `host` for `launch`
 src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`
 src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
 src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
-src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but an issued Token while its modal is up
+src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but a Revealed value or an issued Token while the state holds it
 src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
 src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer), `CopyToken` through `Clipboard`, and `After`; every outcome is one `Event`
 ```
