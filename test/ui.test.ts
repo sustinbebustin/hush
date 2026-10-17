@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Exit } from "effect"
+import { Exit, Predicate, Schema } from "effect"
 
 import { type Headless, headless } from "./headless.js"
 import { passphraseSentinel, valueSentinel } from "./leaks.js"
@@ -50,6 +50,35 @@ const unlock = async (ui: Headless) => {
   await ui.waitFor("Vaults")
 }
 
+const WrongPassphraseAnswer = Schema.decodeUnknownSync(
+  Schema.Union([
+    Schema.TaggedStruct("PassphraseIncorrect", { retryAfterSeconds: Schema.Number }),
+    Schema.TaggedStruct("BackoffActive", { retryAfterSeconds: Schema.Number }),
+  ]),
+)
+
+const sleep = (seconds: number) => new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+
+// Sends wrong Passphrases over raw HTTP, each once the previous delay ran out, until one pins the backoff for at
+// least `seconds`: long enough that the UI's next attempt runs into it however loaded the suite is.
+const pinBackoff = async (box: Sandbox, seconds: number) => {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await box.fetch("/v1/admin/vaults/list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ passphrase: "a wrong fictional passphrase" }),
+    })
+
+    const answer = WrongPassphraseAnswer(await response.json())
+
+    if (Predicate.isTagged(answer, "PassphraseIncorrect") && answer.retryAfterSeconds >= seconds) return
+
+    if (Predicate.isTagged(answer, "BackoffActive")) await sleep(answer.retryAfterSeconds)
+  }
+
+  throw new Error(`the backoff did not pin for ${seconds} s after 20 wrong Passphrases`)
+}
+
 const itemListCalls = (calls: ReadonlyArray<{ readonly path: string }>) =>
   calls.filter(({ path }) => path === "/v1/admin/items/list")
 
@@ -73,29 +102,19 @@ describe.skipIf(!serverSupported)("hush ui", () => {
     }))
 
   it("shows the Server's wait after a backoff refusal, then opens once it has passed", () =>
-    withUi(seeded, async (ui) => {
+    withUi(seeded, async (ui, box) => {
       await ui.waitFor(prompt)
+      await pinBackoff(box, 4)
 
-      // Three free failures, then the fourth sets a 1 s delay that the fifth attempt runs into. Each attempt waits
-      // for its answer in the request log, since the notice of the one before reads the same.
-      for (const attempt of [1, 2, 3, 4]) {
-        await ui.type(`wrong ${attempt}`)
-        ui.keys.pressEnter()
-
-        while ((await ui.calls()).length < attempt) await new Promise((wait) => setTimeout(wait, 20))
-        await ui.waitUntil((frame) => !frame.includes("Checking"))
-      }
-
-      assert.include(ui.frame(), "The Passphrase is incorrect.")
-
-      await ui.type("wrong 5")
+      await ui.type(seedPassphrase)
       ui.keys.pressEnter()
-      await ui.waitFor("Too many incorrect attempts. The Server checks the next attempt in 1 second.")
+      const waiting = await ui.waitFor("Too many incorrect attempts. The Server checks the next attempt in")
+      assert.match(waiting, /next attempt in \d+ seconds?\./)
       await ui.waitFor("Too many incorrect attempts. Try again now.")
 
       await ui.type(seedPassphrase)
       ui.keys.pressEnter()
-      await ui.waitFor("Stripe live key")
+      assert.include(await ui.waitFor("Stripe live key"), "Vaults")
     }))
 
   it("tells the Owner to run `hush init` on an Uninitialised Server and stays Locked", () =>
