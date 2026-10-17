@@ -18,10 +18,32 @@ export type Event = Data.TaggedEnum<{
   WaitTick: { readonly attempt: number }
   // The renderer was destroyed from outside the reducer: an exit signal such as SIGHUP or SIGTERM.
   Closed: {}
+  // `admin/items/reveal` answered the Reveal numbered `generation` of `reference`.
+  Revealed: {
+    readonly reference: string
+    readonly generation: number
+    readonly value: Redacted.Redacted<string>
+  }
+  RevealRefused: { readonly reference: string; readonly generation: number; readonly problem: Problem }
+  // The Revealed value numbered `generation` has been drawn long enough.
+  RevealExpired: { readonly generation: number }
 }>
 
-const { Key, Paste, Unlocked, UnlockRefused, ItemsLoaded, ItemsRefused, WaitTick, Closed, $is, $match } =
-  Data.taggedEnum<Event>()
+const {
+  Key,
+  Paste,
+  Unlocked,
+  UnlockRefused,
+  ItemsLoaded,
+  ItemsRefused,
+  WaitTick,
+  Closed,
+  Revealed,
+  RevealRefused,
+  RevealExpired,
+  $is,
+  $match,
+} = Data.taggedEnum<Event>()
 
 export const Event = {
   Key,
@@ -32,6 +54,9 @@ export const Event = {
   ItemsRefused,
   WaitTick,
   Closed,
+  Revealed,
+  RevealRefused,
+  RevealExpired,
   $is,
   $match,
 } as const

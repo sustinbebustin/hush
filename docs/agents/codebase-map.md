@@ -40,16 +40,16 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 ```
 src/ui/Ui.ts                `run({ renderer, target })`: input -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `launch` (the command): TTY check (`UiNeedsTerminal`), alternate screen, `exitOnCtrlC` off
 src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack)
-src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter` and `Items`), the `Modal`s, and the title filter (`Match.matches`)
+src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`), the `Modal`s, the title filter (`Match.matches`) and Field References
 src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, wait ticks, `Closed` (renderer destroyed by a signal)
-src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `After` (timer), `Quit`; each request carries its Passphrase
+src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `Reveal`, `After` (timer), `Quit`; each request carries its Passphrase
 src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`
 src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
 src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
-src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret
+src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but a Revealed value while the state holds it
 src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
-src/ui/Interpreter.ts       runs `ListVaults` and `ListItems` through `Client` (one request, no retry) and `After`; every outcome is one `Event`
+src/ui/Interpreter.ts       runs `ListVaults`, `ListItems` and `Reveal` through `Client` (one request, no retry) and `After`; every outcome is one `Event`
 ```
 
 ## Shared (`src/shared/`)
