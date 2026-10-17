@@ -9,6 +9,7 @@ import { onPty, sandbox, type Sandbox } from "./sandbox.js"
 
 const passphrase = passphraseSentinel.text
 const value = valueSentinel.text
+
 // A plain Field's value: sealed like any value, so it must not leak either.
 const plainValue = "fictional-plain-username-8Lm"
 
@@ -147,12 +148,12 @@ describe("hush item create", () => {
           [{ title: created.title, kind: created.kind }],
         )
 
-        const expected: Record<string, string> = { ...created.plain, password: value }
+        const expected = new Map([...Object.entries(created.plain), ["password", value]])
 
         for (const [index, label] of created.fields.entries()) {
           const resolved = await read(box, refs[index] ?? "")
           assert.strictEqual(resolved.code, 0, resolved.stderr)
-          assert.strictEqual(resolved.stdout, expected[label])
+          assert.strictEqual(resolved.stdout, expected.get(label))
         }
       }))
 
@@ -173,8 +174,14 @@ describe("hush item create", () => {
     }))
 })
 
+// What an `item.create` row's detail names: the title and the labels, never a value.
+interface CreateDetail {
+  readonly title: string
+  readonly fields: ReadonlyArray<string>
+}
+
 // A Passphrase command's refusal as the audit row records it.
-const errorRow = (vault: string, detail: object, error: string) => ({
+const errorRow = (vault: string, detail: CreateDetail, error: string) => ({
   actor: "passphrase",
   action: "item.create",
   vaults: JSON.stringify([vault]),
@@ -265,16 +272,10 @@ describe("a refused hush item create creates nothing", () => {
   it("refuses a plain flag outside the Kind with UnknownField before any prompt or request", () =>
     withSandbox(async (box, seen) => {
       await seeded(box, seen)
-      const result = await itemCreate(box, [
-        "api-credential",
-        "--vault",
-        "Personal",
-        "--title",
-        "S",
-        "--stdin",
-        "--host",
-        "h",
-      ])
+      const args = ["api-credential", "--vault", "Personal", "--title", "S", "--stdin", "--host", "h"]
+
+      const result = await itemCreate(box, args)
+
       assert.strictEqual(result.code, 1)
       assert.strictEqual(
         result.stderr,
@@ -315,7 +316,7 @@ describe("a refused hush item create creates nothing", () => {
     }))
 })
 
-const post = (box: Sandbox, body: object, headers: Record<string, string> = {}) =>
+const post = (box: Sandbox, body: Schema.Json, headers: Record<string, string> = {}) =>
   box.fetch("/v1/admin/items/create", {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
