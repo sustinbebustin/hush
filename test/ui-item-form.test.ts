@@ -95,7 +95,14 @@ describe("Item form concealed buffer", () => {
   it("a create holds the value only until submit, never draws it, and sends it in one write", () =>
     fc.assert(
       fc.property(withEntry, ([value, events]) => {
-        const open = [...typing("c"), ...keys(Key.named("down")), ...typing("Key"), ...keys(Key.named("down"))]
+        const open = [
+          ...keys(Key.named("tab")),
+          ...typing("c"),
+          ...keys(Key.named("down")),
+          ...typing("Key"),
+          ...keys(Key.named("down")),
+        ]
+
         const filled = run(opened(), [...open, ...events])
         assert.isTrue(holds(filled.state, value))
 
@@ -130,6 +137,7 @@ describe("Item form concealed buffer", () => {
 
   it("drops a clipboard answer that arrives after a Lock", () => {
     const pasting = run(opened(), [
+      ...keys(Key.named("tab")),
       ...typing("c"),
       ...keys(Key.named("down"), Key.named("down"), Key.named("v", { ctrl: true })),
     ])

@@ -22,6 +22,12 @@ export type UiEffect = Data.TaggedEnum<{
   IssueToken: { readonly passphrase: Redacted.Redacted<string>; readonly fields: IssueFields }
   // The issued Token onto the host clipboard.
   CopyToken: { readonly token: Redacted.Redacted<string> }
+  // `admin/vaults/create`, once; the name is checked as `hush vault create` checks it, before anything is sent.
+  CreateVault: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string }
+  // `admin/vaults/delete`, once.
+  DeleteVault: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string }
+  // `admin/vaults/list` for the sidebar, after a Vault was created or deleted.
+  RefreshVaults: { readonly passphrase: Redacted.Redacted<string> }
   // `event` after `millis`.
   After: { readonly millis: number; readonly event: Event }
   // Destroy the renderer and end the UI.
@@ -34,6 +40,17 @@ export type UiEffect = Data.TaggedEnum<{
   SaveItem: { readonly passphrase: Redacted.Redacted<string>; readonly save: Save }
   // The host clipboard's text, for the concealed value.
   ReadClipboard: {}
+  // `admin/items/rename` of one Item.
+  RenameItem: {
+    readonly passphrase: Redacted.Redacted<string>
+    readonly vault: string
+    readonly item: string
+    readonly newTitle: string
+  }
+  // `admin/items/delete` of one Item.
+  DeleteItem: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string; readonly item: string }
+  // `admin/items/release` of one Retired title.
+  ReleaseTitle: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string; readonly title: string }
 }>
 
 const { ListVaults, ListItems, ListAudit, After, Quit, Suspend, Reveal, $is, $match } = Data.taggedEnum<UiEffect>()
@@ -41,6 +58,10 @@ const { ListVaults, ListItems, ListAudit, After, Quit, Suspend, Reveal, $is, $ma
 const { ListTokens, RevokeToken, IssueToken, CopyToken } = Data.taggedEnum<UiEffect>()
 
 const { SaveItem, ReadClipboard } = Data.taggedEnum<UiEffect>()
+
+const { RenameItem, DeleteItem, ReleaseTitle } = Data.taggedEnum<UiEffect>()
+
+const { CreateVault, DeleteVault, RefreshVaults } = Data.taggedEnum<UiEffect>()
 
 export const UiEffect = {
   ListVaults,
@@ -50,12 +71,18 @@ export const UiEffect = {
   RevokeToken,
   IssueToken,
   CopyToken,
+  CreateVault,
+  DeleteVault,
+  RefreshVaults,
   After,
   Quit,
   Suspend,
   Reveal,
   SaveItem,
   ReadClipboard,
+  RenameItem,
+  DeleteItem,
+  ReleaseTitle,
   $is,
   $match,
 } as const

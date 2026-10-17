@@ -81,11 +81,17 @@ const cliMessage = async (box: Sandbox, args: ReadonlyArray<string>, value: stri
   return refused.stderr.replace(/^hush: /, "").trim()
 }
 
+// From the sidebar, Tab to the Item rows (where `c` creates an Item; on the sidebar it creates a Vault), then `c`.
+const openCreate = async (ui: Headless, vault = "Personal") => {
+  ui.keys.pressTab()
+  await ui.type("c")
+  await ui.waitFor(`New Item in ${vault}`)
+}
+
 // Opens the create form, chooses the Kind `steps` Space presses from api-credential, and types the title and the
 // concealed value.
 const fill = async (ui: Headless, { steps = 0, title }: { readonly steps?: number; readonly title: string }) => {
-  await ui.type("c")
-  await ui.waitFor("New Item in Personal")
+  await openCreate(ui)
   await ui.type(" ".repeat(steps))
   ui.keys.pressArrow("down")
   await ui.type(title)
@@ -105,8 +111,7 @@ const noSecretIn = (frames: ReadonlyArray<string>, ...secrets: ReadonlyArray<str
 describe.skipIf(!serverSupported)("hush ui create", () => {
   it("creates an api-credential Item from a typed hidden value with one admin/items/create, then lists it", () =>
     withUi(async (ui, box) => {
-      await ui.type("c")
-      await ui.waitFor("New Item in Personal")
+      await openCreate(ui)
       ui.keys.pressArrow("down")
       await ui.type("Stripe live key")
       ui.keys.pressArrow("down")
@@ -123,8 +128,7 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
   it("creates a login Item with its password read from the host clipboard by the paste key, never drawn", () =>
     withUi(async (ui, box, clipboard) => {
       clipboard.put(pasted)
-      await ui.type("c")
-      await ui.waitFor("New Item in Personal")
+      await openCreate(ui)
       await ui.type(" ")
       await ui.waitUntil((frame) => /> kind +login/.test(frame))
       ui.keys.pressArrow("down")
@@ -150,8 +154,7 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
 
   it("creates a database Item with every plain Field, its password from a bracketed paste, never drawn", () =>
     withUi(async (ui, box) => {
-      await ui.type("c")
-      await ui.waitFor("New Item in Personal")
+      await openCreate(ui)
       await ui.type("  ")
       await ui.waitUntil((frame) => /> kind +database/.test(frame))
       ui.keys.pressArrow("down")
@@ -177,6 +180,46 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
       for (const [label, text] of Object.entries(plain))
         assert.strictEqual(await stored(box, `hush://Personal/Orders DB/${label}`), text)
       noSecretIn(ui.frames(), ...multiline.split("\n"))
+    }))
+
+  it("creates the first Item of an empty Vault", () =>
+    withUi(async (ui, box) => {
+      const created = await box.run(["vault", "create", "Work", "--passphrase-stdin"], { input: `${seedPassphrase}\n` })
+      assert.strictEqual(created.code, 0, created.stderr)
+      // The sidebar was listed before Work existed: it appears once the UI lists the Vaults again, on the next Open.
+      await ui.type("q")
+      await ui.ended
+
+      const again = await headless(box)
+
+      try {
+        await again.waitFor("hush Passphrase:")
+        await again.type(seedPassphrase)
+        again.keys.pressEnter()
+        await again.waitFor("Work")
+        again.keys.pressArrow("down")
+        again.keys.pressEnter()
+        await again.waitFor("No Items in this Vault.")
+        await openCreate(again, "Work")
+        again.keys.pressArrow("down")
+        await again.type("First key")
+        again.keys.pressArrow("down")
+        await again.type(secret)
+        again.keys.pressEnter()
+
+        await again.waitUntil(listed("First key"))
+
+        // The seed's Token has no Grant on Work, so the value is read back under the Passphrase.
+        const revealed = await box.run(["item", "reveal", "hush://Work/First key/credential", "--passphrase-stdin"], {
+          input: `${seedPassphrase}\n`,
+          secretStdout: true,
+        })
+
+        assert.strictEqual(revealed.code, 0, revealed.stderr)
+        assert.strictEqual(revealed.stdout, secret)
+      } finally {
+        await again.close()
+      }
     }))
 
   it("offers no paste key on a host without a clipboard, and a press says so without reading anything", () =>

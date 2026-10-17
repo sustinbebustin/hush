@@ -5,6 +5,7 @@ import type {
   AuditPage,
   ItemCreateReceipt,
   ItemEditReceipt,
+  ItemRenamed,
   TokenIssueReceipt,
   TokenList,
   VaultItems,
@@ -41,6 +42,12 @@ export type Event = Data.TaggedEnum<{
   TokenIssued: { readonly receipt: TokenIssueReceipt; readonly copyable: boolean }
   IssueRefused: { readonly problem: Problem }
   TokenCopied: { readonly written: Written }
+  // `vaults/create` or `vaults/delete` succeeded: the sidebar is stale.
+  VaultChanged: {}
+  // A Vault request, or the refresh after it, was refused.
+  VaultRefused: { readonly problem: Problem }
+  // The sidebar's Vaults, freshly listed.
+  VaultsListed: { readonly vaults: VaultList["vaults"] }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
   // The idle clock's tick, every second for the UI's whole run: `now` is the wall clock in Unix milliseconds, so time
@@ -68,6 +75,12 @@ export type Event = Data.TaggedEnum<{
   ItemSaveRefused: { readonly problem: Problem }
   // The host clipboard's answer to the paste key.
   ClipboardRead: { readonly pasted: Pasted }
+  // `admin/items/rename` answered, with the old and new Reference of every Field.
+  Renamed: { readonly receipt: ItemRenamed }
+  // `admin/items/delete` or `admin/items/release` changed `vault`'s Items or Retired titles.
+  ItemsChanged: { readonly vault: string }
+  // A rename, delete or release refused.
+  ChangeRefused: { readonly problem: Problem }
 }>
 
 const {
@@ -95,7 +108,14 @@ const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused, TokenIssued, I
 
 const { ItemCreated, ItemEdited, ItemSaveRefused, ClipboardRead } = Data.taggedEnum<Event>()
 
+const { Renamed, ItemsChanged, ChangeRefused } = Data.taggedEnum<Event>()
+
+const { VaultChanged, VaultRefused, VaultsListed } = Data.taggedEnum<Event>()
+
 export const Event = {
+  VaultChanged,
+  VaultRefused,
+  VaultsListed,
   Key,
   Paste,
   Unlocked,
@@ -122,6 +142,9 @@ export const Event = {
   ItemEdited,
   ItemSaveRefused,
   ClipboardRead,
+  Renamed,
+  ItemsChanged,
+  ChangeRefused,
   $is,
   $match,
 } as const

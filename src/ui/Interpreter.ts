@@ -76,7 +76,7 @@ const auditQuery = (ask: Ask): Effect.Effect<AuditQuery, AuditFlagsInvalid | Inv
 const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
   unverifiedOnTransport(write).pipe(Effect.catchTag("UnexpectedResponse", () => Effect.fail(new ChangeUnverified())))
 
-const name = (what: string, input: string) => Effect.fromResult(parseName(what, input))
+const parsedName = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 
 // The Item form's one write, after the checks `hush item create` and `hush item edit` make before sending, in
 // their order, each failing with the CLI's own error.
@@ -85,7 +85,7 @@ const saveItem = (target: Target, passphrase: Redacted.Redacted<string>, save: S
     Create: ({ vault, title, kind, value, plain }) =>
       Effect.gen(function* () {
         const primary = Kind.primary(kind).label
-        const names = { vault: yield* name("vault", vault), title: yield* name("title", title) }
+        const names = { vault: yield* parsedName("vault", vault), title: yield* parsedName("title", title) }
 
         const fields = yield* Effect.forEach(plain, ({ label, text }) =>
           Create.plainField(kind, { label, value: text }),
@@ -107,8 +107,8 @@ const saveItem = (target: Target, passphrase: Redacted.Redacted<string>, save: S
       }),
     Edit: ({ vault, item, label, change }) =>
       Effect.gen(function* () {
-        const field = yield* name("field", label)
-        const names = { vault: yield* name("vault", vault), item: yield* name("title", item.title) }
+        const field = yield* parsedName("field", label)
+        const names = { vault: yield* parsedName("vault", vault), item: yield* parsedName("title", item.title) }
 
         const wire: ItemChange = ItemForm.Change.$is("Set")(change)
           ? {
@@ -178,6 +178,30 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         Effect.map((receipt) => Event.TokenIssued({ receipt, copyable: clipboard.available })),
         Effect.catch((error) => Effect.succeed(Event.IssueRefused({ problem: refused(error) }))),
       ),
+    CreateVault: ({ passphrase, vault }) =>
+      Effect.fromResult(parseName("vault", vault)).pipe(
+        Effect.flatMap((name) =>
+          unverifiedOnTransport(
+            Client.request(Api, target, (client) =>
+              client.admin.vaultsCreate({ payload: { passphrase, vault: name } }),
+            ),
+          ),
+        ),
+        Effect.map(() => Event.VaultChanged()),
+        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    DeleteVault: ({ passphrase, vault }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.vaultsDelete({ payload: { passphrase, vault } })),
+      ).pipe(
+        Effect.map(() => Event.VaultChanged()),
+        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    RefreshVaults: ({ passphrase }) =>
+      Client.request(Api, target, (client) => client.admin.vaultsList({ payload: { passphrase } })).pipe(
+        Effect.map(({ vaults }) => Event.VaultsListed({ vaults })),
+        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: renderedOf(target)(error) }))),
+      ),
     CopyToken: ({ token }) => Effect.map(clipboard.write(token), (written) => Event.TokenCopied({ written })),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),
     // A refused Reveal is a notice in an Open UI, not the Locked prompt, so even a wrong Passphrase (changed
@@ -195,6 +219,30 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         Effect.catch((error) => Effect.succeed(Event.ItemSaveRefused({ problem: renderedOf(target)(error) }))),
       ),
     ReadClipboard: () => Effect.map(clipboard.read, (pasted) => Event.ClipboardRead({ pasted })),
+    // Writes, so a lost answer reads as unverified (invariant 3); refusals read as the CLI's `item` commands say.
+    RenameItem: ({ passphrase, vault, item, newTitle }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) =>
+          client.admin.itemsRename({ payload: { passphrase, vault, item, newTitle } }),
+        ),
+      ).pipe(
+        Effect.map((receipt) => Event.Renamed({ receipt })),
+        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    DeleteItem: ({ passphrase, vault, item }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.itemsDelete({ payload: { passphrase, vault, item } })),
+      ).pipe(
+        Effect.map(() => Event.ItemsChanged({ vault })),
+        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    ReleaseTitle: ({ passphrase, vault, title }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.itemsRelease({ payload: { passphrase, vault, title } })),
+      ).pipe(
+        Effect.map(() => Event.ItemsChanged({ vault })),
+        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: renderedOf(target)(error) }))),
+      ),
   })
 }
 
