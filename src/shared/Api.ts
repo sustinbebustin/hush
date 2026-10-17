@@ -242,6 +242,7 @@ export const AuditAction = Schema.Literals([
   "item.rename",
   "item.delete",
   "item.release",
+  "item.reveal",
   "token.issue",
   "token.list",
   "token.revoke",
@@ -430,6 +431,16 @@ export const ItemReleased = Schema.Struct({
 
 export type ItemReleased = typeof ItemReleased.Type
 
+// `reference` is parsed by the handler, so a bad one is `InvalidReference`, not an empty 400.
+export const ItemRevealRequest = Schema.Struct({ passphrase: Passphrase, reference: Schema.String })
+
+export type ItemRevealRequest = typeof ItemRevealRequest.Type
+
+// The one Field's value, the only Passphrase receipt that carries one.
+export const ItemRevealed = Schema.Struct({ value: Value })
+
+export type ItemRevealed = typeof ItemRevealed.Type
+
 // Every error a Passphrase endpoint shares: the guard and gate, a wrong Passphrase, the backoff, the Audit Log.
 const passphraseEndpointErrors = [
   ...guardErrors,
@@ -535,6 +546,19 @@ export class Admin extends HttpApiGroup.make("admin")
       payload: ItemReleaseRequest,
       success: ItemReleased,
       error: [...passphraseEndpointErrors, InvalidName, VaultNotFound, TitleNotRetired],
+    }),
+    // Reveal: one Field opened under the Passphrase, never with a Token.
+    HttpApiEndpoint.post("itemsReveal", "/v1/admin/items/reveal", {
+      payload: ItemRevealRequest,
+      success: ItemRevealed,
+      error: [
+        ...passphraseEndpointErrors,
+        InvalidReference,
+        VaultNotFound,
+        ItemNotFound,
+        FieldNotFound,
+        IntegrityCheckFailed,
+      ],
     }),
     // The Passphrase only: no Token of any Access reads the log.
     HttpApiEndpoint.post("audit", "/v1/admin/audit", {

@@ -11,6 +11,8 @@ import type {
   ItemRenamed,
   ItemRenameRequest,
   ItemRequest,
+  ItemRevealed,
+  ItemRevealRequest,
   VaultItems,
   VaultRequest,
 } from "../shared/Api.js"
@@ -18,6 +20,7 @@ import {
   FieldNotFound,
   FieldRequired,
   IntegrityCheckFailed,
+  InvalidReference,
   InvalidValue,
   ItemExists,
   ItemNotFound,
@@ -36,8 +39,8 @@ import { Items } from "./Items.js"
 import { Keys } from "./Keys.js"
 import { Passphrase } from "./Passphrase.js"
 
-// Items under the Passphrase: the Owner's only way to change an existing Item. Each is one Passphrase check and
-// one transaction with its audit row; the Kind never changes.
+// Items under the Passphrase: the Owner's only way to change an existing Item, and to Reveal one Field without a
+// Token. Each is one Passphrase check and one transaction with its audit row; the Kind never changes.
 
 const { rows } = Database
 
@@ -71,10 +74,9 @@ interface ItemOfKind {
 // The first name an audit row records for a requested string, if it is a Name.
 const nameOf = (input: string): Name | undefined => Audit.named(input)[0]
 
-const findVault = (input: string) =>
+const vaultNamed = (vault: Name) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
-    const vault = yield* Effect.fromResult(parseName("vault", input))
 
     const [found] = yield* rows(
       VaultRow,
@@ -84,12 +86,12 @@ const findVault = (input: string) =>
     return found ?? (yield* new VaultNotFound({ vault }))
   })
 
-// The Vault and the Item a request names, by name identity.
-const locate = (vaultInput: string, itemInput: string) =>
+const findVault = (input: string) => Effect.flatMap(Effect.fromResult(parseName("vault", input)), vaultNamed)
+
+// The Item titled `title` in `vault`, by name identity.
+const itemIn = (vault: VaultFound, title: Name) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
-    const vault = yield* findVault(vaultInput)
-    const title = yield* Effect.fromResult(parseName("title", itemInput))
 
     const [item] = yield* rows(
       ItemRow,
@@ -99,6 +101,14 @@ const locate = (vaultInput: string, itemInput: string) =>
     if (item === undefined) return yield* new ItemNotFound({ vault: vault.name, item: title })
 
     return { vault, item }
+  })
+
+// The Vault and the Item a request names: the Vault is looked up before the title is parsed.
+const locate = (vaultInput: string, itemInput: string) =>
+  Effect.gen(function* () {
+    const vault = yield* findVault(vaultInput)
+
+    return yield* itemIn(vault, yield* Effect.fromResult(parseName("title", itemInput)))
   })
 
 // The Item with its Kind. A Kind outside the Kinds can only come from a modified file.
@@ -155,6 +165,13 @@ const specFor = (kind: Kind, label: string): Result.Result<FieldSpec, UnknownFie
     : Result.succeed(spec)
 }
 
+// K_v unwrapped with MK; a wrap that does not open under the right MK was modified.
+const vaultKey = (master: Keys.MasterKey, vault: VaultFound) =>
+  Keys.vaultKeyFromMaster(master, vault.id, {
+    nonce: new Uint8Array(vault.key_nonce),
+    wrapped: new Uint8Array(vault.key_wrapped),
+  }).pipe(Effect.mapError(() => new IntegrityCheckFailed({ damaged: { what: "vault-key", vault: vault.name } })))
+
 // What an edit seals with; a test replaces it to corrupt the new seal and prove the
 // verification below rolls back.
 export interface Sealer {
@@ -189,12 +206,7 @@ const setField = (input: {
 
     const fieldId = existing?.id ?? (yield* Database.nextId("fields"))
     const reference = Reference.format({ vault: vault.name, item: item.title, field: spec.label })
-
-    const key = yield* Keys.vaultKeyFromMaster(input.master, vault.id, {
-      nonce: new Uint8Array(vault.key_nonce),
-      wrapped: new Uint8Array(vault.key_wrapped),
-    }).pipe(Effect.mapError(() => new IntegrityCheckFailed({ damaged: { what: "vault-key", vault: vault.name } })))
-
+    const key = yield* vaultKey(input.master, vault)
     const location: Keys.FieldLocation = { vaultId: vault.id, itemId: item.id, fieldId, kind: item.kind, labelKey }
     const sealed = yield* input.sealer.sealField(key, location, Redacted.value(input.value))
     yield* (
@@ -433,6 +445,65 @@ export const releaseTitle = (request: ItemReleaseRequest, peer: string | null) =
       }),
     recorded: (released) => ({ vaults: [released.vault], detail: { title: released.title } }),
   })
+}
+
+const FieldRow = Schema.Struct({
+  id: Schema.Number,
+  label: Name.schema,
+  nonce: Schema.Uint8Array,
+  sealed: Schema.Uint8Array,
+})
+
+// `items/reveal`: one Field opened with K_v from MK, never a Token wrap. An unparsable Reference may be anything,
+// even a pasted secret, so its row names nothing; a parsed one is named as requested, then as stored.
+export const reveal = (request: ItemRevealRequest, peer: string | null) => {
+  const parsed = Result.mapError(
+    Reference.parse(request.reference),
+    ({ reason }) => new InvalidReference({ reference: request.reference, reason }),
+  )
+
+  const scope: Passphrase.Scope = Result.match(parsed, {
+    onFailure: () => ({ vaults: [] }),
+    onSuccess: (reference) => ({ vaults: [reference.vault], references: [Reference.format(reference)] }),
+  })
+
+  return Passphrase.audited({
+    passphrase: request.passphrase,
+    action: "item.reveal",
+    peer,
+    scope,
+    exclusive: false,
+    checkpoint: false,
+    unlock: Keys.fromPassphrase,
+    operation: (master) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const reference = yield* Effect.fromResult(parsed)
+        const located = yield* itemIn(yield* vaultNamed(reference.vault), reference.item)
+        const { vault } = located
+        const item = yield* ofKind(vault, located.item)
+
+        const [field] = yield* rows(
+          FieldRow,
+          sql`SELECT id, label, nonce, sealed FROM fields WHERE item_id = ${item.id} AND label_key = ${Name.key(reference.field)}`,
+        )
+
+        if (field === undefined)
+          return yield* new FieldNotFound({ vault: vault.name, item: item.title, field: reference.field })
+        const stored = Reference.format({ vault: vault.name, item: item.title, field: field.label })
+        const key = yield* vaultKey(master, vault)
+        const labelKey = Name.key(field.label)
+
+        const value = yield* Keys.openField(
+          key,
+          { vaultId: vault.id, itemId: item.id, fieldId: field.id, kind: item.kind, labelKey },
+          { nonce: new Uint8Array(field.nonce), wrapped: new Uint8Array(field.sealed) },
+        ).pipe(Effect.mapError(() => new IntegrityCheckFailed({ damaged: { what: "field", reference: stored } })))
+
+        return { vault: vault.name, reference: stored, revealed: { value: Redacted.make(value) } }
+      }),
+    recorded: ({ vault, reference }) => ({ vaults: [vault], references: [reference] }),
+  }).pipe(Effect.map(({ revealed }): ItemRevealed => revealed))
 }
 
 export * as ItemAdmin from "./ItemAdmin.js"

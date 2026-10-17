@@ -49,7 +49,7 @@ Never guess at Effect APIs. Check every Effect API name you use (module, functio
 
 Security properties. Do not weaken them.
 
-1. Secret values never appear in argv, stdout (except `read`), stderr, error messages, Server logs or the Audit Log. Values reach the Server only in request bodies; `env resolve` writes them only to its target file; `run` children get them only in their env.
+1. Secret values never appear in argv, stdout (except `read` and `item reveal`), stderr, error messages, Server logs or the Audit Log. Values reach the Server only in request bodies; `env resolve` writes them only to its target file; `run` children get them only in their env.
 2. Server response bodies never reach a CLI error verbatim; the CLI renders messages from typed fields it decoded; anything undecodable is a fixed message. The Server never puts a value, Token, Passphrase or Init code in an error.
 3. Writes run once. `create` is read back through resolve under the same Token and compared in memory; `item edit` opens and compares its new seal inside the transaction before commit; any failure after sending says unverified, do not retry. No automatic retries anywhere.
 4. No preflight: the requested operation is the capability check.

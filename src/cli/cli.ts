@@ -258,6 +258,19 @@ const item = Command.make("item").pipe(
         }).pipe(Effect.flatMap(printJson)),
       ),
     ).pipe(Command.withDescription("Let Tokens create a title that a rename or delete retired")),
+    Command.make(
+      "reveal",
+      { reference: Argument.String("reference"), ...passphraseLineFlags },
+      ({ reference, passphraseStdin }) =>
+        withTarget((target) =>
+          ItemAdmin.itemReveal({ target, source: secretSource(passphraseStdin), reference }).pipe(
+            // Byte-exact, with nothing appended, as `read` writes it.
+            Effect.flatMap((value) => Effect.promise(() => Bun.write(Bun.stdout, Redacted.value(value)))),
+          ),
+        ),
+    ).pipe(
+      Command.withDescription("Reveal one Field's value on stdout under the Passphrase; audited by its Reference"),
+    ),
   ]),
 )
 
