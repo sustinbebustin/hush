@@ -266,8 +266,31 @@ export const list = (token: AuthenticatedToken, request: ListRequest, peer: stri
 
 const listed = (grants: ReadonlyArray<Grant>) =>
   Effect.gen(function* () {
+    const listedVaults = yield* itemsOf(grants)
+
+    const response: ItemList = {
+      vaults: listedVaults.map(({ vault: grant, items }) => ({
+        vault: grant.vault,
+        access: grant.access,
+        items,
+      })),
+    }
+
+    return response
+  })
+
+// A Vault to list by id, named as the listing shows it.
+export interface ListedVault {
+  readonly vaultId: number
+  readonly vault: Name
+}
+
+// Each Vault paired with its Items' metadata by title key, in the order of `vaults`. Names only: nothing is
+// unwrapped.
+export const itemsOf = <V extends ListedVault>(vaults: ReadonlyArray<V>) =>
+  Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
-    const vaultIds = grants.map(({ vaultId }) => vaultId)
+    const vaultIds = vaults.map(({ vaultId }) => vaultId)
 
     const items =
       vaultIds.length === 0
@@ -289,24 +312,20 @@ const listed = (grants: ReadonlyArray<Grant>) =>
             )}`,
           )
 
-    const vaults = yield* Effect.forEach(grants, (grant) =>
+    return yield* Effect.forEach(vaults, (vault) =>
       Effect.map(
         Effect.forEach(
-          items.filter(({ vault_id }) => vault_id === grant.vaultId),
+          items.filter(({ vault_id }) => vault_id === vault.vaultId),
           (item) =>
             itemMeta(
-              grant.vault,
+              vault.vault,
               item,
               fields.filter(({ item_id }) => item_id === item.id).map(({ label }) => label),
             ),
         ),
-        (metas) => ({ vault: grant.vault, access: grant.access, items: metas }),
+        (metas) => ({ vault, items: metas }),
       ),
     )
-
-    const response: ItemList = { vaults }
-
-    return response
   })
 
 // An Item's metadata with its Fields in Kind order. A Kind outside the Kinds, a missing primary Field or a label

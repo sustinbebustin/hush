@@ -138,7 +138,8 @@ For the Owner, with the Passphrase:
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
 | `hush init`                                                        | initialise a new Server                                                  |
 | `hush vault`                                                       | create, list and delete Vaults                                           |
-| `hush item`                                                        | create, edit, rename, delete, release and reveal Items                   |
+| `hush item list <vault>`                                           | a Vault's Items and Retired titles, never a value, no Token              |
+| `hush item`                                                        | create, list, edit, rename, delete, release and reveal Items             |
 | `hush item create <kind> --title <title> --vault <vault> --prompt` | create an Item without a Token, verified before commit; never overwrites |
 | `hush item reveal <ref>`                                           | print one value on stdout; the Audit Log records its Reference           |
 | `hush token issue`                                                 | issue a Token with fixed Grants                                          |

@@ -202,7 +202,7 @@ const itemArguments = {
 }
 
 const item = Command.make("item").pipe(
-  Command.withDescription("Create, change and reveal Items with the Passphrase (the Owner only)"),
+  Command.withDescription("Create, list, change and reveal Items with the Passphrase (the Owner only)"),
   Command.withSubcommands([
     Command.make("create", { ...createFlags, ...passphraseLineFlags }, (flags) =>
       withTarget((target) =>
@@ -213,6 +213,20 @@ const item = Command.make("item").pipe(
     ).pipe(
       Command.withDescription(
         "Create an Item with the Passphrase, verified before commit; an agent with a Token uses `hush create`",
+      ),
+    ),
+    Command.make(
+      "list",
+      { vault: Argument.String("vault").pipe(Argument.withDescription("The Vault to list")), ...passphraseLineFlags },
+      (flags) =>
+        withTarget((target) =>
+          ItemAdmin.itemList({ target, source: secretSource(flags.passphraseStdin), vault: flags.vault }).pipe(
+            Effect.flatMap(printJson),
+          ),
+        ),
+    ).pipe(
+      Command.withDescription(
+        "List a Vault's Items with their Fields (never a value) and its Retired titles, without a Token",
       ),
     ),
     Command.make(

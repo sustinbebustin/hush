@@ -21,7 +21,7 @@ import { PassphraseStdin } from "./PassphraseStdin.js"
 import { PrivateInput } from "./PrivateInput.js"
 import type { Target } from "./Target.js"
 
-// The Owner's Item commands: `item create|edit|rename|delete|release|reveal`, each one Passphrase request.
+// The Owner's Item commands: `item list|create|edit|rename|delete|release|reveal`, each one Passphrase request.
 
 const parse = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 
@@ -266,6 +266,17 @@ export const itemDelete = (input: ItemInput) =>
 
         return delivered
       }),
+  })
+
+// `hush item list <vault>`: one `admin/items/list`; reads only, so a lost answer is plain `ServerUnreachable`.
+export const itemList = (input: { readonly target: Target; readonly source: SecretSource; readonly vault: string }) =>
+  passphraseCommand({
+    command: "item list",
+    source: input.source,
+    secrets: passphraseOnly,
+    prepare: parse("vault", input.vault),
+    send: (vault, passphrase) =>
+      Client.request(Api, input.target, (client) => client.admin.itemsList({ payload: { passphrase, vault } })),
   })
 
 // `hush item release <vault> <title>`: one `admin/items/release`.
