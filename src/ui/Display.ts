@@ -79,7 +79,7 @@ const { Locked, Open: OpenDisplay, $match } = Data.taggedEnum<Display>()
 const prompt = "hush Passphrase: "
 
 const lockedHints = "Enter unlock  Ctrl-C quit"
-const listHints = "Up/Down move  Enter open Vault  Tab Items  / filter  Esc clear filter  q quit"
+const listHints = "Up/Down move  Enter open  Tab Items  c create Vault  d delete Vault  / filter  q quit"
 const rowsHints = "Up/Down move  Enter open  n rename  d delete  Tab Vaults  / filter  q quit"
 const retiredHints = "Up/Down move  x release  Tab Vaults  / filter  q quit"
 const detailHints = "Up/Down move  r reveal  n rename  d delete  Esc back  q quit"
@@ -93,6 +93,7 @@ const confirmHints = "y confirm  any other key cancels"
 const tableHints = "Up/Down move  i issue  d revoke  Tab or Esc sidebar  q quit"
 const tokensSidebarHints = "Up/Down move  Enter open  Tab Tokens  i issue  q quit"
 const issueFormHints = "Up/Down move  Space change  Enter issue  Esc cancel"
+const vaultNameHints = "Type a name  Enter create  Esc cancel"
 
 const lockedNotice = (phase: Phase): string =>
   State.Phase.$match(phase, {
@@ -102,7 +103,7 @@ const lockedNotice = (phase: Phase): string =>
     Refused: ({ problem }) => Problem.message(problem),
   })
 
-const noVaults = "This Server has no Vault yet. Create one with `hush vault create <name>`."
+const noVaults = "This Server has no Vault yet. Press c to create one."
 
 // A concealed Field as the detail shows it while hidden: a fixed mask, so its length is not shown either.
 const concealedMask = "********"
@@ -257,6 +258,11 @@ const modalShown = (top: Modal) =>
         ...receipt.references.flatMap((reference) => [`  ${reference.old}`, `  -> ${reference.new}`]),
       ].join("\n"),
       hints: "Enter or Esc dismiss",
+    }),
+    VaultName: ({ text, phase }) => ({
+      title: "Create a Vault",
+      text: phase === "sending" ? `Name: ${text}\n\nCreating the Vault...` : `Name: ${text}_`,
+      hints: phase === "sending" ? "Creating the Vault...  Ctrl-C quit" : vaultNameHints,
     }),
   })
 

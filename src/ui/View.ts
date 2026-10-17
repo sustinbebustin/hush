@@ -120,6 +120,9 @@ export type Modal = Data.TaggedEnum<{
   }
   // A rename's old and new References, shown until dismissed so the Owner can update the templates that used them.
   Renamed: { readonly receipt: ItemRenamed }
+  // The name prompt of a new Vault (names are not secrets, so the text is drawn as typed); while its one request is
+  // out it takes no key, so it cannot be sent twice.
+  VaultName: { readonly text: string; readonly phase: "editing" | "sending" }
 }>
 
 const Modal = Data.taggedEnum<Modal>()

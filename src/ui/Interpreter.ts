@@ -5,7 +5,14 @@ import { Client } from "../cli/Client.js"
 import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
 import type { Target } from "../cli/Target.js"
 import { Api } from "../shared/Api.js"
-import { type ApiError, BackoffActive, type InvalidName, isApiError, PassphraseIncorrect } from "../shared/ApiError.js"
+import {
+  type ApiError,
+  BackoffActive,
+  type InvalidName,
+  isApiError,
+  parseName,
+  PassphraseIncorrect,
+} from "../shared/ApiError.js"
 import { Audit, type Ask } from "./Audit.js"
 import type { Clipboard } from "./Clipboard.js"
 import { Event } from "./Event.js"
@@ -100,6 +107,30 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
       ).pipe(
         Effect.map((receipt) => Event.TokenIssued({ receipt, copyable: clipboard.available })),
         Effect.catch((error) => Effect.succeed(Event.IssueRefused({ problem: refused(error) }))),
+      ),
+    CreateVault: ({ passphrase, vault }) =>
+      Effect.fromResult(parseName("vault", vault)).pipe(
+        Effect.flatMap((name) =>
+          unverifiedOnTransport(
+            Client.request(Api, target, (client) =>
+              client.admin.vaultsCreate({ payload: { passphrase, vault: name } }),
+            ),
+          ),
+        ),
+        Effect.map(() => Event.VaultChanged()),
+        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    DeleteVault: ({ passphrase, vault }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.vaultsDelete({ payload: { passphrase, vault } })),
+      ).pipe(
+        Effect.map(() => Event.VaultChanged()),
+        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: renderedOf(target)(error) }))),
+      ),
+    RefreshVaults: ({ passphrase }) =>
+      Client.request(Api, target, (client) => client.admin.vaultsList({ payload: { passphrase } })).pipe(
+        Effect.map(({ vaults }) => Event.VaultsListed({ vaults })),
+        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: renderedOf(target)(error) }))),
       ),
     CopyToken: ({ token }) => Effect.map(clipboard.write(token), (written) => Event.TokenCopied({ written })),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),

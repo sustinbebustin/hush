@@ -28,6 +28,12 @@ export type Event = Data.TaggedEnum<{
   TokenIssued: { readonly receipt: TokenIssueReceipt; readonly copyable: boolean }
   IssueRefused: { readonly problem: Problem }
   TokenCopied: { readonly written: Written }
+  // `vaults/create` or `vaults/delete` succeeded: the sidebar is stale.
+  VaultChanged: {}
+  // A Vault request, or the refresh after it, was refused.
+  VaultRefused: { readonly problem: Problem }
+  // The sidebar's Vaults, freshly listed.
+  VaultsListed: { readonly vaults: VaultList["vaults"] }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
   // The idle clock's tick, every second for the UI's whole run: `now` is the wall clock in Unix milliseconds, so time
@@ -80,7 +86,12 @@ const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused, TokenIssued, I
 
 const { Renamed, ItemsChanged, ChangeRefused } = Data.taggedEnum<Event>()
 
+const { VaultChanged, VaultRefused, VaultsListed } = Data.taggedEnum<Event>()
+
 export const Event = {
+  VaultChanged,
+  VaultRefused,
+  VaultsListed,
   Key,
   Paste,
   Unlocked,
