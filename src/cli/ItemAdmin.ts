@@ -10,6 +10,7 @@ import {
   EditFlagsInvalid,
   type InputSourceConflict,
   type InputSourceRequired,
+  InvalidReference,
   releaseCommand,
   UnexpectedResponse,
 } from "./CliError.js"
@@ -17,7 +18,7 @@ import { PassphraseStdin } from "./PassphraseStdin.js"
 import { PrivateInput } from "./PrivateInput.js"
 import type { Target } from "./Target.js"
 
-// The Owner's Item commands:`item edit|rename|delete|release`, each one Passphrase request.
+// The Owner's Item commands:`item edit|rename|delete|release|reveal`, each one Passphrase request.
 
 const parse = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 
@@ -217,6 +218,33 @@ export const itemRelease = (input: ItemInput) =>
     send: (names, passphrase) =>
       unverifiedOnTransport(
         Client.request(Api, input.target, (client) => client.admin.itemsRelease({ payload: { passphrase, ...names } })),
+      ),
+  })
+
+// `hush item reveal <reference>`: the Reference parsed locally, so a malformed one never prompts; then one
+// `admin/items/reveal`. Nothing is written, so a lost answer needs no `ChangeUnverified`. The caller writes the
+// value byte-exact, as `read` does.
+export const itemReveal = (input: {
+  readonly target: Target
+  readonly source: SecretSource
+  readonly reference: string
+}) =>
+  passphraseCommand({
+    command: "item reveal",
+    source: input.source,
+    secrets: passphraseOnly,
+    prepare: Effect.fromResult(
+      Result.mapError(
+        Reference.parse(input.reference),
+        ({ reason }) => new InvalidReference({ input: input.reference, reason }),
+      ),
+    ),
+    send: (reference, passphrase) =>
+      Effect.map(
+        Client.request(Api, input.target, (client) =>
+          client.admin.itemsReveal({ payload: { passphrase, reference: Reference.format(reference) } }),
+        ),
+        ({ value }): Redacted.Redacted<string> => value,
       ),
   })
 
