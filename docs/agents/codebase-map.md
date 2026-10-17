@@ -33,6 +33,25 @@ src/cli/CliError.ts         CLI tagged errors and `render`
 src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), token file health, notes; exit 0 always
 ```
 
+## UI (`src/ui/`)
+
+`hush ui`, on `@opentui/core` (Core API only). The reducer side (`State` to `Display`) imports neither OpenTUI nor the Client; `Screen` and `Interpreter` are the only modules that touch the outside.
+
+```
+src/ui/Ui.ts                `run({ renderer, target })`: input -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `launch` (the command): TTY check (`UiNeedsTerminal`), alternate screen, `exitOnCtrlC` off
+src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack)
+src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter` and `Items`), the `Modal`s, and the title filter (`Match.matches`)
+src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, wait ticks, `Closed` (renderer destroyed by a signal)
+src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `After` (timer), `Quit`; each request carries its Passphrase
+src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`
+src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
+src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
+src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
+src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret
+src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
+src/ui/Interpreter.ts       runs `ListVaults` and `ListItems` through `Client` (one request, no retry) and `After`; every outcome is one `Event`
+```
+
 ## Shared (`src/shared/`)
 
 ```
@@ -88,6 +107,7 @@ src/server/Log.ts           the Server's stderr log: one JSON object per line, t
 
 ```
 test/sandbox.ts             the seam: real CLI subprocess (temp HOME, PATH of sh, cat and fakes; `tty` runs on a pty) against a real Server subprocess on a port below the ephemeral range, so a restart gets it back
+test/headless.ts            the UI seam beside `sandbox()`: `Ui.run` in-process on OpenTUI's `createTestRenderer` against the sandbox Server; `keys` (mockInput), `frame`, `frames` (every committed frame, for leak scans), `waitFor`, `calls`
 test/proxy.ts               the loopback test proxy, as `HUSH_SERVER` (origin-form) or `HTTP_PROXY` (absolute-form): request-line log, dropped or altered answers
 test/leaks.ts               per-target sentinel scan for `observable()`
 test/arbitraries.ts         shared fast-check arbitraries and Unicode fixtures
@@ -106,9 +126,9 @@ test/sandbox-spike.ts       the manual sandbox check (not in CI): `setup` starts
 README.md                   install, first run, deployment, backup and restore, recovery runbooks; error messages point to its sections by heading
 SECURITY.md                 the threat model (ADR-0003) and the agent isolation recipe
 skills/hush/SKILL.md        the agent skill we ship; keep it in sync with the CLI
-scripts/build.sh            `bun run build`: `bun build --compile` per target into `dist/hush-<target>`
+scripts/build.sh            `bun run build`: `bun build --compile` per target into `dist/hush-<target>`; Linux targets define `OPENTUI_LIBC=glibc`
 scripts/homebrew-formula.sh the Homebrew formula for a release from its `SHA256SUMS`, pushed to `sustinbebustin/homebrew-tap` by `release.yml`
-scripts/smoke-binary.sh     compiled-binary smoke test (`bun run smoke [binary]`): crypto vectors compiled, start, Init, create, resolve, both backups, restart
+scripts/smoke-binary.sh     compiled-binary smoke test (`bun run smoke [binary]`): crypto vectors compiled, start, Init, create, resolve, both backups, `hush ui` Locked prompt on a pty, restart
 scripts/crypto-vectors.ts   the crypto vectors outside vitest, compiled and run by the smoke test
 scripts/smoke-docker.sh     Docker smoke test (`bun run smoke:docker <binary>`): image config, Compose up, Init, create, resolve, backup, core limit, Token-saving refusal
 deploy/hush.service         the hardened systemd unit (DynamicUser); `hush-static-user.conf` its drop-in for LXC nesting=0
