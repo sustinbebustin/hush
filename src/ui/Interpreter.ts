@@ -1,18 +1,19 @@
 import { Clock, Effect, Match } from "effect"
 
-import { Admin, type AuditQuery } from "../cli/Admin.js"
+import { Admin, type AuditQuery, unverifiedOnTransport } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
 import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
 import type { Target } from "../cli/Target.js"
 import { Api } from "../shared/Api.js"
 import { type ApiError, BackoffActive, type InvalidName, isApiError, PassphraseIncorrect } from "../shared/ApiError.js"
 import { Audit, type Ask } from "./Audit.js"
+import type { Clipboard } from "./Clipboard.js"
 import { Event } from "./Event.js"
 import { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
 
 // Runs the reducer's effects that leave the process or wait: each Server request through the CLI's typed Client
-// (one request, no retry), and timers. Each ends in the one event that reports it; every expected failure becomes
+// (one request, no retry), timers and clipboard writes. Each ends in the one event that reports it; every expected failure becomes
 // a `Problem` rendered from typed fields, so no response body reaches the screen (invariant 2).
 
 // The effects run here; `Quit` and `Suspend` act on the renderer, so they are the loop's own.
@@ -53,7 +54,8 @@ const auditQuery = (ask: Ask): Effect.Effect<AuditQuery, AuditFlagsInvalid | Inv
     Next: ({ query }) => Effect.succeed(query),
   })
 
-export const run = (target: Target, work: Work): Effect.Effect<Event> => {
+// `clipboard` is the host clipboard the copy key writes to.
+export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Effect<Event> => {
   const refused = problemOf(target)
 
   return Match.valueTags(work, {
@@ -80,6 +82,26 @@ export const run = (target: Target, work: Work): Effect.Effect<Event> => {
         ),
         Effect.catch((error) => Effect.succeed(Event.AuditRefused({ ask, problem: refused(error) }))),
       ),
+    ListTokens: ({ passphrase }) =>
+      Client.request(Api, target, (client) => client.admin.tokensList({ payload: { passphrase } })).pipe(
+        Effect.map((list) => Event.TokensLoaded({ list })),
+        Effect.catch((error) => Effect.succeed(Event.TokensRefused({ problem: refused(error) }))),
+      ),
+    RevokeToken: ({ passphrase, label }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
+      ).pipe(
+        Effect.map((receipt) => Event.TokenRevoked({ label: receipt.label })),
+        Effect.catch((error) => Effect.succeed(Event.RevokeRefused({ problem: refused(error) }))),
+      ),
+    IssueToken: ({ passphrase, fields }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.tokensIssue({ payload: { passphrase, ...fields } })),
+      ).pipe(
+        Effect.map((receipt) => Event.TokenIssued({ receipt, copyable: clipboard.available })),
+        Effect.catch((error) => Effect.succeed(Event.IssueRefused({ problem: refused(error) }))),
+      ),
+    CopyToken: ({ token }) => Effect.map(clipboard.write(token), (written) => Event.TokenCopied({ written })),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),
     // A refused Reveal is a notice in an Open UI, not the Locked prompt, so even a wrong Passphrase (changed
     // elsewhere) reads as the CLI says it.

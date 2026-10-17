@@ -1,13 +1,15 @@
 import { createTestRenderer, TestRecorder, type MockInput } from "@opentui/core/testing"
-import { Clock, Effect, Exit } from "effect"
+import { Clock, Effect, Exit, Redacted } from "effect"
 
 import { Target } from "../src/cli/Target.js"
+import { Clipboard } from "../src/ui/Clipboard.js"
 import { Ui } from "../src/ui/Ui.js"
 import type { Call, Sandbox } from "./sandbox.js"
 
 // The UI's seam beside `sandbox()`: the real UI entry point in this process, drawn by OpenTUI's headless test
 // renderer and driven by its mock keyboard, against the sandbox's real Server (seeded through the CLI). The only
-// thing injected is the renderer, as in production, plus Effect's own Clock, moved forward for idle tests.
+// things injected are the renderer, as in production, the host clipboard, and Effect's own Clock, moved forward for
+// idle tests.
 
 const settleTimeoutMs = 15_000
 const pollMs = 20
@@ -50,17 +52,43 @@ const skewed = (skew: () => number): Clock.Clock => {
   }
 }
 
+// A host clipboard that records what is written to it, in place of the machine's.
+export interface FakeClipboard {
+  readonly clipboard: Clipboard
+  readonly copies: () => ReadonlyArray<string>
+}
+
+export const fakeClipboard = (): FakeClipboard => {
+  const copies: Array<string> = []
+
+  return {
+    clipboard: {
+      available: true,
+      write: (text) =>
+        Effect.sync(() => {
+          copies.push(Redacted.value(text))
+
+          return "written" as const
+        }),
+    },
+    copies: () => copies,
+  }
+}
+
 export const headless = async (
   box: Sandbox,
   {
     width = 100,
     height = 30,
     server = box.server.url,
+    // No host clipboard unless a test passes one, so a test never touches the machine's.
+    clipboard = Clipboard.none,
   }: {
     readonly width?: number
     readonly height?: number
     // `HUSH_SERVER`: the sandbox's Server, or its proxy (`box.proxy.url`) to hold an answer in flight.
     readonly server?: string
+    readonly clipboard?: Clipboard
   } = {},
 ): Promise<Headless> => {
   // `exitSignals: []` as `hush ui` runs it: the UI handles the exit signals itself.
@@ -75,7 +103,7 @@ export const headless = async (
   const clock = skewed(() => skew)
 
   const ended = Effect.runPromiseExit(
-    Effect.provideService(Ui.run({ renderer: setup.renderer, target }), Clock.Clock, clock),
+    Effect.provideService(Ui.run({ renderer: setup.renderer, target, clipboard }), Clock.Clock, clock),
   )
 
   const waitUntil = async (predicate: (frame: string) => boolean) => {

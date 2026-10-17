@@ -58,7 +58,7 @@ const first = Audit.Ask.First({ filters: noFilters })
 
 const vault = (name: string) => ({ vault: name, items: 0, activeTokens: 0, createdAt: "2026-10-01T00:00:00.000Z" })
 
-// Open on Personal and Work, with the Audit row (below them) selected: its first-page request sent.
+// Open on Personal and Work, with the Audit row (below them and Tokens) selected: its first-page request sent.
 const selected = (): ReturnType<typeof press> => {
   const checking = press(State.initial, ...typing("right"), Key.named("return")).state
 
@@ -67,7 +67,7 @@ const selected = (): ReturnType<typeof press> => {
     Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [vault("Personal"), vault("Work")] }),
   ).state
 
-  return press(open, Key.named("down"), Key.named("down"), Key.named("return"))
+  return press(open, Key.named("down"), Key.named("down"), Key.named("down"), Key.named("return"))
 }
 
 const answered = (state: State, ask: Ask, answer: AuditPage, query = {}) =>
@@ -90,7 +90,10 @@ describe("Audit view", () => {
     assert.strictEqual(shown(state).message, "Loading...")
 
     const sidebar = Display.$match(Display.of(state), { Locked: () => [], Open: ({ sections }) => sections })
-    assert.deepStrictEqual(sidebar, [{ name: "Audit", underCursor: true }])
+    assert.deepStrictEqual(sidebar, [
+      { name: "Tokens", underCursor: false },
+      { name: "Audit", underCursor: true },
+    ])
   })
 
   it("sends the filters as typed, one request on Enter, none when nothing changed or on Escape", () => {

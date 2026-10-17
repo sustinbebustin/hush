@@ -1,8 +1,9 @@
 import { Data, type Redacted } from "effect"
 
 import type { AuditQuery } from "../cli/Admin.js"
-import type { AuditPage, VaultItems, VaultList } from "../shared/Api.js"
+import type { AuditPage, TokenIssueReceipt, TokenList, VaultItems, VaultList } from "../shared/Api.js"
 import type { Ask } from "./Audit.js"
+import type { Written } from "./Clipboard.js"
 import type { Key as Keypress } from "./Key.js"
 import type { Problem } from "./Problem.js"
 
@@ -19,6 +20,14 @@ export type Event = Data.TaggedEnum<{
   // The page `ask` asked for, and the query sent for it.
   AuditListed: { readonly ask: Ask; readonly query: AuditQuery; readonly page: AuditPage }
   AuditRefused: { readonly ask: Ask; readonly problem: Problem }
+  TokensLoaded: { readonly list: TokenList }
+  TokensRefused: { readonly problem: Problem }
+  TokenRevoked: { readonly label: string }
+  RevokeRefused: { readonly problem: Problem }
+  // `tokens/issue` answered; `copyable` says whether the host has a clipboard to copy the Token to.
+  TokenIssued: { readonly receipt: TokenIssueReceipt; readonly copyable: boolean }
+  IssueRefused: { readonly problem: Problem }
+  TokenCopied: { readonly written: Written }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
   // The idle clock's tick, every second for the UI's whole run: `now` is the wall clock in Unix milliseconds, so time
@@ -60,6 +69,9 @@ const {
   $match,
 } = Data.taggedEnum<Event>()
 
+const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused, TokenIssued, IssueRefused, TokenCopied } =
+  Data.taggedEnum<Event>()
+
 export const Event = {
   Key,
   Paste,
@@ -69,6 +81,13 @@ export const Event = {
   ItemsRefused,
   AuditListed,
   AuditRefused,
+  TokensLoaded,
+  TokensRefused,
+  TokenRevoked,
+  RevokeRefused,
+  TokenIssued,
+  IssueRefused,
+  TokenCopied,
   WaitTick,
   IdleTick,
   Suspend,

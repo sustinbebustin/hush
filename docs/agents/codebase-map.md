@@ -35,23 +35,25 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 
 ## UI (`src/ui/`)
 
-`hush ui`, on `@opentui/core` (Core API only). The reducer side (`State` to `Display`) imports neither OpenTUI nor the Client; `Screen` and `Interpreter` are the only modules that touch the outside.
+`hush ui`, on `@opentui/core` (Core API only). The reducer side (`State` to `Display`) imports neither OpenTUI nor the Client; `Screen`, `Interpreter` and `Clipboard` are the only modules that touch the outside.
 
 ```
-src/ui/Ui.ts                `run({ renderer, target })`: input, SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), alternate screen, `exitOnCtrlC` off, `exitSignals: []`
+src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input, SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off, `exitSignals: []`
 src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack, `Idle`)
-src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Audit`), the `Modal`s, the title filter (`Match.matches`) and Field References
-src/ui/Sidebar.ts           the sidebar's rows: the Vaults, then the fixed sections (`Audit`)
+src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`, `Audit`), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`), the title filter (`Match.matches`) and Field References
+src/ui/Sidebar.ts           the sidebar's rows: the Vaults, then the fixed sections (`Tokens`, `Audit`)
 src/ui/Audit.ts             the Audit view's pure transitions (filters, PgUp/PgDn, the page below `next` at the bottom, late answers dropped) and its row text
-src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, wait ticks, idle ticks (wall clock), `Suspend` (SIGTSTP), `Closed` (an exit signal, or the renderer destroyed)
-src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `ListAudit`, `Reveal`, `After` (timer), `Quit`, `Suspend`; each request carries its Passphrase
+src/ui/Event.ts             what the reducer reacts to: keys, pastes, Server answers, clipboard writes, wait ticks, idle ticks (wall clock), `Suspend` (SIGTSTP), `Closed` (an exit signal, or the renderer destroyed)
+src/ui/UiEffect.ts          what the reducer asks for: `ListVaults` (the unlock check), `ListItems`, `ListAudit`, `ListTokens`, `RevokeToken`, `IssueToken`, `CopyToken`, `Reveal`, `After` (timer), `Quit`, `Suspend`; each request carries its Passphrase
+src/ui/IssueForm.ts         the Token issue form as plain state: Label, one Grant choice per Vault, TTL, replacement; `submit` -> the `tokens/issue` fields or a `Problem`
+src/ui/Clipboard.ts         the host clipboard (OpenTUI's native backends): `available`, `write`; `none` where there is no backend, `host` for `launch`
 src/ui/Reducer.ts           the pure `reduce(state, event) -> { state, effects }`; every Lock (idle ten minutes, Ctrl-Z or SIGTSTP, exit signal, quit) is a fresh `State.locked`
 src/ui/Problem.ts           a refused request as the reducer needs it: the Passphrase waits (counted down), or a message rendered from typed fields
 src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `named`, `char`, `printable`, `is`
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
-src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but a Revealed value while the state holds it
+src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows, never a secret but a Revealed value or an issued Token while the state holds it
 src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
-src/ui/Interpreter.ts       runs `ListVaults`, `ListItems`, `ListAudit` (filters resolved by `Admin.auditQuery`, as `hush audit` does) and `Reveal` through `Client` (one request, no retry) and `After`; every outcome is one `Event`
+src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer; `ListAudit` filters resolved by `Admin.auditQuery`, as `hush audit` does), `CopyToken` through `Clipboard`, and `After`; every outcome is one `Event`
 ```
 
 ## Shared (`src/shared/`)
@@ -70,6 +72,7 @@ src/shared/Kind.ts          the three Kinds and their Field specs
 src/shared/Access.ts        Access (`read | read+create`) and Grant
 src/shared/Version.ts       package version and API version
 src/shared/Match.ts         title matching and near-miss suggestions
+src/shared/Duration.ts      a typed duration such as `90d` in seconds (`--ttl`, `--since`, the UI's TTL)
 ```
 
 ## Server (`src/server/`)
@@ -109,7 +112,7 @@ src/server/Log.ts           the Server's stderr log: one JSON object per line, t
 
 ```
 test/sandbox.ts             the seam: real CLI subprocess (temp HOME, PATH of sh, cat and fakes; `tty` runs on a pty, optionally as a job under `set -m` for Ctrl-Z and `fg`) against a real Server subprocess on a port below the ephemeral range, so a restart gets it back
-test/headless.ts            the UI seam beside `sandbox()`: `Ui.run` in-process on OpenTUI's `createTestRenderer` against the sandbox Server; `keys` (mockInput), `frame`, `frames` (every committed frame, for leak scans), `waitFor`, `calls`, `advanceClock` (a skewed Effect Clock), `server` (e.g. the proxy)
+test/headless.ts            the UI seam beside `sandbox()`: `Ui.run` in-process on OpenTUI's `createTestRenderer` against the sandbox Server; `keys` (mockInput), `frame`, `frames` (every committed frame, for leak scans), `waitFor`, `calls`, `advanceClock` (a skewed Effect Clock), `server` (e.g. the proxy); no host clipboard unless a test passes one (`fakeClipboard` records writes)
 test/proxy.ts               the loopback test proxy, as `HUSH_SERVER` (origin-form) or `HTTP_PROXY` (absolute-form): request-line log, dropped, altered or held answers
 test/leaks.ts               per-target sentinel scan for `observable()`
 test/arbitraries.ts         shared fast-check arbitraries and Unicode fixtures

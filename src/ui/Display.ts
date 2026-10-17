@@ -1,14 +1,15 @@
 import { Data, Redacted } from "effect"
 
 import { Audit } from "./Audit.js"
+import { IssueForm } from "./IssueForm.js"
 import { Problem } from "./Problem.js"
 import { type Section, Sidebar } from "./Sidebar.js"
 import { type Open, type Phase, State } from "./State.js"
-import { View } from "./View.js"
+import { type Modal, View } from "./View.js"
 
 // What the screen shows for a state, as plain text: the model the sync layer (`Screen`) copies into renderables.
-// It is pure and holds no secret but a Revealed value, while the state holds one: concealed input appears only as
-// its mask, so a test can scan it.
+// It is pure and holds no secret but a Revealed value or a freshly issued Token, while the state holds one (ADR-0009:
+// drawn on the alternate screen only): concealed input appears only as its mask, so a test can scan it.
 
 export interface VaultRow {
   readonly name: string
@@ -27,12 +28,24 @@ export interface ItemRow {
   readonly underCursor: boolean
 }
 
+// One row of the Token table; times are UTC dates.
+export interface TokenRow {
+  readonly label: string
+  readonly grants: string
+  readonly state: string
+  readonly created: string
+  readonly expires: string
+  readonly underCursor: boolean
+}
+
 export type Display = Data.TaggedEnum<{
   Locked: { readonly prompt: string; readonly mask: string; readonly notice: string; readonly hints: string }
   Open: {
     readonly vaults: ReadonlyArray<VaultRow>
     // The sidebar rows below the Vaults.
     readonly sections: ReadonlyArray<SectionRow>
+    // The Token table's rows in the Tokens view, else undefined.
+    readonly tokens: ReadonlyArray<TokenRow> | undefined
     // The main pane's title: the Vault whose Items it lists, or empty.
     readonly title: string
     // The filter line: empty when no filter is applied or typed.
@@ -46,6 +59,8 @@ export type Display = Data.TaggedEnum<{
     readonly log: ReadonlyArray<string>
     // The topmost modal's text, or undefined when there is none.
     readonly modal: string | undefined
+    // The topmost modal's box title, or empty when there is none.
+    readonly modalTitle: string
     readonly hints: string
   }
 }>
@@ -64,6 +79,10 @@ const filterHints = "Type to filter titles  Enter apply  Esc clear"
 const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
 const auditHints = "Up/Down move  Enter open  / filter  PgUp/PgDn scroll  Esc clear filters  q quit"
 const auditFilterHints = "Type a filter  Tab next field  Enter apply  Esc cancel"
+const confirmHints = "y confirm  any other key cancels"
+const tableHints = "Up/Down move  i issue  d revoke  Tab or Esc sidebar  q quit"
+const tokensSidebarHints = "Up/Down move  Enter open  Tab Tokens  i issue  q quit"
+const issueFormHints = "Up/Down move  Space change  Enter issue  Esc cancel"
 
 const lockedNotice = (phase: Phase): string =>
   State.Phase.$match(phase, {
@@ -156,11 +175,69 @@ const pane = (
       message: Audit.status(audit),
       detail: [],
     }),
+    Tokens: ({ table }) => ({
+      title: "Tokens",
+      filter: "",
+      rows: [],
+      message: View.TokenTable.$match(table, {
+        Loading: () => "Loading...",
+        Refused: () => "Could not list the Tokens.",
+        Loaded: ({ tokens }) => (tokens.length === 0 ? "No Tokens yet. Press i to issue one." : ""),
+      }),
+      detail: [],
+    }),
+  })
+
+const date = (time: string) => time.slice(0, "YYYY-MM-DD".length)
+
+const tokenRows = (view: View): ReadonlyArray<TokenRow> | undefined => {
+  if (!View.$is("Tokens")(view)) return undefined
+  const { table } = view
+  const selected = View.selectedToken(view)
+
+  if (!View.TokenTable.$is("Loaded")(table)) return []
+
+  return table.tokens.map((token) => ({
+    label: token.label,
+    grants: token.grants.map(({ vault, access }) => `${vault} (${access})`).join(", "),
+    state: token.state,
+    created: date(token.createdAt),
+    expires: token.expiresAt === null ? "never" : date(token.expiresAt),
+    underCursor: token === selected,
+  }))
+}
+
+// The topmost modal's box title, text and key hints.
+const modalShown = (top: Modal) =>
+  View.Modal.$match(top, {
+    Notice: ({ problem }) => ({ title: "Notice", text: Problem.message(problem), hints: modalHints }),
+    Confirm: ({ description }) => ({ title: "Confirm", text: description, hints: confirmHints }),
+    IssueForm: ({ form, phase }) => ({
+      title: "Issue a Token",
+      text: phase === "sending" ? `${IssueForm.lines(form)}\n\nIssuing the Token...` : IssueForm.lines(form),
+      hints: phase === "sending" ? "Issuing the Token...  Ctrl-C quit" : issueFormHints,
+    }),
+    Issued: ({ label, token, replaced, copy }) => ({
+      title: "Token issued",
+      text: [
+        `Token ${label}${replaced ? " (the Token it replaces was revoked)" : ""}:`,
+        "",
+        Redacted.value(token),
+        "",
+        "Shown once: hand it to the agent now. It is saved nowhere, and dismissing this wipes it from the UI.",
+        ...(copy === "copied" ? ["Copied to the clipboard."] : []),
+      ].join("\n"),
+      hints: copy === "absent" ? "Enter or Esc dismiss" : "c copy  Enter or Esc dismiss",
+    }),
   })
 
 const hintsFor = (state: Open) => {
-  if (state.modals.length > 0) return modalHints
+  const top = state.modals.at(-1)
+
+  if (top !== undefined) return modalShown(top).hints
   const { view } = state
+
+  if (View.$is("Tokens")(view)) return View.Focus.$is("Rows")(view.focus) ? tableHints : tokensSidebarHints
 
   if (View.$is("ItemDetail")(view)) return View.Reveal.$is("Shown")(view.reveal) ? shownHints : detailHints
 
@@ -184,10 +261,11 @@ const open = (state: Open): Display => {
       name,
       underCursor: state.vaults.length + index === state.cursor,
     })),
+    tokens: tokenRows(state.view),
     ...pane(state.view),
     log: View.$is("Audit")(state.view) ? Audit.lines(state.view) : [],
-    modal:
-      top === undefined ? undefined : View.Modal.$match(top, { Notice: ({ problem }) => Problem.message(problem) }),
+    modal: top === undefined ? undefined : modalShown(top).text,
+    modalTitle: top === undefined ? "" : modalShown(top).title,
     hints: hintsFor(state),
   })
 }

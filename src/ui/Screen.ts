@@ -1,6 +1,6 @@
 import { BoxRenderable, type CliRenderer, type KeyEvent, type PasteEvent, TextRenderable } from "@opentui/core"
 
-import { Display } from "./Display.js"
+import { Display, type TokenRow } from "./Display.js"
 import type { Key } from "./Key.js"
 
 // The thin sync layer: one renderable tree built once, then each `Display` copied into it. It knows OpenTUI and
@@ -18,6 +18,35 @@ const kindWidth = 16
 // A column of text that never wraps, so each row stays on its line.
 const column = (renderer: CliRenderer, options: { readonly width?: number; readonly flexGrow?: number } = {}) =>
   new TextRenderable(renderer, { content: "", wrapMode: "none", truncate: true, ...options })
+
+const tokenColumns = { label: 18, state: 8, created: 11, expires: 11 } as const
+
+// The Token table: a header line, then one line per Token; Grants take the width left over.
+const mountTokenTable = (renderer: CliRenderer) => {
+  const box = new BoxRenderable(renderer, { flexGrow: 1, flexDirection: "row" })
+
+  const columns: ReadonlyArray<readonly [TextRenderable, string, (row: TokenRow) => string]> = [
+    [
+      column(renderer, { width: tokenColumns.label }),
+      "  Label",
+      (row) => `${row.underCursor ? ">" : " "} ${row.label}`,
+    ],
+    [column(renderer, { width: tokenColumns.state }), "State", (row) => row.state],
+    [column(renderer, { width: tokenColumns.created }), "Created", (row) => row.created],
+    [column(renderer, { width: tokenColumns.expires }), "Expires", (row) => row.expires],
+    [column(renderer, { flexGrow: 1 }), "Grants", (row) => row.grants],
+  ]
+
+  for (const [text] of columns) box.add(text)
+
+  const draw = (rows: ReadonlyArray<TokenRow> | undefined) => {
+    box.visible = rows !== undefined
+
+    for (const [text, header, cell] of columns) text.content = [header, ...(rows ?? []).map(cell)].join("\n")
+  }
+
+  return { box, draw }
+}
 
 const mount = (renderer: CliRenderer): Screen => {
   const root = new BoxRenderable(renderer, { width: "100%", height: "100%", flexDirection: "column" })
@@ -63,6 +92,8 @@ const mount = (renderer: CliRenderer): Screen => {
   main.add(rows)
   main.add(detail)
   main.add(logBox)
+  const tokenTable = mountTokenTable(renderer)
+  main.add(tokenTable.box)
   open.add(sidebar)
   open.add(main)
 
@@ -106,6 +137,7 @@ const mount = (renderer: CliRenderer): Screen => {
         vaultCounts.content = shown.vaults.map(({ items }) => String(items)).join("\n")
         logBox.visible = shown.log.length > 0
         log.content = shown.log.join("\n")
+        tokenTable.draw(shown.tokens)
         main.title = shown.title
         filterLine.content = shown.filter
         filterLine.visible = shown.filter !== ""
@@ -113,11 +145,12 @@ const mount = (renderer: CliRenderer): Screen => {
         message.visible = shown.message !== ""
         titles.content = shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`).join("\n")
         kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
-        rows.visible = shown.detail.length === 0 && shown.log.length === 0
+        rows.visible = shown.detail.length === 0 && shown.log.length === 0 && shown.tokens === undefined
         detail.content = shown.detail.join("\n")
         detail.visible = shown.detail.length > 0
         modal.visible = shown.modal !== undefined
         modalText.content = shown.modal ?? ""
+        modal.title = shown.modalTitle
         hints.content = shown.hints
       },
     })

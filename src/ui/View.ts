@@ -1,13 +1,15 @@
 import { Data, type Redacted } from "effect"
 
-import type { ItemMeta } from "../shared/Api.js"
+import type { ItemMeta, TokenInfo } from "../shared/Api.js"
 import { Match } from "../shared/Match.js"
 import { Reference } from "../shared/Reference.js"
 import type * as AuditView from "./Audit.js"
+import type { IssueForm } from "./IssueForm.js"
 import type { Problem } from "./Problem.js"
+import type { UiEffect } from "./UiEffect.js"
 
-// What the main pane of an Open UI shows, and the modals stacked above it. Later views (forms, Tokens)
-// join `View`; later modals (confirm, help) join `Modal`.
+// What the main pane of an Open UI shows, and the modals stacked above it. Later views (forms) join `View`;
+// later modals (help) join `Modal`.
 
 // The Item list's filter over titles: being typed, or applied (an empty text shows every Item).
 export type Filter = Data.TaggedEnum<{
@@ -25,6 +27,18 @@ export type Items = Data.TaggedEnum<{
 }>
 
 const Items = Data.taggedEnum<Items>()
+
+// Every Token, newest first: asked for, answered, or refused (the refusal itself is a modal).
+export type TokenTable = Data.TaggedEnum<{
+  Loading: {}
+  Loaded: { readonly tokens: ReadonlyArray<TokenInfo> }
+  Refused: {}
+}>
+
+const TokenTable = Data.taggedEnum<TokenTable>()
+
+// The issued Token's copy key: absent (no host clipboard), ready, writing, or done.
+export type Copy = "absent" | "ready" | "copying" | "copied"
 
 // Where Up/Down and Enter act while the Item list shows: the Vault sidebar, or the Item rows with the row under the
 // cursor (an index into the visible rows).
@@ -74,12 +88,28 @@ export type View = Data.TaggedEnum<{
     readonly log: AuditView.Log
     readonly top: number
   }
+  // `focus` is the sidebar or a table row; a refresh keeps the row.
+  Tokens: { readonly table: TokenTable; readonly focus: Focus }
 }>
 
 const { NoVaults, ItemList, ItemDetail, Audit, $is, $match } = Data.taggedEnum<View>()
 
+const { Tokens } = Data.taggedEnum<View>()
+
 export type Modal = Data.TaggedEnum<{
   Notice: { readonly problem: Problem }
+  // A destructive step held until the Owner answers: `y` runs `effect`, any other key cancels it.
+  Confirm: { readonly description: string; readonly effect: UiEffect }
+  // The Token issue form; while its one request is out it takes no key, so it cannot be sent twice.
+  IssueForm: { readonly form: IssueForm; readonly phase: "editing" | "sending" }
+  // A Token just issued, its only showing: dismissing the modal drops the last reference to it.
+  Issued: {
+    readonly label: string
+    readonly token: Redacted.Redacted<string>
+    // Whether the issue revoked a Token with the same Label.
+    readonly replaced: boolean
+    readonly copy: Copy
+  }
 }>
 
 const Modal = Data.taggedEnum<Modal>()
@@ -122,15 +152,29 @@ const detail = (list: ItemListOf, item: ItemMeta): View =>
 // The Field under the detail's cursor.
 const selectedField = (view: Extract<View, { readonly _tag: "ItemDetail" }>) => view.item.fields[view.field]
 
+// The Token table being fetched, its rows focused at `row`.
+const tokensLoading = (row = 0): View => Tokens({ table: TokenTable.Loading(), focus: Focus.Rows({ row }) })
+
+// The Token under the table's row cursor, if any; the row is kept within the table.
+const selectedToken = (view: Extract<View, { readonly _tag: "Tokens" }>): TokenInfo | undefined => {
+  const { table, focus } = view
+
+  if (!TokenTable.$is("Loaded")(table) || !Focus.$is("Rows")(focus)) return undefined
+
+  return table.tokens[Math.min(focus.row, table.tokens.length - 1)]
+}
+
 export const View = {
   NoVaults,
   ItemList,
   ItemDetail,
   Audit,
+  Tokens,
   $is,
   $match,
   Filter,
   Items,
+  TokenTable,
   Modal,
   Focus,
   Reveal,
@@ -142,4 +186,6 @@ export const View = {
   reference,
   detail,
   selectedField,
+  tokensLoading,
+  selectedToken,
 } as const

@@ -74,12 +74,13 @@ const seeded = async (box: Sandbox): Promise<number> => {
 const auditCalls = async (ui: Headless) =>
   (await ui.calls()).filter(({ path }) => path === "/v1/admin/audit").length - 1
 
-// Unlocks, then moves past Personal and Work to Audit and selects it.
+// Unlocks, then moves past Personal, Work and Tokens to Audit and selects it.
 const openAudit = async (ui: Headless) => {
   await ui.waitFor(prompt)
   await ui.type(seedPassphrase)
   ui.keys.pressEnter()
   await ui.waitFor("Stripe live key")
+  ui.keys.pressArrow("down")
   ui.keys.pressArrow("down")
   ui.keys.pressArrow("down")
   ui.keys.pressEnter()

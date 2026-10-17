@@ -1,8 +1,8 @@
 // The sidebar's rows: one per Vault, then the fixed sections below them, in this order. The cursor is a row index.
 
-export type Section = "Audit"
+export type Section = "Tokens" | "Audit"
 
-const sections: ReadonlyArray<Section> = ["Audit"]
+const sections: ReadonlyArray<Section> = ["Tokens", "Audit"]
 
 // How many rows the sidebar has with `vaults` Vaults.
 const rows = (vaults: number): number => vaults + sections.length
