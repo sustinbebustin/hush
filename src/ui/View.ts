@@ -9,8 +9,7 @@ import type { ItemForm } from "./ItemForm.js"
 import type { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
 
-// What the main pane of an Open UI shows, and the modals stacked above it. Later views (forms) join `View`;
-// later modals (help) join `Modal`.
+// What the main pane of an Open UI shows, and the modals stacked above it.
 
 // The Item list's filter over titles: being typed, or applied (an empty text shows every Item).
 export type Filter = Data.TaggedEnum<{
@@ -129,6 +128,8 @@ export type Modal = Data.TaggedEnum<{
   // The name prompt of a new Vault (names are not secrets, so the text is drawn as typed); while its one request is
   // out it takes no key, so it cannot be sent twice.
   VaultName: { readonly text: string; readonly phase: "editing" | "sending" }
+  // The keys of what lies under it (the view, or the modal below); any key closes it.
+  Help: {}
 }>
 
 const Modal = Data.taggedEnum<Modal>()

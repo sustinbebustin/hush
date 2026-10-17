@@ -23,12 +23,16 @@ export type Event = Data.TaggedEnum<{
   Paste: { readonly text: string }
   // `vaults/list` accepted the Passphrase it carried; the answer brings it back, so Locked never holds it.
   // `clipboard` says whether the host has a clipboard, so the paste key is offered only where it can work.
+  // `attempt` is the submission it answers, so an answer to one made before a Lock is dropped.
   Unlocked: {
+    readonly attempt: number
     readonly passphrase: Redacted.Redacted<string>
     readonly vaults: VaultList["vaults"]
     readonly clipboard: boolean
   }
-  UnlockRefused: { readonly problem: Problem }
+  UnlockRefused: { readonly attempt: number; readonly problem: Problem }
+  // The terminal's new size, in cells.
+  Resize: { readonly width: number; readonly height: number }
   ItemsLoaded: { readonly list: VaultItems }
   ItemsRefused: { readonly vault: string; readonly problem: Problem }
   // The page `ask` asked for, and the query sent for it.
@@ -112,7 +116,10 @@ const { Renamed, ItemsChanged, ChangeRefused } = Data.taggedEnum<Event>()
 
 const { VaultChanged, VaultRefused, VaultsListed } = Data.taggedEnum<Event>()
 
+const { Resize } = Data.taggedEnum<Event>()
+
 export const Event = {
+  Resize,
   VaultChanged,
   VaultRefused,
   VaultsListed,

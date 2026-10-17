@@ -30,6 +30,8 @@ export interface Headless {
   readonly calls: () => Promise<ReadonlyArray<Call>>
   // Moves the UI's wall clock forward by `millis`; its timers still run in real time.
   readonly advanceClock: (millis: number) => void
+  // Resizes the frame, as the terminal reports a resize.
+  readonly resize: (width: number, height: number) => void
   // Resolves with the UI's exit once it has ended.
   readonly ended: Promise<Exit.Exit<void, unknown>>
   readonly close: () => Promise<void>
@@ -150,6 +152,7 @@ export const headless = async (
     advanceClock: (millis) => {
       skew += millis
     },
+    resize: setup.resize,
     ended,
     close: async () => {
       recorder.stop()

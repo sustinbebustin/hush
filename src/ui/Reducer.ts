@@ -10,6 +10,7 @@ import { ItemForm } from "./ItemForm.js"
 import { Key } from "./Key.js"
 import { Problem } from "./Problem.js"
 import { Sidebar } from "./Sidebar.js"
+import { Size } from "./Size.js"
 import { State, type Locked, type Open, type Vault } from "./State.js"
 import { UiEffect } from "./UiEffect.js"
 import { type Filter, type ItemListOf, type Modal, View } from "./View.js"
@@ -38,8 +39,11 @@ const isQuitChord = (key: Key) => Key.is(key, "c", { ctrl: true })
 const isSuspendChord = (key: Key) => Key.is(key, "z", { ctrl: true })
 
 // Ctrl-Z or SIGTSTP: Lock first, so nothing Open held survives the suspension, then suspend. `attempt` carries a
-// Locked prompt's count over, so a wait tick of an earlier attempt stays stale.
-const suspend = (attempt?: number): Step => ({ state: State.locked(attempt), effects: [UiEffect.Suspend()] })
+// Locked prompt's count over, so a wait tick or an answer of an earlier attempt stays stale.
+const suspend = (size: Size, attempt?: number): Step => ({
+  state: State.locked(attempt, size),
+  effects: [UiEffect.Suspend()],
+})
 
 const idleLimit = 10 * 60 * 1_000
 
@@ -47,7 +51,7 @@ const idleLimit = 10 * 60 * 1_000
 const idleTick = (state: Open, now: number): Step =>
   State.Idle.$match(state.idle, {
     Active: () => stay({ ...state, idle: State.Idle.Since({ since: now }) }),
-    Since: ({ since }) => (now - since >= idleLimit ? stay(State.locked()) : stay(state)),
+    Since: ({ since }) => (now - since >= idleLimit ? stay(State.locked(0, state.size)) : stay(state)),
   })
 
 // The text a paste adds to a one-line input: everything before its first line break.
@@ -99,8 +103,14 @@ const select = (state: Open, cursor: number): Step => {
 }
 
 // Open on the first Vault, if any.
-const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vault>, clipboard: boolean): Step => {
+const openOn = (
+  size: Size,
+  passphrase: Redacted.Redacted<string>,
+  vaults: ReadonlyArray<Vault>,
+  clipboard: boolean,
+): Step => {
   const open = State.Open({
+    size,
     passphrase,
     vaults,
     cursor: 0,
@@ -116,7 +126,7 @@ const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vau
 const lockedKey = (state: Locked, key: Key): Step => {
   if (isQuitChord(key)) return quit()
 
-  if (isSuspendChord(key)) return suspend(state.attempt)
+  if (isSuspendChord(key)) return suspend(state.size, state.attempt)
 
   if (State.Phase.$is("Checking")(state.phase)) return stay(state)
 
@@ -125,8 +135,8 @@ const lockedKey = (state: Locked, key: Key): Step => {
     const attempt = state.attempt + 1
 
     return {
-      state: State.Locked({ entered: Concealed.empty, phase: State.Phase.Checking(), attempt }),
-      effects: [UiEffect.ListVaults({ passphrase: Redacted.make(Redacted.value(state.entered.value)) })],
+      state: State.Locked({ entered: Concealed.empty, phase: State.Phase.Checking(), attempt, size: state.size }),
+      effects: [UiEffect.ListVaults({ passphrase: Redacted.make(Redacted.value(state.entered.value)), attempt })],
     }
   }
 
@@ -138,14 +148,19 @@ const lockedKey = (state: Locked, key: Key): Step => {
 
 const fromLocked = (state: Locked, event: Event): Step => {
   const checking = State.Phase.$is("Checking")(state.phase)
+  // Whether the check of `attempt` is the one the prompt waits for.
+  const awaits = (attempt: number) => checking && attempt === state.attempt
 
   return Event.$match(event, {
     Key: ({ key }) => lockedKey(state, key),
     Paste: ({ text }) =>
       checking ? stay(state) : stay({ ...state, entered: Concealed.append(state.entered, firstLine(text)) }),
-    // An unlock answered after a quit or a newer attempt is dropped, Passphrase and all.
-    Unlocked: ({ passphrase, vaults, clipboard }) => (checking ? openOn(passphrase, vaults, clipboard) : stay(state)),
-    UnlockRefused: ({ problem }) => (checking ? refusedWith(state, problem) : stay(state)),
+    // An unlock answered after a quit, or for an attempt made before a Lock or before a newer one, is dropped,
+    // Passphrase and all.
+    Unlocked: ({ attempt, passphrase, vaults, clipboard }) =>
+      awaits(attempt) ? openOn(state.size, passphrase, vaults, clipboard) : stay(state),
+    UnlockRefused: ({ attempt, problem }) => (awaits(attempt) ? refusedWith(state, problem) : stay(state)),
+    Resize: ({ width, height }) => stay({ ...state, size: { width, height } }),
     WaitTick: ({ attempt }) =>
       attempt === state.attempt && State.Phase.$is("Refused")(state.phase)
         ? refusedWith(state, Problem.tick(state.phase.problem))
@@ -158,7 +173,7 @@ const fromLocked = (state: Locked, event: Event): Step => {
     // Nothing to time out: Locked holds no Passphrase.
     IdleTick: () => stay(state),
     // The typed input goes too, and a check in flight is dropped when it answers.
-    Suspend: () => suspend(state.attempt),
+    Suspend: () => suspend(state.size, state.attempt),
     TokensLoaded: () => stay(state),
     TokensRefused: () => stay(state),
     TokenRevoked: () => stay(state),
@@ -354,7 +369,26 @@ const modalKey = (state: Open, top: Modal, key: Key): Step =>
     Rename: (rename) => renameKey(state, rename, key),
     Renamed: () => (Key.is(key, "escape") || Key.is(key, "return") ? stay(dismissed(state)) : stay(state)),
     VaultName: (prompt) => vaultNameKey(state, prompt, key),
+    Help: () => stay(dismissed(state)),
   })
+
+// Whether `?` opens the help: not where it is typed (a prompt, a form, a filter being edited), not on a
+// confirmation (where it cancels, as any key but `y` does), and not over a Revealed value (which any key hides).
+const helpable = (state: Open): boolean => {
+  const top = state.modals.at(-1)
+  const { view } = state
+
+  if (top !== undefined)
+    return View.Modal.$is("Notice")(top) || View.Modal.$is("Issued")(top) || View.Modal.$is("Renamed")(top)
+
+  if (View.$is("ItemList")(view)) return !View.Filter.$is("Editing")(view.filter)
+
+  if (View.$is("ItemDetail")(view)) return !View.Reveal.$is("Shown")(view.reveal)
+
+  if (View.$is("Audit")(view)) return !Audit.editing(view)
+
+  return !View.$is("ItemForm")(view)
+}
 
 type RenameModal = Extract<Modal, { readonly _tag: "Rename" }>
 
@@ -509,11 +543,14 @@ const openKey = (state: Open, key: Key): Step => {
 
   if (isQuitChord(key)) return quit()
 
-  if (isSuspendChord(key)) return suspend()
+  if (isSuspendChord(key)) return suspend(state.size)
+
+  if (Key.printable(key) === "?" && helpable(state))
+    return stay({ ...state, modals: [...state.modals, View.Modal.Help()] })
   const top = state.modals.at(-1)
 
   if (top !== undefined) return modalKey(state, top, key)
-  const audit = View.$is("Audit")(view) ? Audit.key(view, key) : undefined
+  const audit = View.$is("Audit")(view) ? Audit.key(view, key, Audit.rowsAt(state.size)) : undefined
 
   if (audit !== undefined) return auditStep(state, audit)
 
@@ -936,7 +973,8 @@ const fromOpen = (state: Open, event: Event): Step =>
     UnlockRefused: () => stay(state),
     WaitTick: () => stay(state),
     IdleTick: ({ now }) => idleTick(state, now),
-    Suspend: () => suspend(),
+    Resize: ({ width, height }) => stay({ ...state, size: { width, height } }),
+    Suspend: () => suspend(state.size),
     Closed: quit,
     Revealed: (answer) => revealAnswer(state, answer, (view) => shownValue(state, view, answer)),
     RevealRefused: (answer) =>
@@ -960,10 +998,18 @@ const fromOpen = (state: Open, event: Event): Step =>
     ChangeRefused: ({ problem }) => changeRefused(state, problem),
   })
 
+// Input the Owner cannot see the effect of: a key or paste while the frame is below 80x24, which draws only its
+// notice. Ctrl-C and Ctrl-Z still work.
+const unseen = (state: State, event: Event): boolean =>
+  !Size.fits(state.size) &&
+  (Event.$is("Paste")(event) || (Event.$is("Key")(event) && !isQuitChord(event.key) && !isSuspendChord(event.key)))
+
 export const reduce = (state: State, event: Event): Step =>
-  State.$match(state, {
-    Locked: (locked) => fromLocked(locked, event),
-    Open: (open) => fromOpen(open, event),
-  })
+  unseen(state, event)
+    ? stay(state)
+    : State.$match(state, {
+        Locked: (locked) => fromLocked(locked, event),
+        Open: (open) => fromOpen(open, event),
+      })
 
 export * as Reducer from "./Reducer.js"

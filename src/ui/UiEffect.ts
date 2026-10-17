@@ -8,8 +8,8 @@ import type { Save } from "./ItemForm.js"
 // What the reducer asks the interpreter to do. Each request carries the Passphrase it is sent with, so the state
 // that asked for it need not hold it (Locked never does).
 export type UiEffect = Data.TaggedEnum<{
-  // `admin/vaults/list`: the unlock check and the sidebar in one request (no preflight).
-  ListVaults: { readonly passphrase: Redacted.Redacted<string> }
+  // `admin/vaults/list`: the unlock check and the sidebar in one request (no preflight), for submission `attempt`.
+  ListVaults: { readonly passphrase: Redacted.Redacted<string>; readonly attempt: number }
   // `admin/items/list` for one Vault.
   ListItems: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string }
   // One `admin/audit` page.

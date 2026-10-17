@@ -65,6 +65,7 @@ const selected = (): ReturnType<typeof press> => {
   const open = Reducer.reduce(
     checking,
     Event.Unlocked({
+      attempt: 1,
       passphrase: Redacted.make("right"),
       vaults: [vault("Personal"), vault("Work")],
       clipboard: false,
@@ -82,6 +83,7 @@ const shown = (state: State) =>
   Display.$match(Display.of(state), {
     Locked: () => ({ filter: "", message: "" }),
     Open: ({ filter, message }) => ({ filter, message }),
+    TooSmall: () => ({ filter: "", message: "" }),
   })
 
 const pageDown = Key.named("pagedown")
@@ -93,7 +95,12 @@ describe("Audit view", () => {
     assert.deepStrictEqual(asks(effects), [first])
     assert.strictEqual(shown(state).message, "Loading...")
 
-    const sidebar = Display.$match(Display.of(state), { Locked: () => [], Open: ({ sections }) => sections })
+    const sidebar = Display.$match(Display.of(state), {
+      Locked: () => [],
+      Open: ({ sections }) => sections,
+      TooSmall: () => [],
+    })
+
     assert.deepStrictEqual(sidebar, [
       { name: "Tokens", underCursor: false },
       { name: "Audit", underCursor: true },
@@ -138,20 +145,35 @@ describe("Audit view", () => {
 
   it("fetches the page below `next` once the bottom is in view, with the first page's query, and appends it", () => {
     const query = { since: "2026-10-10T09:30:05.123Z" }
-    const loaded = answered(selected().state, first, page(ids(100, 25), 76), query)
+    // A 100x30 frame: the pane shows 23 rows (30 less the hint bar, border, filter, status and header lines).
+    const tall = Reducer.reduce(selected().state, Event.Resize({ width: 100, height: 30 })).state
+    const loaded = answered(tall, first, page(ids(100, 50), 51), query)
     const scrolled = press(loaded, pageDown)
 
     assert.deepStrictEqual(scrolled.effects, [])
-    assert.include(shown(scrolled.state).message, "25 entries, from row 11, older entries load at the bottom")
+    assert.include(shown(scrolled.state).message, "50 entries, from row 24, older entries load at the bottom")
 
-    const bottom = press(scrolled.state, pageDown, pageDown, pageDown)
-    const next = Audit.Ask.Next({ query, before: 76 })
+    const bottom = press(scrolled.state, pageDown)
+    const next = Audit.Ask.Next({ query, before: 51 })
     assert.deepStrictEqual(asks(bottom.effects), [next])
-    assert.include(shown(bottom.state).message, "loading older entries")
+    assert.include(shown(bottom.state).message, "from row 28, loading older entries")
 
-    const appended = answered(bottom.state, next, page(ids(75, 5)))
-    assert.include(shown(appended).message, "30 entries, from row 16, end of the log")
+    const appended = answered(bottom.state, next, page(ids(50, 5)))
+    assert.include(shown(appended).message, "55 entries, from row 28, end of the log")
     assert.deepStrictEqual(press(appended, pageDown, pageDown).effects, [])
+    assert.include(shown(press(appended, pageDown).state).message, "from row 33, end of the log")
+  })
+
+  it("moves PgUp and PgDn by the rows the pane shows, which a resize changes", () => {
+    const loaded = answered(selected().state, first, page(ids(100, 100), 1))
+    // 80x24, the smallest frame: 17 rows.
+    assert.include(shown(press(loaded, pageDown).state).message, "from row 18,")
+
+    const tall = Reducer.reduce(loaded, Event.Resize({ width: 120, height: 40 })).state
+    // 40 rows less 7: 33.
+    const down = press(tall, pageDown).state
+    assert.include(shown(down).message, "from row 34,")
+    assert.include(shown(press(down, Key.named("pageup")).state).message, "from row 1,")
   })
 
   it("drops a first page answered after the filters changed, and a page nothing is waiting for", () => {
@@ -192,7 +214,7 @@ describe("Audit view", () => {
 
     assert.strictEqual(shown(refused).message, "Could not read the Audit Log.")
     assert.strictEqual(
-      Display.$match(Display.of(refused), { Locked: () => "", Open: ({ modal }) => modal ?? "" }),
+      Display.$match(Display.of(refused), { Locked: () => "", Open: ({ modal }) => modal ?? "", TooSmall: () => "" }),
       problem.message,
     )
   })

@@ -179,6 +179,9 @@ const mount = (renderer: CliRenderer): Screen => {
   modal.add(modalText)
 
   const hints = column(renderer, { flexGrow: 0 })
+  // A frame below 80x24 shows this alone, wrapped to the width there is.
+  const small = new TextRenderable(renderer, { content: "", wrapMode: "word", flexGrow: 1 })
+  root.add(small)
   root.add(locked)
   root.add(open)
   root.add(hints)
@@ -187,7 +190,17 @@ const mount = (renderer: CliRenderer): Screen => {
 
   const draw = (display: Display) =>
     Display.$match(display, {
+      TooSmall: ({ notice }) => {
+        small.visible = true
+        small.content = notice
+        locked.visible = false
+        open.visible = false
+        modal.visible = false
+        hints.visible = false
+      },
       Locked: (shown) => {
+        small.visible = false
+        hints.visible = true
         locked.visible = true
         open.visible = false
         modal.visible = false
@@ -196,6 +209,8 @@ const mount = (renderer: CliRenderer): Screen => {
         hints.content = shown.hints
       },
       Open: (shown) => {
+        small.visible = false
+        hints.visible = true
         locked.visible = false
         open.visible = true
         vaultNames.content = [...shown.vaults, ...shown.sections]

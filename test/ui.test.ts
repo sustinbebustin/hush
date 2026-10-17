@@ -3,6 +3,7 @@ import { Exit, Predicate, Schema } from "effect"
 
 import { type Headless, headless } from "./headless.js"
 import { passphraseSentinel, valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { cli, jobStopped, onPty, type Sandbox, sandbox, seedPassphrase, serverSupported } from "./sandbox.js"
 
 // `hush ui` under the headless renderer against a real Server: what the Owner sees, what the Server is asked,
@@ -13,13 +14,14 @@ const prompt = "hush Passphrase:"
 const withUi = async (
   seed: (box: Sandbox) => Promise<void>,
   body: (ui: Headless, box: Sandbox) => Promise<void>,
-  options: { readonly viaProxy?: boolean } = {},
+  options: { readonly viaProxy?: boolean; readonly width?: number; readonly height?: number } = {},
 ): Promise<void> => {
   const box = await sandbox()
 
   try {
     await seed(box)
-    const ui = await headless(box, options.viaProxy === true ? { server: box.proxy.url } : {})
+    const { viaProxy, ...size } = options
+    const ui = await headless(box, viaProxy === true ? { server: box.proxy.url, ...size } : size)
 
     try {
       await body(ui, box)
@@ -347,6 +349,102 @@ describe("hush ui at the command line", () => {
       }
     },
   )
+})
+
+// The smallest frame the UI lays out.
+const minimum = { width: 80, height: 24 } as const
+
+describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
+  it("opens the help of the Item rows on ?, and closes it on the next key with nothing sent", () =>
+    withUi(
+      seeded,
+      async (ui) => {
+        await unlock(ui)
+        await ui.waitFor("Stripe live key")
+        ui.keys.pressTab()
+        // The whole hint bar fits the 80 columns.
+        assert.include(await ui.waitFor("n rename"), "? help  q quit")
+        const before = (await ui.calls()).length
+
+        ui.keys.pressKey("?")
+        const help = await ui.waitFor("rename the Item")
+        assert.include(help, "release the Retired title")
+        assert.include(help, "Any key closes the help")
+
+        ui.keys.pressKey("x")
+        const closed = await ui.waitUntil((frame) => !frame.includes("rename the Item"))
+        assert.include(closed, "Stripe live key")
+        assert.strictEqual((await ui.calls()).length, before)
+      },
+      minimum,
+    ))
+
+  it("draws one notice below 80x24, takes no key there but Ctrl-C, and redraws the view on a resize back", () =>
+    withUi(
+      seeded,
+      async (ui) => {
+        await unlock(ui)
+        await ui.waitFor("Stripe live key")
+        const before = (await ui.calls()).length
+
+        ui.resize(60, 20)
+        const small = await ui.waitFor("needs 80x24")
+        assert.include(small, "60x20")
+        assert.notInclude(small, "Stripe live key")
+
+        // Neither quits nor selects anything the Owner cannot see.
+        ui.keys.pressKey("q")
+        ui.keys.pressArrow("down")
+        ui.keys.pressEnter()
+
+        ui.resize(minimum.width, minimum.height)
+        const back = await ui.waitFor("Stripe live key")
+        assert.match(back, /> Personal\s+2/)
+        assert.strictEqual((await ui.calls()).length, before)
+
+        ui.resize(120, 40)
+        assert.include(await ui.waitFor("Stripe live key"), "GitHub")
+      },
+      minimum,
+    ))
+
+  it("shows a refusal in an Open UI as the CLI words it: a Passphrase changed elsewhere", () =>
+    withUi(seeded, async (ui, box) => {
+      await unlock(ui)
+      await ui.waitFor("Stripe live key")
+
+      const changed = await box.run(["passphrase", "change", "--passphrase-stdin"], {
+        input: `${seedPassphrase}\na new fictional passphrase\n`,
+      })
+
+      assert.strictEqual(changed.code, 0, changed.stderr)
+      const printed = await box.run(["item", "list", "Work", "--passphrase-stdin"], { input: `${seedPassphrase}\n` })
+      assert.include(printed.stderr, "hush: The Passphrase is incorrect; nothing was changed.")
+
+      ui.keys.pressArrow("down")
+      ui.keys.pressEnter()
+      const notice = await ui.waitFor("The Passphrase is incorrect; nothing was changed.")
+      assert.include(notice, "Notice")
+      assert.notInclude(notice, "Try again.")
+    }))
+
+  it("shows an answer it cannot decode as the CLI's fixed message, never the response body", () =>
+    withUi(
+      seeded,
+      async (ui, box) => {
+        await unlock(ui)
+        await ui.waitFor("Stripe live key")
+
+        box.proxy.mode("garble-response")
+        ui.keys.pressArrow("down")
+        ui.keys.pressEnter()
+        const notice = await ui.waitFor("understand")
+        assert.include(notice, "Notice")
+
+        for (const frame of ui.frames()) assert.notInclude(frame, garbledMarker)
+      },
+      { viaProxy: true },
+    ))
 })
 
 describe.skipIf(!serverSupported)("hush ui leaks", () => {

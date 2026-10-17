@@ -53,6 +53,7 @@ const opened = (titles: ReadonlyArray<string> = []): State => {
   const open = Reducer.reduce(
     checking,
     Event.Unlocked({
+      attempt: 1,
       passphrase: Redacted.make("right"),
       vaults: [vault("Personal", titles.length), vault("Work", 0)],
       clipboard: false,
@@ -100,7 +101,7 @@ const holds = (state: State, text: string): boolean =>
 const submitted = (...keys: ReadonlyArray<Key>) => press(tokensOpened(), Key.char("i"), ...keys, Key.named("return"))
 
 const modalText = (state: State): string =>
-  Display.$match(Display.of(state), { Locked: () => "", Open: ({ modal }) => modal ?? "" })
+  Display.$match(Display.of(state), { Locked: () => "", Open: ({ modal }) => modal ?? "", TooSmall: () => "" })
 
 // The titles the Item list shows.
 const shown = (state: State): ReadonlyArray<string> | undefined => {
@@ -137,6 +138,7 @@ describe("Reducer from Locked", () => {
     const { state, effects } = Reducer.reduce(
       checking,
       Event.Unlocked({
+        attempt: 1,
         passphrase: Redacted.make("right"),
         vaults: [vault("Personal", 2), vault("Work", 0)],
         clipboard: false,
@@ -150,7 +152,7 @@ describe("Reducer from Locked", () => {
 
   it("opens with no Item request when the Server has no Vault", () => {
     const checking = press(State.initial, ...typing("right"), Key.named("return")).state
-    const unlocked = Event.Unlocked({ passphrase: Redacted.make("right"), vaults: [], clipboard: false })
+    const unlocked = Event.Unlocked({ attempt: 1, passphrase: Redacted.make("right"), vaults: [], clipboard: false })
     const { state, effects } = Reducer.reduce(checking, unlocked)
 
     assert.strictEqual(State.$is("Open")(state) ? state.view._tag : undefined, "NoVaults")
@@ -159,7 +161,7 @@ describe("Reducer from Locked", () => {
 
   it("counts a refusal's wait down one tick a second and stops at zero", () => {
     const checking = press(State.initial, ...typing("wrong"), Key.named("return")).state
-    const backoff = Event.UnlockRefused({ problem: Problem.Backoff({ retryAfterSeconds: 2 }) })
+    const backoff = Event.UnlockRefused({ attempt: 1, problem: Problem.Backoff({ retryAfterSeconds: 2 }) })
     const refused = Reducer.reduce(checking, backoff)
     assert.deepStrictEqual(asked(refused.effects), ["After"])
 
@@ -175,9 +177,18 @@ describe("Reducer from Locked", () => {
 
   it("ignores a wait tick from an earlier attempt", () => {
     const first = press(State.initial, ...typing("a"), Key.named("return")).state
-    const refused = Reducer.reduce(first, Event.UnlockRefused({ problem: Problem.Incorrect({ retryAfterSeconds: 5 }) }))
+
+    const refused = Reducer.reduce(
+      first,
+      Event.UnlockRefused({ attempt: 1, problem: Problem.Incorrect({ retryAfterSeconds: 5 }) }),
+    )
+
     const second = press(refused.state, ...typing("b"), Key.named("return")).state
-    const again = Reducer.reduce(second, Event.UnlockRefused({ problem: Problem.Incorrect({ retryAfterSeconds: 9 }) }))
+
+    const again = Reducer.reduce(
+      second,
+      Event.UnlockRefused({ attempt: 2, problem: Problem.Incorrect({ retryAfterSeconds: 9 }) }),
+    )
 
     assert.deepStrictEqual(Reducer.reduce(again.state, Event.WaitTick({ attempt: 1 })), {
       state: again.state,
@@ -218,7 +229,9 @@ const anyAsk = fc.oneof(
 const withoutUnlock: fc.Arbitrary<Event> = fc.oneof(
   anyKey.map((key) => Event.Key({ key })),
   fc.string().map((text) => Event.Paste({ text })),
-  anyProblem.map((problem) => Event.UnlockRefused({ problem })),
+  fc
+    .tuple(anyProblem, fc.integer({ min: 1, max: 3 }))
+    .map(([problem, attempt]) => Event.UnlockRefused({ attempt, problem })),
   fc
     .tuple(vaultName, fc.array(fc.string({ minLength: 1 }), { maxLength: 3 }))
     .map(([name, titles]) => Event.ItemsLoaded({ list: { vault: name, items: titles.map(item), retired: [] } })),
@@ -245,8 +258,10 @@ const anyEvent: fc.Arbitrary<Event> = fc.oneof(
   { arbitrary: withoutUnlock, weight: 5 },
   {
     arbitrary: fc
-      .subarray([vault("Personal", 1), vault("Work", 0)])
-      .map((vaults) => Event.Unlocked({ passphrase: Redacted.make("held passphrase"), vaults, clipboard: false })),
+      .tuple(fc.subarray([vault("Personal", 1), vault("Work", 0)]), fc.integer({ min: 1, max: 3 }))
+      .map(([vaults, attempt]) =>
+        Event.Unlocked({ attempt, passphrase: Redacted.make("held passphrase"), vaults, clipboard: false }),
+      ),
     weight: 1,
   },
 )
@@ -376,10 +391,13 @@ describe("Reducer when Open", () => {
       ["Issued", "Notice"],
     )
     assert.notInclude(
-      Display.$match(Display.of(issue(false)), { Locked: () => "", Open: ({ hints }) => hints }),
+      Display.$match(Display.of(issue(false)), { Locked: () => "", Open: ({ hints }) => hints, TooSmall: () => "" }),
       "c copy",
     )
-    assert.include(Display.$match(Display.of(issue(true)), { Locked: () => "", Open: ({ hints }) => hints }), "c copy")
+    assert.include(
+      Display.$match(Display.of(issue(true)), { Locked: () => "", Open: ({ hints }) => hints, TooSmall: () => "" }),
+      "c copy",
+    )
   })
 
   it("offers to replace a listed Label, keeping its Grants or starting the picker from them", () => {
@@ -508,6 +526,7 @@ const pane = (state: State) =>
   Display.$match(Display.of(state), {
     Locked: () => undefined,
     Open: ({ rows, retired, detail }) => ({ rows: rows.map(({ title }) => title), retired, detail }),
+    TooSmall: () => undefined,
   })
 
 describe("Reducer rename, delete and release", () => {
@@ -660,12 +679,27 @@ describe("Reducer suspend", () => {
     assert.deepStrictEqual(suspended, { state: State.locked(1), effects: [UiEffect.Suspend()] })
 
     const late = Event.Unlocked({
+      attempt: 1,
       passphrase: Redacted.make("right"),
       vaults: [vault("Personal", 0)],
       clipboard: false,
     })
 
     assert.deepStrictEqual(Reducer.reduce(suspended.state, late), { state: State.locked(1), effects: [] })
+
+    // Submitted again before the first check answers: the first check's answer is still dropped.
+    const again = press(suspended.state, ...typing("other"), Key.named("return")).state
+    assert.deepStrictEqual(Reducer.reduce(again, late), { state: again, effects: [] })
+    assert.deepStrictEqual(
+      Reducer.reduce(again, Event.UnlockRefused({ attempt: 1, problem: Problem.Incorrect({ retryAfterSeconds: 0 }) })),
+      {
+        state: again,
+        effects: [],
+      },
+    )
+
+    const current = Event.Unlocked({ attempt: 2, passphrase: Redacted.make("other"), vaults: [], clipboard: false })
+    assert.strictEqual(Reducer.reduce(again, current).state._tag, "Open")
 
     const typed = press(State.initial, ...typing("half typed"), suspendChord)
     assert.deepStrictEqual(typed, { state: State.locked(), effects: [UiEffect.Suspend()] })
@@ -709,5 +743,136 @@ describe("Reducer lock paths", () => {
         if (path.fromLocked || State.$is("Open")(before)) assertFresh(steps.at(-1)?.state)
       }),
     )
+  })
+})
+
+// The hint bar, and the topmost modal's title and text, as drawn; a frame too small for the UI is its notice.
+const drawn = (state: State) =>
+  Display.$match(Display.of(state), {
+    Locked: ({ hints }) => ({ hints, title: "", modal: "" }),
+    Open: ({ hints, modalTitle, modal }) => ({ hints, title: modalTitle, modal: modal ?? "" }),
+    TooSmall: ({ notice }) => ({ hints: notice, title: "", modal: "" }),
+  })
+
+// Every Key event `anyKey` makes, plus `?` and the view keys it leaves out.
+const withHelpKeys: fc.Arbitrary<Event> = fc.oneof(
+  anyEvent,
+  fc.constantFrom(..."?relhe".split("").map(Key.char)).map((key) => Event.Key({ key })),
+)
+
+// The modal box is 70% of an 80-column frame, less its border.
+const modalColumns = 54
+
+describe("Reducer help and hints", () => {
+  it("fits the hint bar in 80 columns, and each help line in the modal, in every state any events reach", () => {
+    fc.assert(
+      fc.property(fc.array(withHelpKeys, { maxLength: 40 }), (events) => {
+        for (const { state } of run(events)) {
+          const { hints, title, modal } = drawn(state)
+          assert.isAtMost(hints.length, 80, hints)
+
+          if (title === "Help") for (const line of modal.split("\n")) assert.isAtMost(line.length, modalColumns, line)
+        }
+      }),
+    )
+  })
+
+  it("opens the help for the Item rows on ?, and any key but Ctrl-C and Ctrl-Z closes it with nothing sent", () => {
+    const rows = listed(["a"], ["old title"])
+    const help = press(rows, Key.char("?"))
+    const shownHelp = drawn(help.state)
+
+    assert.deepStrictEqual(help.effects, [])
+    assert.strictEqual(shownHelp.title, "Help")
+    assert.include(shownHelp.modal, "rename the Item")
+    assert.include(shownHelp.modal, "release the Retired title")
+    assert.notInclude(shownHelp.modal, "create a Vault")
+    assert.include(shownHelp.hints, "Any key")
+
+    const closing = anyKey.filter((key) => !Key.is(key, "c", { ctrl: true }) && !Key.is(key, "z", { ctrl: true }))
+
+    fc.assert(
+      fc.property(closing, (key) => {
+        assert.deepStrictEqual(press(help.state, key), { state: rows, effects: [] })
+      }),
+    )
+  })
+
+  it("lists the keys of the view under it: the sidebar, the Item detail, the Token table and the Audit Log", () => {
+    const helpOf = (state: State) => drawn(press(state, Key.char("?")).state).modal
+
+    assert.include(helpOf(opened()), "create a Vault")
+    assert.include(helpOf(press(listed(["a"]), Key.named("return")).state), "reveal the Field")
+    assert.include(helpOf(tokensOpened()), "revoke the Token")
+
+    const audit = press(opened(), Key.named("down"), Key.named("down"), Key.named("down"), Key.named("return")).state
+    assert.include(helpOf(audit), "PgUp, PgDn")
+  })
+
+  it("lists a notice's keys over the notice, which stays once the help closes", () => {
+    const problem = Problem.Failed({ message: "Vault Work does not exist on this Server." })
+    const work = press(opened(), Key.named("down"), Key.named("return")).state
+    const refused = Reducer.reduce(work, Event.ItemsRefused({ vault: "Work", problem })).state
+    const help = press(refused, Key.char("?")).state
+
+    assert.include(drawn(help).modal, "Enter, Esc")
+    assert.strictEqual(drawn(press(help, Key.char("x")).state).modal, problem.message)
+  })
+
+  it("types ? into the filter and the rename prompt, and cancels a Confirm on ?, instead of opening the help", () => {
+    const filtering = press(opened(["a"]), Key.char("/"), Key.char("?")).state
+    assert.notStrictEqual(drawn(filtering).title, "Help")
+    assert.strictEqual(
+      Display.$match(Display.of(filtering), { Locked: () => "", Open: ({ filter }) => filter, TooSmall: () => "" }),
+      "/?_",
+    )
+
+    const renaming = press(listed(["a"]), Key.char("n"), Key.char("?")).state
+    assert.include(drawn(renaming).modal, "New title: ?_")
+
+    const rows = listed(["a"])
+    assert.deepStrictEqual(press(rows, Key.char("d"), Key.char("?")), { state: rows, effects: [] })
+  })
+})
+
+const resized = (state: State, width: number, height: number) => Reducer.reduce(state, Event.Resize({ width, height }))
+
+describe("Reducer resize", () => {
+  it("draws one notice below 80x24, takes no key but Ctrl-C and Ctrl-Z there, and redraws the view at 80x24", () => {
+    const rows = listed(["a"])
+
+    for (const [width, height] of [
+      [79, 24],
+      [80, 23],
+      [20, 5],
+    ] as const) {
+      const small = resized(rows, width, height)
+      assert.deepStrictEqual(small.effects, [])
+      const { hints } = drawn(small.state)
+      assert.include(hints, `${width}x${height}`)
+      assert.include(hints, "80x24")
+      assert.notInclude(hints, "\n")
+
+      fc.assert(
+        fc.property(
+          anyKey.filter((key) => !Key.is(key, "c", { ctrl: true })),
+          (key) => {
+            assert.deepStrictEqual(press(small.state, key), { state: small.state, effects: [] })
+          },
+        ),
+      )
+
+      assert.deepStrictEqual(asked(press(small.state, Key.named("c", { ctrl: true })).effects), ["Quit"])
+      assert.deepStrictEqual(asked(press(small.state, Key.named("z", { ctrl: true })).effects), ["Suspend"])
+      assert.deepStrictEqual(drawn(resized(small.state, 80, 24).state), drawn(rows))
+    }
+  })
+
+  it("keeps the frame size through a Lock, so the prompt is drawn at the size the terminal has", () => {
+    const small = resized(opened(), 60, 20).state
+    const locked = press(small, Key.named("z", { ctrl: true })).state
+
+    assert.strictEqual(locked._tag, "Locked")
+    assert.include(drawn(locked).hints, "60x20")
   })
 })

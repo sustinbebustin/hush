@@ -105,8 +105,8 @@ describe.skipIf(!serverSupported)("hush ui Audit", () => {
     withUi(async (ui, _box, logged) => {
       assert.include(await openAudit(ui), "100 entries, from row 1, older entries load at the bottom")
 
-      // PgDn moves ten rows; the bottom of the first page is in view from row 91.
-      for (let row = 11; row <= 81; row += 10) {
+      // PgDn moves the 23 rows a 30-row frame's pane shows; the bottom of the first page is in view from row 78.
+      for (const row of [24, 47, 70]) {
         ui.keys.pressKey(pageDown)
         await ui.waitFor(`from row ${row}, older entries`)
       }
@@ -117,12 +117,12 @@ describe.skipIf(!serverSupported)("hush ui Audit", () => {
       // Every entry exactly once: the seeded ones, the UI's unlock (`vault.list`) and Personal's `item.list`, from
       // the first page and the one below its `next`; never the UI's own reads, which each page's request writes.
       const total = logged + 2
-      await ui.waitFor(`${total} entries, from row 91, end of the log`)
+      await ui.waitFor(`${total} entries, from row 78, end of the log`)
       assert.strictEqual(await auditCalls(ui), 2)
 
       ui.keys.pressKey(pageDown)
       ui.keys.pressKey(pageDown)
-      const end = await ui.waitFor(`from row ${total - 9}, end of the log`)
+      const end = await ui.waitFor(`from row ${total - 22}, end of the log`)
       assert.match(end, /init\s+init\s+Personal/, end)
       assert.strictEqual(await auditCalls(ui), 2)
 

@@ -29,7 +29,7 @@ describe("Display", () => {
     const shown = Display.of(typed("pä😀"))
 
     assert.deepStrictEqual(
-      Display.$match(shown, { Locked: ({ prompt, mask }) => prompt + mask, Open: () => "" }),
+      Display.$match(shown, { Locked: ({ prompt, mask }) => prompt + mask, Open: () => "", TooSmall: () => "" }),
       "hush Passphrase: ***",
     )
   })
