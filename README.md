@@ -127,7 +127,7 @@ For agents, with a Token:
 | `hush env run <file> -- <command...>`                        | run a command with every value of a template                                |
 | `hush env resolve <file> --output <file>`                    | write the values to a new 0600 file, only for a tool that needs one         |
 | `hush create <kind> --title <title> --vault <vault> --stdin` | create an Item from piped input and verify it; never overwrites             |
-| `hush read <ref>`                                            | print one value: the only command that does                                 |
+| `hush read <ref>`                                            | print one value: the only agent command that does                           |
 | `hush token status`                                          | the current Token's Label, Grants and expiry                                |
 
 `run` and `env run` mask concealed values of 8 bytes or more in the child's piped output, best effort. `read` and `env resolve` are never masked.
@@ -139,6 +139,7 @@ For the Owner, with the Passphrase:
 | `hush init`                 | initialise a new Server                                        |
 | `hush vault`                | create, list and delete Vaults                                 |
 | `hush item`                 | edit, rename, delete and release existing Items                |
+| `hush item reveal <ref>`    | print one value on stdout; the Audit Log records its Reference |
 | `hush token issue`          | issue a Token with fixed Grants                                |
 | `hush token list`           | every Token with its Grants and state                          |
 | `hush token revoke <label>` | stop a Token at once                                           |
