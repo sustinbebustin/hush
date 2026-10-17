@@ -1,5 +1,6 @@
 import { Effect, Match } from "effect"
 
+import { unverifiedOnTransport } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
 import { CliError } from "../cli/CliError.js"
 import type { Target } from "../cli/Target.js"
@@ -46,6 +47,13 @@ export const run = (target: Target, work: Work): Effect.Effect<Event> => {
       Client.request(Api, target, (client) => client.admin.tokensList({ payload: { passphrase } })).pipe(
         Effect.map((list) => Event.TokensLoaded({ list })),
         Effect.catch((error) => Effect.succeed(Event.TokensRefused({ problem: refused(error) }))),
+      ),
+    RevokeToken: ({ passphrase, label }) =>
+      unverifiedOnTransport(
+        Client.request(Api, target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
+      ).pipe(
+        Effect.map((receipt) => Event.TokenRevoked({ label: receipt.label })),
+        Effect.catch((error) => Effect.succeed(Event.RevokeRefused({ problem: refused(error) }))),
       ),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),
   })

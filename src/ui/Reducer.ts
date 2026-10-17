@@ -6,7 +6,7 @@ import { Key } from "./Key.js"
 import { Problem } from "./Problem.js"
 import { State, type Locked, type Open, type Vault } from "./State.js"
 import { UiEffect } from "./UiEffect.js"
-import { type Filter, View } from "./View.js"
+import { type Filter, type Modal, View } from "./View.js"
 
 type ItemList = Extract<View, { readonly _tag: "ItemList" }>
 
@@ -53,11 +53,16 @@ const select = (state: Open, cursor: number): Step => {
   }
 }
 
-// The Tokens view, and its one `tokens/list`.
-const listTokens = (state: Open): Step => ({
-  state: { ...state, view: View.tokensLoading() },
-  effects: [UiEffect.ListTokens({ passphrase: state.passphrase })],
-})
+// The Tokens view, and its one `tokens/list`; a refresh keeps the table's row.
+const listTokens = (state: Open): Step => {
+  const { view } = state
+  const row = View.$is("Tokens")(view) && View.TokenTable.$is("Loaded")(view.table) ? view.table.row : 0
+
+  return {
+    state: { ...state, view: View.tokensLoading(row) },
+    effects: [UiEffect.ListTokens({ passphrase: state.passphrase })],
+  }
+}
 
 // The view for the sidebar row at `cursor`: a Vault, or an entry below the Vaults.
 const selectRow = (state: Open, cursor: number): Step => {
@@ -110,6 +115,8 @@ const fromLocked = (state: Locked, event: Event): Step => {
     ItemsRefused: () => stay(state),
     TokensLoaded: () => stay(state),
     TokensRefused: () => stay(state),
+    TokenRevoked: () => stay(state),
+    RevokeRefused: () => stay(state),
     Closed: quit,
   })
 }
@@ -128,9 +135,17 @@ const filterKey = (state: Open, view: ItemList, text: string, key: Key): Step =>
   return typed === undefined ? stay(state) : withFilter(View.Filter.Editing({ text: text + typed }))
 }
 
-// The topmost modal takes every key; Escape or Enter dismisses it.
-const modalKey = (state: Open, key: Key): Step =>
-  Key.is(key, "escape") || Key.is(key, "return") ? stay({ ...state, modals: state.modals.slice(0, -1) }) : stay(state)
+// The state without its topmost modal.
+const dismissed = (state: Open): Open => ({ ...state, modals: state.modals.slice(0, -1) })
+
+// The topmost modal takes every key: Escape or Enter dismisses a notice; `y` runs a confirmation's effect and any
+// other key cancels it.
+const modalKey = (state: Open, top: Modal, key: Key): Step =>
+  View.Modal.$match(top, {
+    Notice: () => (Key.is(key, "escape") || Key.is(key, "return") ? stay(dismissed(state)) : stay(state)),
+    Confirm: ({ effect }) =>
+      Key.is(key, "y") ? { state: dismissed(state), effects: [effect] } : stay(dismissed(state)),
+  })
 
 // Keys while the Token table has the focus: Up and Down move its row, Escape hands the focus back to the sidebar.
 const tableKey = (state: Open, view: TokensView, key: Key): Step => {
@@ -140,6 +155,19 @@ const tableKey = (state: Open, view: TokensView, key: Key): Step => {
   if (Key.is(key, "escape")) return withView({ ...view, focus: "sidebar" })
 
   if (!View.TokenTable.$is("Loaded")(table)) return stay(state)
+  const token = table.tokens[table.row]
+
+  if (Key.is(key, "d") && token !== undefined)
+    return stay({
+      ...state,
+      modals: [
+        ...state.modals,
+        View.Modal.Confirm({
+          description: `Revoke Token ${token.label}? Every use of it is refused from then on; this cannot be undone.`,
+          effect: UiEffect.RevokeToken({ passphrase: state.passphrase, label: token.label }),
+        }),
+      ],
+    })
 
   if (Key.is(key, "up") || Key.is(key, "k"))
     return withView({ ...view, table: { ...table, row: Math.max(0, table.row - 1) } })
@@ -157,8 +185,9 @@ const openKey = (state: Open, key: Key): Step => {
   const { view } = state
 
   if (isQuitChord(key)) return quit()
+  const top = state.modals.at(-1)
 
-  if (state.modals.length > 0) return modalKey(state, key)
+  if (top !== undefined) return modalKey(state, top, key)
 
   if (View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter))
     return filterKey(state, view, view.filter.text, key)
@@ -207,10 +236,13 @@ const answerFor = (state: Open, vault: string, update: (view: ItemList) => Open)
 }
 
 // `update` applied to the Tokens view while its table is being fetched; an answer after the Owner moved on is dropped.
-const tokensAnswer = (state: Open, update: (view: TokensView) => Open): Step => {
+// `row` is the row the table returns to.
+const tokensAnswer = (state: Open, update: (view: TokensView, row: number) => Open): Step => {
   const { view } = state
 
-  return View.$is("Tokens")(view) && View.TokenTable.$is("Loading")(view.table) ? stay(update(view)) : stay(state)
+  return View.$is("Tokens")(view) && View.TokenTable.$is("Loading")(view.table)
+    ? stay(update(view, view.table.row))
+    : stay(state)
 }
 
 const fromOpen = (state: Open, event: Event): Step =>
@@ -229,9 +261,15 @@ const fromOpen = (state: Open, event: Event): Step =>
         modals: [...state.modals, View.Modal.Notice({ problem })],
       })),
     TokensLoaded: ({ list }) =>
-      tokensAnswer(state, (view) => ({
+      tokensAnswer(state, (view, row) => ({
         ...state,
-        view: { ...view, table: View.TokenTable.Loaded({ tokens: list.tokens, row: 0 }) },
+        view: {
+          ...view,
+          table: View.TokenTable.Loaded({
+            tokens: list.tokens,
+            row: Math.max(0, Math.min(list.tokens.length - 1, row)),
+          }),
+        },
       })),
     TokensRefused: ({ problem }) =>
       tokensAnswer(state, (view) => ({
@@ -239,6 +277,9 @@ const fromOpen = (state: Open, event: Event): Step =>
         view: { ...view, table: View.TokenTable.Refused() },
         modals: [...state.modals, View.Modal.Notice({ problem })],
       })),
+    // A revoke answered while the Tokens view is up refreshes its table.
+    TokenRevoked: () => (View.$is("Tokens")(state.view) ? listTokens(state) : stay(state)),
+    RevokeRefused: ({ problem }) => stay({ ...state, modals: [...state.modals, View.Modal.Notice({ problem })] }),
     // Locked-only events: none reaches an Open UI except late, and none changes it.
     Unlocked: () => stay(state),
     UnlockRefused: () => stay(state),

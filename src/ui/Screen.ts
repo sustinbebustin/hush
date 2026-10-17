@@ -136,6 +136,7 @@ const mount = (renderer: CliRenderer): Screen => {
         kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
         modal.visible = shown.modal !== undefined
         modalText.content = shown.modal ?? ""
+        modal.title = shown.modalTitle
         hints.content = shown.hints
       },
     })

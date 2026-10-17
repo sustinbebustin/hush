@@ -2,7 +2,7 @@ import { Data } from "effect"
 
 import { Problem } from "./Problem.js"
 import { type Open, type Phase, State } from "./State.js"
-import { View } from "./View.js"
+import { type Modal, View } from "./View.js"
 
 // What the screen shows for a state, as plain text: the model the sync layer (`Screen`) copies into renderables.
 // It is pure and holds no secret: concealed input appears only as its mask, so a test can scan it.
@@ -50,6 +50,8 @@ export type Display = Data.TaggedEnum<{
     readonly message: string
     // The topmost modal's text, or undefined when there is none.
     readonly modal: string | undefined
+    // The topmost modal's box title, or empty when there is none.
+    readonly modalTitle: string
     readonly hints: string
   }
 }>
@@ -63,7 +65,8 @@ const lockedHints = "Enter unlock  Ctrl-C quit"
 const listHints = "Up/Down move  Enter open Vault  / filter  Esc clear filter  q quit"
 const filterHints = "Type to filter titles  Enter apply  Esc clear"
 const modalHints = "Enter or Esc dismiss  Ctrl-C quit"
-const tableHints = "Up/Down move  Esc sidebar  q quit"
+const confirmHints = "y confirm  any other key cancels"
+const tableHints = "Up/Down move  d revoke  Esc sidebar  q quit"
 const tokensSidebarHints = "Up/Down move  Enter open  q quit"
 
 const lockedNotice = (phase: Phase): string =>
@@ -128,8 +131,17 @@ const tokenRows = (view: View): ReadonlyArray<TokenRow> | undefined => {
   }))
 }
 
+// The topmost modal's box title, text and key hints.
+const modalShown = (top: Modal) =>
+  View.Modal.$match(top, {
+    Notice: ({ problem }) => ({ title: "Notice", text: Problem.message(problem), hints: modalHints }),
+    Confirm: ({ description }) => ({ title: "Confirm", text: description, hints: confirmHints }),
+  })
+
 const hintsFor = (state: Open) => {
-  if (state.modals.length > 0) return modalHints
+  const top = state.modals.at(-1)
+
+  if (top !== undefined) return modalShown(top).hints
   const { view } = state
 
   if (View.$is("Tokens")(view)) return view.focus === "table" ? tableHints : tokensSidebarHints
@@ -149,8 +161,8 @@ const open = (state: Open): Display => {
     entries: State.entries.map((name, index) => ({ name, underCursor: state.vaults.length + index === state.cursor })),
     tokens: tokenRows(state.view),
     ...pane(state.view),
-    modal:
-      top === undefined ? undefined : View.Modal.$match(top, { Notice: ({ problem }) => Problem.message(problem) }),
+    modal: top === undefined ? undefined : modalShown(top).text,
+    modalTitle: top === undefined ? "" : modalShown(top).title,
     hints: hintsFor(state),
   })
 }

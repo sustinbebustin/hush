@@ -67,4 +67,47 @@ describe.skipIf(!serverSupported)("hush ui Tokens", () => {
       assert.include(frame, "never")
       assert.deepStrictEqual(paths((await ui.calls()).slice(before)), ["/v1/admin/tokens/list"])
     }))
+
+  it("revokes the Token under the cursor only on y, then lists the Tokens once more", () =>
+    withUi(seeded, async (ui, box) => {
+      await unlock(ui)
+      await openTokens(ui, 2)
+      const before = (await ui.calls()).length
+
+      await ui.type("d")
+      assert.include(await ui.waitFor("Revoke Token agent on box?"), "y confirm")
+      await ui.type("n")
+      await ui.waitUntil((frame) => !frame.includes("Revoke Token"))
+      assert.strictEqual((await ui.calls()).length, before)
+      await ui.type("d")
+      await ui.waitFor("Revoke Token agent on box?")
+      await ui.type("y")
+      const revoked = await ui.waitFor("revoked")
+
+      assert.notInclude(revoked, "active")
+      assert.deepStrictEqual(paths((await ui.calls()).slice(before)), [
+        "/v1/admin/tokens/revoke",
+        "/v1/admin/tokens/list",
+      ])
+      const find = await box.run(["find", "anything"])
+      assert.strictEqual(find.code, 1)
+      assert.include(find.stderr, "Token agent on box was revoked")
+    }))
+
+  it("tells the Owner when the Token was already revoked, with the CLI's message", () =>
+    withUi(seeded, async (ui) => {
+      await unlock(ui)
+      await openTokens(ui, 2)
+      await ui.type("d")
+      await ui.waitFor("Revoke Token agent on box?")
+      await ui.type("y")
+      await ui.waitFor("revoked")
+
+      await ui.type("d")
+      await ui.waitFor("Revoke Token agent on box?")
+      await ui.type("y")
+      const refused = await ui.waitFor("No unrevoked Token is labelled agent on box")
+
+      assert.include(refused, "Notice")
+    }))
 })

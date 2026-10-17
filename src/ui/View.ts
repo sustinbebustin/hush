@@ -3,6 +3,7 @@ import { Data } from "effect"
 import type { ItemMeta, TokenInfo } from "../shared/Api.js"
 import { Match } from "../shared/Match.js"
 import type { Problem } from "./Problem.js"
+import type { UiEffect } from "./UiEffect.js"
 
 // What the main pane of an Open UI shows, and the modals stacked above it. Later views (Item detail, forms, Tokens,
 // Audit) join `View`; later modals (confirm, help) join `Modal`.
@@ -24,9 +25,10 @@ export type Items = Data.TaggedEnum<{
 
 const Items = Data.taggedEnum<Items>()
 
-// Every Token, newest first: asked for, answered (with the row under the table cursor), or refused.
+// Every Token, newest first: asked for (keeping the row a refresh returns to), answered (with the row under the
+// table cursor), or refused.
 export type TokenTable = Data.TaggedEnum<{
-  Loading: {}
+  Loading: { readonly row: number }
   Loaded: { readonly tokens: ReadonlyArray<TokenInfo>; readonly row: number }
   Refused: {}
 }>
@@ -47,6 +49,8 @@ const { NoVaults, ItemList, Tokens, $is, $match } = Data.taggedEnum<View>()
 
 export type Modal = Data.TaggedEnum<{
   Notice: { readonly problem: Problem }
+  // A destructive step held until the Owner answers: `y` runs `effect`, any other key cancels it.
+  Confirm: { readonly description: string; readonly effect: UiEffect }
 }>
 
 const Modal = Data.taggedEnum<Modal>()
@@ -59,8 +63,8 @@ const loading = (vault: string): View =>
 const visible = (items: ReadonlyArray<ItemMeta>, filter: Filter): ReadonlyArray<ItemMeta> =>
   items.filter(({ title }) => Match.matches(filter.text, title))
 
-// The Token table being fetched, with the table focused.
-const tokensLoading = (): View => Tokens({ table: TokenTable.Loading(), focus: "table" })
+// The Token table being fetched, with the table focused and its cursor to return to `row`.
+const tokensLoading = (row = 0): View => Tokens({ table: TokenTable.Loading({ row }), focus: "table" })
 
 export const View = {
   NoVaults,

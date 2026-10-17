@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { Redacted } from "effect"
 import * as fc from "fast-check"
 
-import type { ItemMeta } from "../src/shared/Api.js"
+import type { ItemMeta, TokenInfo } from "../src/shared/Api.js"
 import { Event } from "../src/ui/Event.js"
 import { Key } from "../src/ui/Key.js"
 import { Problem } from "../src/ui/Problem.js"
@@ -57,6 +57,23 @@ const opened = (titles: ReadonlyArray<string> = []): State => {
 
   return Reducer.reduce(open, Event.ItemsLoaded({ list: { vault: "Personal", items: titles.map(item), retired: [] } }))
     .state
+}
+
+const tokenInfo = (label: string): TokenInfo => ({
+  label,
+  grants: [{ vault: "Personal", access: "read+create" }],
+  createdAt: "2026-10-01T00:00:00.000Z",
+  expiresAt: null,
+  revokedAt: null,
+  lastUsedAt: null,
+  state: "active",
+})
+
+// The Tokens view of `opened()`, its table answered with `labels` and focused.
+const tokensOpened = (labels: ReadonlyArray<string> = ["agent on box"]): State => {
+  const listing = press(opened(), Key.named("down"), Key.named("down"), Key.named("return")).state
+
+  return Reducer.reduce(listing, Event.TokensLoaded({ list: { tokens: labels.map(tokenInfo) } })).state
 }
 
 // The titles the Item list shows.
@@ -239,6 +256,29 @@ describe("Reducer when Open", () => {
 
     assert.strictEqual(State.$is("Open")(top.state) ? top.state.cursor : undefined, 0)
     assert.strictEqual(State.$is("Open")(bottom.state) ? bottom.state.cursor : undefined, 1 + State.entries.length)
+  })
+
+  it("revokes through a Confirm modal only on y; any other key cancels it with no request", () => {
+    const confirming = press(tokensOpened(), Key.char("d")).state
+    const modal = State.$is("Open")(confirming) ? confirming.modals.at(-1) : undefined
+    assert.strictEqual(modal?._tag, "Confirm")
+
+    const confirmed = press(confirming, Key.char("y"))
+    assert.deepStrictEqual(asked(confirmed.effects), ["RevokeToken"])
+    const [revoke] = confirmed.effects
+    assert.strictEqual(revoke?._tag === "RevokeToken" ? revoke.label : undefined, "agent on box")
+    assert.deepStrictEqual(State.$is("Open")(confirmed.state) ? confirmed.state.modals : undefined, [])
+
+    const others = anyKey.filter((key) => !Key.is(key, "y") && !Key.is(key, "c", { ctrl: true }))
+
+    fc.assert(
+      fc.property(others, (key) => {
+        const cancelled = press(confirming, key)
+
+        assert.deepStrictEqual(cancelled.effects, [])
+        assert.deepStrictEqual(State.$is("Open")(cancelled.state) ? cancelled.state.modals : undefined, [])
+      }),
+    )
   })
 
   it("asks for one Token list when Enter selects the Tokens entry, and drops a late Item answer", () => {

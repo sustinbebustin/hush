@@ -16,6 +16,8 @@ export type Event = Data.TaggedEnum<{
   ItemsRefused: { readonly vault: string; readonly problem: Problem }
   TokensLoaded: { readonly list: TokenList }
   TokensRefused: { readonly problem: Problem }
+  TokenRevoked: { readonly label: string }
+  RevokeRefused: { readonly problem: Problem }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
   // The renderer was destroyed from outside the reducer: an exit signal such as SIGHUP or SIGTERM.
@@ -25,7 +27,7 @@ export type Event = Data.TaggedEnum<{
 const { Key, Paste, Unlocked, UnlockRefused, ItemsLoaded, ItemsRefused, WaitTick, Closed, $is, $match } =
   Data.taggedEnum<Event>()
 
-const { TokensLoaded, TokensRefused } = Data.taggedEnum<Event>()
+const { TokensLoaded, TokensRefused, TokenRevoked, RevokeRefused } = Data.taggedEnum<Event>()
 
 export const Event = {
   Key,
@@ -36,6 +38,8 @@ export const Event = {
   ItemsRefused,
   TokensLoaded,
   TokensRefused,
+  TokenRevoked,
+  RevokeRefused,
   WaitTick,
   Closed,
   $is,
