@@ -138,6 +138,7 @@ For the Owner, with the Passphrase:
 | --------------------------- | -------------------------------------------------------------- |
 | `hush init`                 | initialise a new Server                                        |
 | `hush vault`                | create, list and delete Vaults                                 |
+| `hush item list <vault>`    | a Vault's Items and Retired titles, never a value, no Token    |
 | `hush item`                 | edit, rename, delete and release existing Items                |
 | `hush token issue`          | issue a Token with fixed Grants                                |
 | `hush token list`           | every Token with its Grants and state                          |
