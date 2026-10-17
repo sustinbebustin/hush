@@ -21,6 +21,12 @@ export type UiEffect = Data.TaggedEnum<{
   IssueToken: { readonly passphrase: Redacted.Redacted<string>; readonly fields: IssueFields }
   // The issued Token onto the host clipboard.
   CopyToken: { readonly token: Redacted.Redacted<string> }
+  // `admin/vaults/create`, once; the name is checked as `hush vault create` checks it, before anything is sent.
+  CreateVault: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string }
+  // `admin/vaults/delete`, once.
+  DeleteVault: { readonly passphrase: Redacted.Redacted<string>; readonly vault: string }
+  // `admin/vaults/list` for the sidebar, after a Vault was created or deleted.
+  RefreshVaults: { readonly passphrase: Redacted.Redacted<string> }
   // `event` after `millis`.
   After: { readonly millis: number; readonly event: Event }
   // Destroy the renderer and end the UI.
@@ -35,6 +41,8 @@ const { ListVaults, ListItems, ListAudit, After, Quit, Suspend, Reveal, $is, $ma
 
 const { ListTokens, RevokeToken, IssueToken, CopyToken } = Data.taggedEnum<UiEffect>()
 
+const { CreateVault, DeleteVault, RefreshVaults } = Data.taggedEnum<UiEffect>()
+
 export const UiEffect = {
   ListVaults,
   ListItems,
@@ -43,6 +51,9 @@ export const UiEffect = {
   RevokeToken,
   IssueToken,
   CopyToken,
+  CreateVault,
+  DeleteVault,
+  RefreshVaults,
   After,
   Quit,
   Suspend,
