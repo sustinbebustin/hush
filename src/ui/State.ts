@@ -18,6 +18,16 @@ export type Phase = Data.TaggedEnum<{
 
 const Phase = Data.taggedEnum<Phase>()
 
+// How long an Open UI has gone without a keypress, as the idle clock's ticks saw it: a key since the last tick (or
+// none yet since it opened), or none since the tick at `since` (Unix milliseconds). Keys carry no time, so the idle
+// time starts at the first tick after the last key: the UI never locks early, and late by at most one tick.
+export type Idle = Data.TaggedEnum<{
+  Active: {}
+  Since: { readonly since: number }
+}>
+
+const Idle = Data.taggedEnum<Idle>()
+
 export type Vault = VaultList["vaults"][number]
 
 export type State = Data.TaggedEnum<{
@@ -35,6 +45,7 @@ export type State = Data.TaggedEnum<{
     readonly view: View
     // Topmost last; keys go to the topmost modal.
     readonly modals: ReadonlyArray<Modal>
+    readonly idle: Idle
   }
 }>
 
@@ -53,4 +64,4 @@ const initial: State = locked()
 const passphrase = (state: State): Redacted.Redacted<string> | undefined =>
   $is("Open")(state) ? state.passphrase : undefined
 
-export const State = { Locked, Open, $is, $match, Phase, locked, initial, passphrase } as const
+export const State = { Locked, Open, $is, $match, Phase, Idle, locked, initial, passphrase } as const

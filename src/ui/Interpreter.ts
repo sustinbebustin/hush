@@ -13,8 +13,8 @@ import type { UiEffect } from "./UiEffect.js"
 // (one request, no retry), and timers. Each ends in the one event that reports it; every expected failure becomes
 // a `Problem` rendered from typed fields, so no response body reaches the screen (invariant 2).
 
-// The effects run here; `Quit` is the loop's own.
-export type Work = Exclude<UiEffect, { readonly _tag: "Quit" }>
+// The effects run here; `Quit` and `Suspend` act on the renderer, so they are the loop's own.
+export type Work = Exclude<UiEffect, { readonly _tag: "Quit" | "Suspend" }>
 
 const problemOf =
   (target: Target) =>

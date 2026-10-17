@@ -13,8 +13,10 @@ export type UiEffect = Data.TaggedEnum<{
   After: { readonly millis: number; readonly event: Event }
   // Destroy the renderer and end the UI.
   Quit: {}
+  // Suspend the renderer (restoring the terminal) and stop the process; on SIGCONT, resume the renderer.
+  Suspend: {}
 }>
 
-const { ListVaults, ListItems, After, Quit, $is, $match } = Data.taggedEnum<UiEffect>()
+const { ListVaults, ListItems, After, Quit, Suspend, $is, $match } = Data.taggedEnum<UiEffect>()
 
-export const UiEffect = { ListVaults, ListItems, After, Quit, $is, $match } as const
+export const UiEffect = { ListVaults, ListItems, After, Quit, Suspend, $is, $match } as const

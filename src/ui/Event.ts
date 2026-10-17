@@ -16,12 +16,30 @@ export type Event = Data.TaggedEnum<{
   ItemsRefused: { readonly vault: string; readonly problem: Problem }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
-  // The renderer was destroyed from outside the reducer: an exit signal such as SIGHUP or SIGTERM.
+  // The idle clock's tick, every second for the UI's whole run: `now` is the wall clock in Unix milliseconds, so time
+  // the host spent asleep counts as idle.
+  IdleTick: { readonly now: number }
+  // SIGTSTP from outside (Ctrl-Z itself arrives as a key, the terminal being raw): Lock, then suspend.
+  Suspend: {}
+  // An exit signal (SIGHUP when the terminal detaches, SIGTERM and the rest), or the renderer destroyed from outside
+  // the reducer.
   Closed: {}
 }>
 
-const { Key, Paste, Unlocked, UnlockRefused, ItemsLoaded, ItemsRefused, WaitTick, Closed, $is, $match } =
-  Data.taggedEnum<Event>()
+const {
+  Key,
+  Paste,
+  Unlocked,
+  UnlockRefused,
+  ItemsLoaded,
+  ItemsRefused,
+  WaitTick,
+  IdleTick,
+  Suspend,
+  Closed,
+  $is,
+  $match,
+} = Data.taggedEnum<Event>()
 
 export const Event = {
   Key,
@@ -31,6 +49,8 @@ export const Event = {
   ItemsLoaded,
   ItemsRefused,
   WaitTick,
+  IdleTick,
+  Suspend,
   Closed,
   $is,
   $match,

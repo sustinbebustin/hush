@@ -3,7 +3,7 @@ import { Exit, Predicate, Schema } from "effect"
 
 import { type Headless, headless } from "./headless.js"
 import { passphraseSentinel, valueSentinel } from "./leaks.js"
-import { cli, onPty, type Sandbox, sandbox, seedPassphrase, serverSupported } from "./sandbox.js"
+import { cli, jobStopped, onPty, type Sandbox, sandbox, seedPassphrase, serverSupported } from "./sandbox.js"
 
 // `hush ui` under the headless renderer against a real Server: what the Owner sees, what the Server is asked,
 // and that no secret is ever drawn.
@@ -13,12 +13,13 @@ const prompt = "hush Passphrase:"
 const withUi = async (
   seed: (box: Sandbox) => Promise<void>,
   body: (ui: Headless, box: Sandbox) => Promise<void>,
+  options: { readonly viaProxy?: boolean } = {},
 ): Promise<void> => {
   const box = await sandbox()
 
   try {
     await seed(box)
-    const ui = await headless(box)
+    const ui = await headless(box, options.viaProxy === true ? { server: box.proxy.url } : {})
 
     try {
       await body(ui, box)
@@ -183,6 +184,77 @@ describe.skipIf(!serverSupported)("hush ui", () => {
     }))
 })
 
+const tenMinutes = 10 * 60 * 1_000
+
+// Ten minutes idle on the UI's clock: one real tick first, so the idle time has started from the last keypress.
+const idleTenMinutes = async (ui: Headless) => {
+  await sleep(1.5)
+  ui.advanceClock(tenMinutes)
+}
+
+describe.skipIf(!serverSupported)("hush ui lock paths", () => {
+  it("locks after ten minutes without a keypress and opens again at the Vault sidebar on the Passphrase", () =>
+    withUi(seeded, async (ui) => {
+      await unlock(ui)
+      await ui.waitFor("Stripe live key")
+      ui.keys.pressArrow("down")
+      await ui.waitFor("> Work")
+
+      await idleTenMinutes(ui)
+      const locked = await ui.waitFor(prompt)
+      assert.notInclude(locked, "Stripe live key")
+      assert.notInclude(locked, "Work")
+
+      await ui.type(seedPassphrase)
+      ui.keys.pressEnter()
+      const reopened = await ui.waitFor("Stripe live key")
+      assert.match(reopened, /> Personal\s+2/)
+
+      assert.deepStrictEqual(
+        (await ui.calls()).map(({ path }) => path).filter((path) => path.endsWith("/list")),
+        ["/v1/admin/vaults/list", "/v1/admin/items/list", "/v1/admin/vaults/list", "/v1/admin/items/list"],
+      )
+    }))
+
+  it("drops the answer to a request in flight when the UI locks", () =>
+    withUi(
+      seeded,
+      async (ui, box) => {
+        await unlock(ui)
+        await ui.waitFor("Stripe live key")
+
+        box.proxy.mode("hold-response")
+        ui.keys.pressArrow("down")
+        ui.keys.pressEnter()
+        await ui.waitFor("Loading...")
+        await idleTenMinutes(ui)
+        await ui.waitFor(prompt)
+        assert.lengthOf(itemListCalls(await ui.calls()), 2)
+
+        box.proxy.mode("pass")
+        await sleep(0.5)
+        const after = await ui.waitFor(prompt)
+        assert.notInclude(after, "No Items")
+
+        await ui.type(seedPassphrase)
+        ui.keys.pressEnter()
+        assert.include(await ui.waitFor("Stripe live key"), "> Personal")
+
+        for (const frame of ui.frames()) assert.notInclude(frame, "No Items in this Vault.")
+      },
+      { viaProxy: true },
+    ))
+
+  it("quits on an exit signal such as SIGHUP, ending the UI and destroying the renderer", () =>
+    withUi(seeded, async (ui) => {
+      await unlock(ui)
+      await ui.waitFor("Stripe live key")
+      process.emit("SIGHUP", "SIGHUP")
+
+      assert.isTrue(Exit.isSuccess(await ui.ended))
+    }))
+})
+
 // A flag of `stty -a` set (not `-flag`).
 const sttySet = (output: string, flag: string) => new RegExp(`(^|\\s)${flag}(\\s|$)`).test(output)
 
@@ -230,6 +302,45 @@ describe("hush ui at the command line", () => {
         assert.deepStrictEqual(
           result.calls.map(({ path }) => path),
           ["/v1/admin/vaults/list", "/v1/admin/items/list"],
+        )
+      } finally {
+        await box.close()
+      }
+    },
+  )
+
+  it.skipIf(!onPty || !serverSupported)(
+    "locks on Ctrl-Z, gives the terminal back while stopped, and shows the Locked prompt after `fg`",
+    async () => {
+      const box = await sandbox()
+
+      try {
+        await seeded(box)
+
+        const result = await box.run(["ui"], {
+          tty: {
+            keys: [
+              { after: prompt, keys: `${seedPassphrase}\r` },
+              { after: "api-credential", keys: "\x1a" },
+              // Past the shell's notice, so the prompt matched next is the one drawn after `fg`.
+              { after: jobStopped, keys: "" },
+              { after: "Passphrase", keys: `${seedPassphrase}\r` },
+              { after: "api-credential", keys: "q" },
+            ],
+            jobControl: true,
+            sttyAfter: true,
+          },
+        })
+
+        assert.strictEqual(result.code, 0, result.stdout)
+        // While stopped, the terminal is back in its own mode, off the alternate screen.
+        const stopped = result.stdout.slice(0, result.stdout.indexOf(jobStopped))
+        assert.isTrue(stopped.lastIndexOf("\x1b[?1049l") > stopped.lastIndexOf("\x1b[?1049h"), result.stdout)
+        assert.isTrue(sttySet(result.stdout, "icanon"), result.stdout)
+        assert.notInclude(result.stdout, seedPassphrase)
+        assert.deepStrictEqual(
+          result.calls.map(({ path }) => path),
+          ["/v1/admin/vaults/list", "/v1/admin/items/list", "/v1/admin/vaults/list", "/v1/admin/items/list"],
         )
       } finally {
         await box.close()
