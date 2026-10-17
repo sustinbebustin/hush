@@ -3,7 +3,8 @@
 # as `ghcr.io/sustinbebustin/hush:<package.json version>`, inspects its config, runs it under the shipped
 # deploy/compose.yaml (host networking, read-only rootfs), then from the host CLI runs Init (the code read with
 # `docker exec`), create, resolve and `hush backup`. It also checks that core dumps are off in the container and
-# that `hush init --vault` inside it fails before any prompt with the message naming the fix.
+# that `hush init --vault` inside it fails before any prompt with the message naming the fix, and that `hush ui`
+# in the image draws its Locked prompt on a pty (util-linux `script` on the host).
 # Usage, from the repository root on Linux: `sh scripts/smoke-docker.sh <host hush binary>`.
 # It needs the container name `hush`, the volume `hush-data` and 127.0.0.1:7787 free, and removes both at the end.
 set -eu
@@ -79,5 +80,21 @@ printf 'smoke-value\n' | "$hush" create api-credential --title Key --vault Smoke
 test "$("$hush" read hush://Smoke/Key/credential)" = smoke-value || fail "resolve did not return the created value"
 printf '%s\n' "$passphrase" | "$hush" backup "$root/backup.db" --passphrase-stdin >/dev/null
 test "$(head -c 15 "$root/backup.db")" = "SQLite format 3" || fail "the backup is not a SQLite database"
+
+# `hush ui` in the image, on a pty from the host (util-linux `script`): drawing the Locked prompt proves the image's
+# binary loads OpenTUI's native library on its libc. Bun extracts that library to /tmp and maps it from there, so
+# this container's /tmp allows exec; the Compose deployment's does not, and the UI runs from a CLI machine instead.
+# Ctrl-C, typed once the prompt is up, quits it with exit 0. The match is one word: the renderer redraws only the
+# cells that changed.
+{
+  tries=0
+  until grep -q 'Passphrase:' "$root/ui.out" 2>/dev/null || [ "$tries" -gt 300 ]; do
+    tries=$((tries + 1))
+    sleep 0.1
+  done
+  printf '\003'
+} | timeout 40 script -qec "docker run --rm -it --read-only --tmpfs /tmp:exec --entrypoint hush $image ui" /dev/null \
+  >"$root/ui.out" || fail "hush ui in the image did not exit 0 on Ctrl-C: $(cat "$root/ui.out")"
+grep -q 'hush Passphrase:' "$root/ui.out" || fail "hush ui in the image drew no Locked prompt: $(cat "$root/ui.out")"
 
 echo "smoke-docker: ok"

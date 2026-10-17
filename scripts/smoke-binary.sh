@@ -1,7 +1,8 @@
 #!/bin/sh
 # Compiled-binary smoke test: runs the crypto vectors compiled with `bun build --compile`, then
 # starts the `hush` binary on a fresh state dir (migrations on a fresh database), Inits, creates, resolves, runs
-# `hush backup` and `hush server backup`, restarts on the existing database and resolves again.
+# `hush backup` and `hush server backup`, runs `hush ui` on a pty (Locked prompt, unlock, `q` exits 0), restarts on
+# the existing database and resolves again. Needs util-linux `script` and `timeout`.
 # Usage, from the repository root: `sh scripts/smoke-binary.sh [binary]`. Without a binary it compiles `bin/hush`
 # for this host. Exits non-zero at the first failing step.
 set -eu
@@ -75,14 +76,39 @@ for name in api host stdout; do
   test "$(head -c 15 "$root/$name.db")" = "SQLite format 3"
 done
 
+# Waits up to 10 s until the file $1 holds the text $2.
+await_text() {
+  tries=0
+  until grep -q "$2" "$1" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 100 ]; then return 0; fi
+    sleep 0.1
+  done
+}
+
 # `hush ui` on a pty (util-linux `script`) loads OpenTUI's embedded native library and draws the Locked prompt;
-# Ctrl-C, typed once the prompt is up, quits it. stdin stays open meanwhile, since `script` passes its end on.
-{
-  sleep 2
-  printf '\003'
-} | timeout 10 script -qec "$hush ui" /dev/null >"$root/ui.out"
+# the Passphrase, typed once the prompt is up, opens it on the Smoke Vault, and `q` then quits it with exit 0.
+# stdin stays open meanwhile, since `script` passes its end on. Each match is one word: the renderer redraws only
+# the cells that changed.
+if ! {
+  await_text "$root/ui.out" 'Passphrase:'
+  printf '%s\r' "$passphrase"
+  await_text "$root/ui.out" 'api-credential'
+  printf 'q'
+} | timeout 20 script -qec "$hush ui" /dev/null >"$root/ui.out"; then
+  echo "smoke: hush ui did not exit 0 on q" >&2
+  exit 1
+fi
 if ! grep -q 'hush Passphrase:' "$root/ui.out"; then
   echo "smoke: hush ui drew no Locked prompt" >&2
+  exit 1
+fi
+if ! grep -q 'api-credential' "$root/ui.out"; then
+  echo "smoke: hush ui did not open on the Passphrase" >&2
+  exit 1
+fi
+if grep -qF "$passphrase" "$root/ui.out"; then
+  echo "smoke: hush ui drew the Passphrase" >&2
   exit 1
 fi
 
