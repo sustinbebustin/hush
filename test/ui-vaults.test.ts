@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Schema } from "effect"
 
 import { type Headless, headless } from "./headless.js"
 import { valueSentinel } from "./leaks.js"
@@ -43,11 +44,16 @@ const unlock = async (ui: Headless) => {
 
 const paths = (calls: ReadonlyArray<{ readonly path: string }>) => calls.map(({ path }) => path)
 
+// `hush vault list` output, as far as these tests read it.
+const VaultNames = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ vaults: Schema.Array(Schema.Struct({ vault: Schema.String })) })),
+)
+
 const vaultNames = async (box: Sandbox): Promise<ReadonlyArray<string>> => {
   const listed = await admin(box, ["vault", "list"])
   assert.strictEqual(listed.code, 0, listed.stderr)
 
-  return (JSON.parse(listed.stdout) as { vaults: ReadonlyArray<{ vault: string }> }).vaults.map(({ vault }) => vault)
+  return VaultNames(listed.stdout).vaults.map(({ vault }) => vault)
 }
 
 describe.skipIf(!serverSupported)("hush ui Vaults", () => {
