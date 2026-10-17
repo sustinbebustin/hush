@@ -1,6 +1,8 @@
 import { Data, type Redacted } from "effect"
 
-import type { VaultItems, VaultList } from "../shared/Api.js"
+import type { AuditQuery } from "../cli/Admin.js"
+import type { AuditPage, VaultItems, VaultList } from "../shared/Api.js"
+import type { Ask } from "./Audit.js"
 import type { Key as Keypress } from "./Key.js"
 import type { Problem } from "./Problem.js"
 
@@ -14,6 +16,9 @@ export type Event = Data.TaggedEnum<{
   UnlockRefused: { readonly problem: Problem }
   ItemsLoaded: { readonly list: VaultItems }
   ItemsRefused: { readonly vault: string; readonly problem: Problem }
+  // The page `ask` asked for, and the query sent for it.
+  AuditListed: { readonly ask: Ask; readonly query: AuditQuery; readonly page: AuditPage }
+  AuditRefused: { readonly ask: Ask; readonly problem: Problem }
   // One second of a Passphrase wait passed; `attempt` is the attempt that started it, so a stale tick is ignored.
   WaitTick: { readonly attempt: number }
   // The renderer was destroyed from outside the reducer: an exit signal such as SIGHUP or SIGTERM.
@@ -36,6 +41,8 @@ const {
   UnlockRefused,
   ItemsLoaded,
   ItemsRefused,
+  AuditListed,
+  AuditRefused,
   WaitTick,
   Closed,
   Revealed,
@@ -52,6 +59,8 @@ export const Event = {
   UnlockRefused,
   ItemsLoaded,
   ItemsRefused,
+  AuditListed,
+  AuditRefused,
   WaitTick,
   Closed,
   Revealed,

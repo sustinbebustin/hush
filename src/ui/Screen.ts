@@ -52,10 +52,17 @@ const mount = (renderer: CliRenderer): Screen => {
   const detail = new TextRenderable(renderer, { content: "", wrapMode: "char" })
   rows.add(titles)
   rows.add(kinds)
+  // The Audit rows from the scroll position down, cut at the pane's bottom edge: a zero basis, so the rows take the
+  // height left below the filter and status lines instead of squeezing them out.
+  const logBox = new BoxRenderable(renderer, { flexGrow: 1, flexBasis: 0, overflow: "hidden" })
+  // Cut at the right edge too, not truncated in the middle, so the columns stay in place and only detail is lost.
+  const log = new TextRenderable(renderer, { content: "", wrapMode: "none" })
+  logBox.add(log)
   main.add(filterLine)
   main.add(message)
   main.add(rows)
   main.add(detail)
+  main.add(logBox)
   open.add(sidebar)
   open.add(main)
 
@@ -93,10 +100,12 @@ const mount = (renderer: CliRenderer): Screen => {
       Open: (shown) => {
         locked.visible = false
         open.visible = true
-        vaultNames.content = shown.vaults
+        vaultNames.content = [...shown.vaults, ...shown.sections]
           .map(({ name, underCursor }) => `${underCursor ? ">" : " "} ${name}`)
           .join("\n")
         vaultCounts.content = shown.vaults.map(({ items }) => String(items)).join("\n")
+        logBox.visible = shown.log.length > 0
+        log.content = shown.log.join("\n")
         main.title = shown.title
         filterLine.content = shown.filter
         filterLine.visible = shown.filter !== ""
@@ -104,7 +113,7 @@ const mount = (renderer: CliRenderer): Screen => {
         message.visible = shown.message !== ""
         titles.content = shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`).join("\n")
         kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
-        rows.visible = shown.detail.length === 0
+        rows.visible = shown.detail.length === 0 && shown.log.length === 0
         detail.content = shown.detail.join("\n")
         detail.visible = shown.detail.length > 0
         modal.visible = shown.modal !== undefined

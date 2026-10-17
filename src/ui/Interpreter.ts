@@ -1,10 +1,12 @@
-import { Effect, Match } from "effect"
+import { Clock, Effect, Match } from "effect"
 
+import { Admin, type AuditQuery } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
-import { CliError } from "../cli/CliError.js"
+import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
 import type { Target } from "../cli/Target.js"
 import { Api } from "../shared/Api.js"
-import { type ApiError, BackoffActive, isApiError, PassphraseIncorrect } from "../shared/ApiError.js"
+import { type ApiError, BackoffActive, type InvalidName, isApiError, PassphraseIncorrect } from "../shared/ApiError.js"
+import { Audit, type Ask } from "./Audit.js"
 import { Event } from "./Event.js"
 import { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
@@ -34,6 +36,23 @@ const problemOf =
     return renderedOf(target)(error)
   }
 
+// A filter as `hush audit` takes its flag: empty is no filter.
+const typed = (text: string) => (text === "" ? undefined : text)
+
+// The query an Audit request sends: a first page's filters checked and resolved as `hush audit` resolves its
+// flags (a relative since against the clock now), a later page's the query its first page sent.
+const auditQuery = (ask: Ask): Effect.Effect<AuditQuery, AuditFlagsInvalid | InvalidName> =>
+  Audit.Ask.$match(ask, {
+    First: ({ filters }) => {
+      const flags = { vault: typed(filters.vault), label: typed(filters.label), since: typed(filters.since) }
+
+      return Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        Effect.fromResult(Admin.auditQuery({ ...flags, limit: undefined, before: undefined }, now)),
+      )
+    },
+    Next: ({ query }) => Effect.succeed(query),
+  })
+
 export const run = (target: Target, work: Work): Effect.Effect<Event> => {
   const refused = problemOf(target)
 
@@ -47,6 +66,19 @@ export const run = (target: Target, work: Work): Effect.Effect<Event> => {
       Client.request(Api, target, (client) => client.admin.itemsList({ payload: { passphrase, vault } })).pipe(
         Effect.map((list) => Event.ItemsLoaded({ list })),
         Effect.catch((error) => Effect.succeed(Event.ItemsRefused({ vault, problem: refused(error) }))),
+      ),
+    ListAudit: ({ passphrase, ask }) =>
+      auditQuery(ask).pipe(
+        Effect.flatMap((query) =>
+          Client.request(Api, target, (client) =>
+            client.admin.audit({
+              payload: Audit.Ask.$is("Next")(ask)
+                ? { passphrase, ...query, before: ask.before }
+                : { passphrase, ...query },
+            }),
+          ).pipe(Effect.map((page) => Event.AuditListed({ ask, query, page }))),
+        ),
+        Effect.catch((error) => Effect.succeed(Event.AuditRefused({ ask, problem: refused(error) }))),
       ),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),
     // A refused Reveal is a notice in an Open UI, not the Locked prompt, so even a wrong Passphrase (changed

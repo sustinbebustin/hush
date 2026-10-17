@@ -3,10 +3,11 @@ import { Data, type Redacted } from "effect"
 import type { ItemMeta } from "../shared/Api.js"
 import { Match } from "../shared/Match.js"
 import { Reference } from "../shared/Reference.js"
+import type * as AuditView from "./Audit.js"
 import type { Problem } from "./Problem.js"
 
-// What the main pane of an Open UI shows, and the modals stacked above it. Later views (forms, Tokens,
-// Audit) join `View`; later modals (confirm, help) join `Modal`.
+// What the main pane of an Open UI shows, and the modals stacked above it. Later views (forms, Tokens)
+// join `View`; later modals (confirm, help) join `Modal`.
 
 // The Item list's filter over titles: being typed, or applied (an empty text shows every Item).
 export type Filter = Data.TaggedEnum<{
@@ -66,9 +67,16 @@ export type View = Data.TaggedEnum<{
     // Reveals asked for in this detail so far: the next one's generation.
     readonly reveals: number
   }
+  // The Audit Log from `top`, the first row shown (see `Audit`).
+  Audit: {
+    readonly filters: AuditView.Filters
+    readonly form: AuditView.Form
+    readonly log: AuditView.Log
+    readonly top: number
+  }
 }>
 
-const { NoVaults, ItemList, ItemDetail, $is, $match } = Data.taggedEnum<View>()
+const { NoVaults, ItemList, ItemDetail, Audit, $is, $match } = Data.taggedEnum<View>()
 
 export type Modal = Data.TaggedEnum<{
   Notice: { readonly problem: Problem }
@@ -118,6 +126,7 @@ export const View = {
   NoVaults,
   ItemList,
   ItemDetail,
+  Audit,
   $is,
   $match,
   Filter,

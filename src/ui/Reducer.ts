@@ -1,14 +1,18 @@
 import { Redacted } from "effect"
 
+import { Audit, type Move } from "./Audit.js"
 import { Concealed } from "./Concealed.js"
 import { Event } from "./Event.js"
 import { Key } from "./Key.js"
 import { Problem } from "./Problem.js"
+import { Sidebar } from "./Sidebar.js"
 import { State, type Locked, type Open, type Vault } from "./State.js"
 import { UiEffect } from "./UiEffect.js"
-import { type Filter, View } from "./View.js"
+import { type Filter, type Modal, View } from "./View.js"
 
 type ItemList = Extract<View, { readonly _tag: "ItemList" }>
+
+type AuditView = Extract<View, { readonly _tag: "Audit" }>
 
 // The pure reducer: one event and the current state in, the next state and the effects to run out. It never
 // imports the renderer or the Client; `Ui` runs the effects and draws the state.
@@ -39,9 +43,17 @@ const refusedWith = (state: Locked, problem: Problem): Step => {
   return Problem.wait(problem) === 0 ? stay(refused) : { state: refused, effects: [tick(state.attempt)] }
 }
 
-// The view for the Vault at `cursor`, and its one Item request.
+// The Audit view's move as a step: its view, and its request with the held Passphrase.
+const auditStep = (state: Open, { view, ask }: Move): Step => ({
+  state: { ...state, view },
+  effects: ask === undefined ? [] : [UiEffect.ListAudit({ passphrase: state.passphrase, ask })],
+})
+
+// The view for the sidebar row at `cursor`: a Vault and its one Item request, or a section and its first request.
 const select = (state: Open, cursor: number): Step => {
   const selected = state.vaults[cursor]
+
+  if (Sidebar.section(state.vaults.length, cursor) === "Audit") return auditStep({ ...state, cursor }, Audit.start())
 
   if (selected === undefined) return stay({ ...state, view: View.NoVaults() })
 
@@ -51,9 +63,12 @@ const select = (state: Open, cursor: number): Step => {
   }
 }
 
-// Open on the first Vault.
-const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vault>): Step =>
-  select(State.Open({ passphrase, vaults, cursor: 0, view: View.NoVaults(), modals: [] }), 0)
+// Open on the first Vault, if any.
+const openOn = (passphrase: Redacted.Redacted<string>, vaults: ReadonlyArray<Vault>): Step => {
+  const open = State.Open({ passphrase, vaults, cursor: 0, view: View.NoVaults(), modals: [] })
+
+  return vaults.length === 0 ? stay(open) : select(open, 0)
+}
 
 const lockedKey = (state: Locked, key: Key): Step => {
   if (isQuitChord(key)) return quit()
@@ -93,6 +108,8 @@ const fromLocked = (state: Locked, event: Event): Step => {
     // Answers for an Open UI that Locked meanwhile: dropped.
     ItemsLoaded: () => stay(state),
     ItemsRefused: () => stay(state),
+    AuditListed: () => stay(state),
+    AuditRefused: () => stay(state),
     Closed: quit,
     // A Reveal answered after a Lock: dropped, value and all.
     Revealed: () => stay(state),
@@ -125,6 +142,9 @@ const openKey = (state: Open, key: Key): Step => {
   if (isQuitChord(key)) return quit()
 
   if (state.modals.length > 0) return modalKey(state, key)
+  const audit = View.$is("Audit")(view) ? Audit.key(view, key) : undefined
+
+  if (audit !== undefined) return auditStep(state, audit)
 
   if (View.$is("ItemList")(view) && View.Filter.$is("Editing")(view.filter))
     return filterKey(state, view, view.filter.text, key)
@@ -145,7 +165,7 @@ const openKey = (state: Open, key: Key): Step => {
   if (Key.is(key, "up") || Key.is(key, "k")) return stay({ ...state, cursor: Math.max(0, state.cursor - 1) })
 
   if (Key.is(key, "down") || Key.is(key, "j"))
-    return stay({ ...state, cursor: Math.min(state.vaults.length - 1, state.cursor + 1) })
+    return stay({ ...state, cursor: Math.min(Sidebar.rows(state.vaults.length) - 1, state.cursor + 1) })
 
   if (Key.is(key, "return")) return select(state, state.cursor)
 
@@ -259,6 +279,9 @@ const expired = (state: Open, generation: number): Step => {
 const openPaste = (state: Open, text: string): Step => {
   const { view } = state
 
+  if (state.modals.length === 0 && View.$is("Audit")(view))
+    return stay({ ...state, view: Audit.paste(view, firstLine(text)) })
+
   if (state.modals.length > 0 || !View.$is("ItemList")(view) || !View.Filter.$is("Editing")(view.filter))
     return stay(state)
 
@@ -278,6 +301,21 @@ const answerFor = (state: Open, vault: string, update: (view: ItemList) => Open)
     : stay(state)
 }
 
+// An Audit answer applied by `update`, with `notices` stacked on top; dropped when the Audit view is gone or no
+// longer waiting for it.
+const auditAnswer = (
+  state: Open,
+  update: (view: AuditView) => AuditView | undefined,
+  notices: ReadonlyArray<Modal>,
+): Step => {
+  const { view } = state
+  const answered = View.$is("Audit")(view) ? update(view) : undefined
+
+  return answered === undefined
+    ? stay(state)
+    : stay({ ...state, view: answered, modals: [...state.modals, ...notices] })
+}
+
 const fromOpen = (state: Open, event: Event): Step =>
   Event.$match(event, {
     Key: ({ key }) => openKey(state, key),
@@ -293,6 +331,9 @@ const fromOpen = (state: Open, event: Event): Step =>
         view: { ...view, items: View.Items.Refused() },
         modals: [...state.modals, View.Modal.Notice({ problem })],
       })),
+    AuditListed: ({ ask, query, page }) => auditAnswer(state, (view) => Audit.listed(view, ask, query, page), []),
+    AuditRefused: ({ ask, problem }) =>
+      auditAnswer(state, (view) => Audit.refused(view, ask), [View.Modal.Notice({ problem })]),
     // Locked-only events: none reaches an Open UI except late, and none changes it.
     Unlocked: () => stay(state),
     UnlockRefused: () => stay(state),
