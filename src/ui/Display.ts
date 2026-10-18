@@ -468,6 +468,25 @@ const open = (state: Open): Display => {
   })
 }
 
+// The Open layout with nothing in it: what the screen puts in its hidden Open renderables while the frame is Locked
+// or too small, so their buffers keep nothing of the session (a Revealed value, an issued Token, typed text).
+const blank: Extract<Display, { readonly _tag: "Open" }> = OpenDisplay({
+  vaults: [],
+  sections: [],
+  tokens: undefined,
+  title: "",
+  filter: "",
+  rows: [],
+  retired: [],
+  message: "",
+  detail: [],
+  log: [],
+  form: undefined,
+  modal: undefined,
+  modalTitle: "",
+  hints: "",
+})
+
 const tooSmall = ({ width, height }: Size) =>
   TooSmall({
     notice: `hush ui needs ${Size.minimum.width}x${Size.minimum.height}; this terminal is ${width}x${height}. Enlarge it; Ctrl-C quits.`,
@@ -482,4 +501,4 @@ const of = (state: State): Display =>
       })
     : tooSmall(state.size)
 
-export const Display = { of, $match } as const
+export const Display = { of, blank, $match } as const

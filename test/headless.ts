@@ -1,3 +1,4 @@
+import { InputRenderable, type Renderable, TextRenderable } from "@opentui/core"
 import { createTestRenderer, TestRecorder, type MockInput } from "@opentui/core/testing"
 import { Clock, Effect, Exit, Redacted } from "effect"
 
@@ -20,6 +21,8 @@ export interface Headless {
   readonly frame: () => string
   // Every frame committed since the UI started, as text: what a leak scan reads.
   readonly frames: () => ReadonlyArray<string>
+  // The text every renderable holds now, drawn or hidden: what the renderer's buffers keep.
+  readonly contents: () => ReadonlyArray<string>
   // Waits until the frame shows `text` and returns that frame.
   readonly waitFor: (text: string) => Promise<string>
   // Waits until the frame satisfies `predicate` and returns that frame.
@@ -95,6 +98,12 @@ export const fakeClipboard = (): FakeClipboard => {
   }
 }
 
+// The text of `renderable` and its descendants: each Text's content and each Input's value.
+const contentsOf = (renderable: Renderable): ReadonlyArray<string> => [
+  ...(renderable instanceof TextRenderable || renderable instanceof InputRenderable ? [renderable.plainText] : []),
+  ...renderable.getChildren().flatMap(contentsOf),
+]
+
 export const headless = async (
   box: Sandbox,
   {
@@ -145,6 +154,7 @@ export const headless = async (
     keys: setup.mockInput,
     frame: () => setup.captureCharFrame(),
     frames: () => recorder.recordedFrames.map(({ frame }) => frame),
+    contents: () => contentsOf(setup.renderer.root),
     waitFor: (text) => waitUntil((frame) => frame.includes(text)),
     waitUntil,
     type: (text) => setup.mockInput.typeText(text),

@@ -203,4 +203,22 @@ describe.skipIf(!serverSupported)("hush ui Reveal", () => {
 
       noSecretIn(ui.frames())
     }))
+
+  it("leaves no Revealed value in any renderable once the UI locks, hidden or drawn", () =>
+    withUi(async (ui) => {
+      await open(ui, "GitHub")
+      await ui.type("r")
+      await ui.waitUntil(showsValue)
+      assert.isTrue(ui.contents().some(showsAnyOfValue))
+
+      // One real idle tick first, so the idle time has started; then ten minutes on the UI's clock.
+      await new Promise((resolve) => setTimeout(resolve, 1_500))
+      ui.advanceClock(10 * 60 * 1_000)
+      await ui.waitFor("hush Passphrase:")
+
+      for (const text of ui.contents()) {
+        assert.isFalse(showsAnyOfValue(text), text)
+        assert.notInclude(text, username)
+      }
+    }))
 })

@@ -87,7 +87,14 @@ const mountForm = (renderer: CliRenderer) => {
       const row = form?.[index]
       line.visible = row !== undefined
 
-      if (row === undefined) continue
+      if (row === undefined) {
+        // An unused row keeps nothing an earlier form typed.
+        label.content = ""
+        input.value = ""
+        shown.content = ""
+        continue
+      }
+
       label.content = `${row.focused ? ">" : " "} ${row.label}`
       input.visible = ItemForm.Cell.$is("Input")(row.cell)
       shown.visible = !input.visible
@@ -112,6 +119,8 @@ const retiredLines = (retired: ReadonlyArray<RetiredRow>): ReadonlyArray<string>
   retired.length === 0
     ? []
     : ["", "Retired titles", ...retired.map(({ key, underCursor }) => `${underCursor ? ">" : " "} ${key}`)]
+
+type OpenShown = Extract<Display, { readonly _tag: "Open" }>
 
 const mount = (renderer: CliRenderer): Screen => {
   const root = new BoxRenderable(renderer, { width: "100%", height: "100%", flexDirection: "column" })
@@ -188,9 +197,41 @@ const mount = (renderer: CliRenderer): Screen => {
   root.add(modal)
   renderer.root.add(root)
 
+  // The Open layout's text, and which of its parts show.
+  const fillOpen = (shown: OpenShown) => {
+    vaultNames.content = [...shown.vaults, ...shown.sections]
+      .map(({ name, underCursor }) => `${underCursor ? ">" : " "} ${name}`)
+      .join("\n")
+    vaultCounts.content = shown.vaults.map(({ items }) => String(items)).join("\n")
+    logBox.visible = shown.log.length > 0
+    log.content = shown.log.join("\n")
+    tokenTable.draw(shown.tokens)
+    itemForm.draw(shown.form)
+    main.title = shown.title
+    filterLine.content = shown.filter
+    filterLine.visible = shown.filter !== ""
+    message.content = shown.message
+    message.visible = shown.message !== ""
+    titles.content = [
+      ...shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`),
+      ...retiredLines(shown.retired),
+    ].join("\n")
+    kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
+    rows.visible =
+      shown.detail.length === 0 && shown.log.length === 0 && shown.tokens === undefined && shown.form === undefined
+    detail.content = shown.detail.join("\n")
+    detail.visible = shown.detail.length > 0
+    modal.visible = shown.modal !== undefined
+    modalText.content = shown.modal ?? ""
+    modal.title = shown.modalTitle
+    hints.content = shown.hints
+  }
+
   const draw = (display: Display) =>
     Display.$match(display, {
+      // Nothing Open held (a Revealed value, an issued Token, typed text) stays in a hidden renderable's buffer.
       TooSmall: ({ notice }) => {
+        fillOpen(Display.blank)
         small.visible = true
         small.content = notice
         locked.visible = false
@@ -199,7 +240,9 @@ const mount = (renderer: CliRenderer): Screen => {
         hints.visible = false
       },
       Locked: (shown) => {
+        fillOpen(Display.blank)
         small.visible = false
+        small.content = ""
         hints.visible = true
         locked.visible = true
         open.visible = false
@@ -210,35 +253,13 @@ const mount = (renderer: CliRenderer): Screen => {
       },
       Open: (shown) => {
         small.visible = false
+        small.content = ""
         hints.visible = true
         locked.visible = false
         open.visible = true
-        vaultNames.content = [...shown.vaults, ...shown.sections]
-          .map(({ name, underCursor }) => `${underCursor ? ">" : " "} ${name}`)
-          .join("\n")
-        vaultCounts.content = shown.vaults.map(({ items }) => String(items)).join("\n")
-        logBox.visible = shown.log.length > 0
-        log.content = shown.log.join("\n")
-        tokenTable.draw(shown.tokens)
-        itemForm.draw(shown.form)
-        main.title = shown.title
-        filterLine.content = shown.filter
-        filterLine.visible = shown.filter !== ""
-        message.content = shown.message
-        message.visible = shown.message !== ""
-        titles.content = [
-          ...shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`),
-          ...retiredLines(shown.retired),
-        ].join("\n")
-        kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
-        rows.visible =
-          shown.detail.length === 0 && shown.log.length === 0 && shown.tokens === undefined && shown.form === undefined
-        detail.content = shown.detail.join("\n")
-        detail.visible = shown.detail.length > 0
-        modal.visible = shown.modal !== undefined
-        modalText.content = shown.modal ?? ""
-        modal.title = shown.modalTitle
-        hints.content = shown.hints
+        promptLine.content = ""
+        lockedNotice.content = ""
+        fillOpen(shown)
       },
     })
 
