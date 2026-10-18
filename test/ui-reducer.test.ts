@@ -621,6 +621,41 @@ describe("Reducer rename, delete and release", () => {
     assert.deepStrictEqual(asked(press(listedAgain.state, Key.char("d"), Key.char("y")).effects), ["RevokeToken"])
   })
 
+  it("checks the Item form as the CLI does before sending, keeping the hidden value when a check refuses", () => {
+    const filled = press(
+      listed(["a"]),
+      Key.char("c"),
+      Key.named("down"),
+      ...typing("-bad title"),
+      Key.named("down"),
+      ...typing("fictional-kept-secret"),
+    ).state
+
+    const refused = press(filled, Key.named("return"))
+    assert.deepStrictEqual(refused.effects, [])
+    assert.include(modalText(refused.state), "title is not a valid name")
+
+    const form =
+      State.$is("Open")(refused.state) && View.$is("ItemForm")(refused.state.view) ? refused.state.view : undefined
+
+    assert.strictEqual(form?.phase, "editing")
+    assert.strictEqual(
+      form?.form._tag === "Create" ? Redacted.value(form.form.concealed.value) : undefined,
+      "fictional-kept-secret",
+    )
+
+    const fixed = press(
+      refused.state,
+      Key.named("escape"),
+      Key.named("up"),
+      ...Array.from({ length: 10 }, () => Key.named("backspace")),
+      ...typing("good title"),
+      Key.named("return"),
+    )
+
+    assert.deepStrictEqual(asked(fixed.effects), ["SaveItem"])
+  })
+
   it("counts the Vault's Items in the sidebar as its list answers, so a delete lowers the count", () => {
     const before = press(opened(["a", "b"]), Key.named("tab"))
     assert.deepStrictEqual(counts(before.state), [2, 0])

@@ -7,7 +7,6 @@ import { Name } from "../shared/Name.js"
 import { Reference } from "../shared/Reference.js"
 import { passphraseCommand, passphraseOnly, type SecretSource, sentOnce, unverifiedOnTransport } from "./Admin.js"
 import { Client } from "./Client.js"
-import { Create } from "./Create.js"
 import {
   EditFlagsInvalid,
   type InputSourceConflict,
@@ -18,6 +17,7 @@ import {
   UnexpectedResponse,
 } from "./CliError.js"
 import { PassphraseStdin } from "./PassphraseStdin.js"
+import { PlainField } from "./PlainField.js"
 import { PrivateInput } from "./PrivateInput.js"
 import type { Target } from "./Target.js"
 
@@ -170,7 +170,7 @@ export const itemCreate = (input: ItemCreateInput) =>
       prepare: Effect.all({
         vault: parse("vault", input.vault),
         title: parse("title", input.title),
-        plain: Effect.forEach(input.plain, (field) => Create.plainField(input.kind, field)),
+        plain: Effect.forEach(input.plain, (field) => Effect.fromResult(PlainField.check(input.kind, field))),
       }),
       send: ({ vault, title, plain }, { passphrase, value }) =>
         Effect.gen(function* () {

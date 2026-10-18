@@ -5,7 +5,7 @@ import { Target } from "../src/cli/Target.js"
 import { Clipboard } from "../src/ui/Clipboard.js"
 import { Event } from "../src/ui/Event.js"
 import { Interpreter } from "../src/ui/Interpreter.js"
-import { ItemForm } from "../src/ui/ItemForm.js"
+import { ItemWrite } from "../src/ui/ItemWrite.js"
 import { Problem } from "../src/ui/Problem.js"
 import { UiEffect } from "../src/ui/UiEffect.js"
 import { type FakeClipboard, fakeClipboard, type Headless, headless } from "./headless.js"
@@ -253,15 +253,19 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
       assert.strictEqual(clipboard.reads(), 1)
     }))
 
+  // `checked`: refused by a check the UI makes before sending, as the CLI does, so the concealed buffer is kept; the
+  // Server's refusal comes after the buffer left with the write.
   const refusals = [
     {
       name: "ItemExists",
+      checked: false,
       title: "GitHub",
       steps: 1,
       cli: ["item", "create", "login", "--vault", "Personal", "--title", "GitHub", "--stdin"],
     },
     {
       name: "InvalidValue",
+      checked: true,
       title: "Stripe live key",
       notes: "   ",
       cli: [
@@ -279,8 +283,8 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
     },
   ] as const
 
-  for (const { name, title, cli, ...rest } of refusals)
-    it(`shows the CLI's ${name} message and keeps the form, its concealed buffer dropped`, () =>
+  for (const { name, checked, title, cli, ...rest } of refusals)
+    it(`shows the CLI's ${name} message and keeps the form, its concealed buffer ${checked ? "kept" : "dropped"}`, () =>
       withUi(async (ui, box) => {
         const message = await cliMessage(box, cli, secret)
         await fill(ui, { title, steps: "steps" in rest ? rest.steps : 0 })
@@ -296,7 +300,9 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
 
         const form = await ui.waitUntil((frame) => !frame.includes("nothing was"))
         assert.include(form, `New Item in Personal`)
-        assert.match(form, /(password|credential) +\(required, hidden\)/)
+
+        if (checked) assert.match(form, new RegExp(`credential +\\*{${[...secret].length}}`))
+        else assert.match(form, /(password|credential) +\(required, hidden\)/)
         noSecretIn(ui.frames())
       }))
 
@@ -505,15 +511,14 @@ describe.skipIf(!serverSupported)("hush ui Item write refusals", () => {
         Target.load({ HOME: box.home, HUSH_SERVER: box.server.url, HUSH_PROXY: "direct" }),
       )
 
-      const save = ItemForm.Save.Edit({
-        vault: "Personal",
-        item: { title: "GitHub", kind: "login", createdAt: "", updatedAt: "", fields: [] },
-        label: "nosuch",
-        change: ItemForm.Change.Remove(),
-      })
+      const write = ItemWrite.Edit({ vault: "Personal", item: "GitHub", change: { remove: "nosuch" } })
 
       const answer = await Effect.runPromise(
-        Interpreter.run(target, UiEffect.SaveItem({ passphrase: Redacted.make(seedPassphrase), save }), Clipboard.none),
+        Interpreter.run(
+          target,
+          UiEffect.SaveItem({ passphrase: Redacted.make(seedPassphrase), write }),
+          Clipboard.none,
+        ),
       )
 
       assert.deepStrictEqual(answer, Event.ItemSaveRefused({ problem: Problem.Failed({ message }) }))

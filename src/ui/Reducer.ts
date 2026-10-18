@@ -1,4 +1,4 @@
-import { Redacted } from "effect"
+import { Redacted, Result } from "effect"
 
 import type { ItemEditReceipt, ItemMeta, ItemRenamed } from "../shared/Api.js"
 import { Passphrase } from "../shared/Passphrase.js"
@@ -9,6 +9,7 @@ import { Concealed } from "./Concealed.js"
 import { Event } from "./Event.js"
 import { IssueForm } from "./IssueForm.js"
 import { ItemForm } from "./ItemForm.js"
+import { ItemWrite } from "./ItemWrite.js"
 import { Key } from "./Key.js"
 import { Problem } from "./Problem.js"
 import { Sidebar } from "./Sidebar.js"
@@ -606,10 +607,14 @@ const formKey = (state: Open, view: ItemFormView, key: Key): Step => {
 
   if (!Key.is(key, "return")) return stay({ ...state, view: { ...view, form: ItemForm.key(view.form, key) } })
 
-  return {
-    state: { ...state, view: { ...view, form: ItemForm.sent(view.form), phase: "sending" } },
-    effects: [UiEffect.SaveItem({ passphrase: state.passphrase, save: ItemForm.submit(view.form) })],
-  }
+  // The CLI's checks first, so a refusal keeps what was typed (the concealed value too) under its notice.
+  return Result.match(ItemWrite.check(ItemForm.submit(view.form)), {
+    onFailure: (problem) => stay(withNotice(state, problem)),
+    onSuccess: (write) => ({
+      state: { ...state, view: { ...view, form: ItemForm.sent(view.form), phase: "sending" } },
+      effects: [UiEffect.SaveItem({ passphrase: state.passphrase, write })],
+    }),
+  })
 }
 
 // `update` applied to the Item form while it waits in `phase`; an answer after the Owner left it is dropped.

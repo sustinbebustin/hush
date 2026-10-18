@@ -3,10 +3,8 @@ import { Clock, Effect, Match, Redacted } from "effect"
 import { Admin, type AuditQuery, sentOnce, unverifiedOnTransport } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
 import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
-import { Create } from "../cli/Create.js"
-import { PrivateInput } from "../cli/PrivateInput.js"
 import type { Target } from "../cli/Target.js"
-import { Api, type ItemChange } from "../shared/Api.js"
+import { Api } from "../shared/Api.js"
 import {
   type ApiError,
   BackoffActive,
@@ -15,11 +13,10 @@ import {
   parseName,
   PassphraseIncorrect,
 } from "../shared/ApiError.js"
-import { Kind } from "../shared/Kind.js"
 import { Audit, type Ask } from "./Audit.js"
 import type { Clipboard } from "./Clipboard.js"
 import { Event } from "./Event.js"
-import { ItemForm, type Save } from "./ItemForm.js"
+import { ItemWrite } from "./ItemWrite.js"
 import { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
 
@@ -85,59 +82,19 @@ const auditQuery = (ask: Ask): Effect.Effect<AuditQuery, AuditFlagsInvalid | Inv
     Next: ({ query }) => Effect.succeed(query),
   })
 
-const parsedName = (what: string, input: string) => Effect.fromResult(parseName(what, input))
-
-// The Item form's one write, after the checks `hush item create` and `hush item edit` make before sending, in
-// their order, each failing with the CLI's own error.
-const saveItem = (target: Target, passphrase: Redacted.Redacted<string>, save: Save) =>
-  ItemForm.Save.$match(save, {
-    Create: ({ vault, title, kind, value, plain }) =>
-      Effect.gen(function* () {
-        const primary = Kind.primary(kind).label
-        const names = { vault: yield* parsedName("vault", vault), title: yield* parsedName("title", title) }
-
-        const fields = yield* Effect.forEach(plain, ({ label, text }) =>
-          Create.plainField(kind, { label, value: text }),
-        )
-
-        const secret = yield* Effect.fromResult(
-          PrivateInput.value(Redacted.value(value), { noun: `value for ${primary}`, outcome: "created" }),
-        )
-
-        const receipt = yield* sentOnce(
-          Client.request(Api, target, (client) =>
-            client.admin.itemsCreate({
-              payload: { passphrase, ...names, kind, fields: [{ label: primary, value: secret }, ...fields] },
-            }),
-          ),
-        )
-
-        return Event.ItemCreated({ receipt })
-      }),
-    Edit: ({ vault, item, label, change }) =>
-      Effect.gen(function* () {
-        const field = yield* parsedName("field", label)
-        const names = { vault: yield* parsedName("vault", vault), item: yield* parsedName("title", item.title) }
-
-        const wire: ItemChange = ItemForm.Change.$is("Set")(change)
-          ? {
-              set: {
-                label: field,
-                value: yield* Effect.fromResult(
-                  PrivateInput.value(Redacted.value(change.value), { noun: `value for ${field}`, outcome: "changed" }),
-                ),
-              },
-            }
-          : { remove: field }
-
-        const receipt = yield* sentOnce(
-          Client.request(Api, target, (client) =>
-            client.admin.itemsEdit({ payload: { passphrase, ...names, change: wire } }),
-          ),
-        )
-
-        return Event.ItemEdited({ receipt })
-      }),
+// The Item form's one write, checked by the reducer before it was asked for (`ItemWrite.check`).
+const saveItem = (target: Target, passphrase: Redacted.Redacted<string>, write: ItemWrite) =>
+  ItemWrite.$match(write, {
+    Create: ({ payload }) =>
+      sentOnce(
+        Client.request(Api, target, (client) => client.admin.itemsCreate({ payload: { passphrase, ...payload } })),
+      ).pipe(Effect.map((receipt) => Event.ItemCreated({ receipt }))),
+    Edit: ({ vault, item, change }) =>
+      sentOnce(
+        Client.request(Api, target, (client) =>
+          client.admin.itemsEdit({ payload: { passphrase, vault, item, change } }),
+        ),
+      ).pipe(Effect.map((receipt) => Event.ItemEdited({ receipt }))),
   })
 
 // `clipboard` is the host clipboard the copy key writes to and the paste key reads from.
@@ -220,8 +177,8 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         Effect.map(({ value }) => Event.Revealed({ reference, generation, value })),
         Effect.catch((error) => refused(error, (problem) => Event.RevealRefused({ reference, generation, problem }))),
       ),
-    SaveItem: ({ passphrase, save }) =>
-      saveItem(target, passphrase, save).pipe(
+    SaveItem: ({ passphrase, write }) =>
+      saveItem(target, passphrase, write).pipe(
         Effect.catch((error) => refused(error, (problem) => Event.ItemSaveRefused({ problem }))),
       ),
     ReadClipboard: () => Effect.map(clipboard.read, (pasted) => Event.ClipboardRead({ pasted })),
