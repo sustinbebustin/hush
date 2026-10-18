@@ -65,7 +65,7 @@ export type Open = Extract<State, { readonly _tag: "Open" }>
 
 // A Locked UI with an empty prompt: the start, and every Lock or quit. It keeps only the attempt count and the
 // terminal's size.
-const locked = (attempt = 0, size: Size = Size.minimum): State =>
+const locked = (attempt = 0, size: Size = Size.minimum): Locked =>
   Locked({ entered: Concealed.empty, phase: Phase.Ready(), attempt, size })
 
 const initial: State = locked()

@@ -492,6 +492,23 @@ describe("Reducer when Open", () => {
     const dismissed = press(refused, Key.named("escape")).state
     assert.deepStrictEqual(State.$is("Open")(dismissed) ? dismissed.modals : undefined, [])
   })
+
+  it("locks on a Passphrase refusal of any request, showing it at the prompt with its wait, so nothing more is sent", () => {
+    const work = press(opened(["a"]), Key.named("down"), Key.named("return")).state
+    const problem = Problem.Incorrect({ retryAfterSeconds: 2 })
+    const { state, effects } = Reducer.reduce(work, Event.PassphraseRejected({ problem }))
+
+    assert.isUndefined(State.passphrase(state))
+    assert.deepStrictEqual(State.$is("Locked")(state) ? state.phase : undefined, State.Phase.Refused({ problem }))
+    assert.deepStrictEqual(asked(effects), ["After"])
+    assert.include(
+      Display.$match(Display.of(state), { Locked: ({ notice }) => notice, Open: () => "", TooSmall: () => "" }),
+      "The Passphrase is incorrect.",
+    )
+
+    const late = Reducer.reduce(state, Event.PassphraseRejected({ problem: Problem.Backoff({ retryAfterSeconds: 9 }) }))
+    assert.deepStrictEqual(late, { state, effects: [] })
+  })
 })
 
 // Personal listed again with `titles` and the Retired title keys `retired`, the Item rows focused.

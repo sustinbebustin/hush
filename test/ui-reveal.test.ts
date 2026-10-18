@@ -186,7 +186,7 @@ describe.skipIf(!serverSupported)("hush ui Reveal", () => {
       noSecretIn(ui.frames())
     }))
 
-  it("shows the CLI's wrong-Passphrase message after the Passphrase was changed elsewhere", () =>
+  it("locks at the prompt saying the Passphrase is incorrect after the Passphrase was changed elsewhere", () =>
     withUi(async (ui, box) => {
       const changed = await box.run(["passphrase", "change", "--passphrase-stdin"], {
         input: `${seedPassphrase}\nfictional new passphrase 2Wd\n`,
@@ -196,11 +196,10 @@ describe.skipIf(!serverSupported)("hush ui Reveal", () => {
       await open(ui, "GitHub")
       await ui.type("r")
 
-      await ui.waitUntil((frame) =>
-        flat(frame).includes(
-          "The Passphrase is incorrect; nothing was changed. You can try again now; repeated failures slow every Passphrase operation on this Server.",
-        ),
-      )
+      const locked = await ui.waitFor("The Passphrase is incorrect.")
+      assert.include(locked, "hush Passphrase:")
+      assert.notInclude(locked, "GitHub")
+      assert.lengthOf(reveals(await box.calls()), 1)
 
       noSecretIn(ui.frames())
     }))

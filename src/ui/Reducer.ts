@@ -185,6 +185,7 @@ const fromLocked = (state: Locked, event: Event): Step => {
     Renamed: drop,
     ItemsChanged: drop,
     ChangeRefused: drop,
+    PassphraseRejected: drop,
   })
 }
 
@@ -729,6 +730,10 @@ const fromOpen = (state: Open, event: Event): Step =>
     Renamed: ({ receipt }) => renamed(state, receipt),
     ItemsChanged: ({ vault }) => refreshed(state, vault),
     ChangeRefused: ({ problem }) => changeRefused(state, problem),
+    // The held Passphrase no longer opens the Server (changed elsewhere) or the backoff is on: every further request
+    // would add a `denied` Audit row and advance the backoff for the whole Server, so the UI Locks, dropping all it
+    // held, and the prompt shows why with the Server's wait, as an unlock's refusal does.
+    PassphraseRejected: ({ problem }) => refusedWith(State.locked(0, state.size), problem),
   })
 
 // Input the Owner cannot see the effect of: a key or paste while the frame is below 80x24, which draws only its

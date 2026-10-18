@@ -107,7 +107,7 @@ export const run = (input: {
       const work = yield* FiberSet.make<void>()
       yield* FiberSet.run(work)(idleClock((event) => Queue.offer(events, event)))
       const screen = Screen.mount(renderer)
-      let state = State.initial
+      let state: State = State.initial
       screen.draw(Display.of(state))
 
       for (;;) {

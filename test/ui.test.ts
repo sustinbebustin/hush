@@ -408,7 +408,7 @@ describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
       minimum,
     ))
 
-  it("shows a refusal in an Open UI as the CLI words it: a Passphrase changed elsewhere", () =>
+  it("locks on a Passphrase changed elsewhere, at the prompt saying why, after the one request that found out", () =>
     withUi(seeded, async (ui, box) => {
       await unlock(ui)
       await ui.waitFor("Stripe live key")
@@ -418,14 +418,19 @@ describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
       })
 
       assert.strictEqual(changed.code, 0, changed.stderr)
-      const printed = await box.run(["item", "list", "Work", "--passphrase-stdin"], { input: `${seedPassphrase}\n` })
-      assert.include(printed.stderr, "hush: The Passphrase is incorrect; nothing was changed.")
+      const before = (await ui.calls()).length
 
       ui.keys.pressArrow("down")
       ui.keys.pressEnter()
-      const notice = await ui.waitFor("The Passphrase is incorrect; nothing was changed.")
-      assert.include(notice, "Notice")
-      assert.notInclude(notice, "Try again.")
+      const locked = await ui.waitFor("The Passphrase is incorrect.")
+      assert.include(locked, prompt)
+      assert.notInclude(locked, "Stripe live key")
+      assert.notInclude(locked, "Notice")
+
+      await sleep(0.5)
+      assert.deepStrictEqual((await ui.calls()).slice(before), [
+        { method: "POST", path: "/v1/admin/items/list", status: 401 },
+      ])
     }))
 
   it("shows an answer it cannot decode as the CLI's fixed message, never the response body", () =>
