@@ -1,14 +1,8 @@
 import { Clock, Effect, Match, Redacted } from "effect"
 
-import { Admin, type AuditQuery, unverifiedOnTransport } from "../cli/Admin.js"
+import { Admin, type AuditQuery, sentOnce, unverifiedOnTransport } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
-import {
-  type AuditFlagsInvalid,
-  ChangeUnverified,
-  CliError,
-  type ServerUnreachable,
-  type UnexpectedResponse,
-} from "../cli/CliError.js"
+import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
 import { Create } from "../cli/Create.js"
 import { PrivateInput } from "../cli/PrivateInput.js"
 import type { Target } from "../cli/Target.js"
@@ -90,11 +84,6 @@ const auditQuery = (ask: Ask): Effect.Effect<AuditQuery, AuditFlagsInvalid | Inv
     },
     Next: ({ query }) => Effect.succeed(query),
   })
-
-// A write sent once: an answer lost or not understood after sending may or may not have changed anything, so it
-// reads as the CLI's "do not retry" (invariant 3).
-const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
-  unverifiedOnTransport(write).pipe(Effect.catchTag("UnexpectedResponse", () => Effect.fail(new ChangeUnverified())))
 
 const parsedName = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 

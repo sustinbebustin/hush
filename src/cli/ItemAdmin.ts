@@ -5,7 +5,7 @@ import { parseName } from "../shared/ApiError.js"
 import { Kind } from "../shared/Kind.js"
 import { Name } from "../shared/Name.js"
 import { Reference } from "../shared/Reference.js"
-import { passphraseCommand, passphraseOnly, type SecretSource, unverifiedOnTransport } from "./Admin.js"
+import { passphraseCommand, passphraseOnly, type SecretSource, sentOnce, unverifiedOnTransport } from "./Admin.js"
 import { Client } from "./Client.js"
 import { Create } from "./Create.js"
 import {
@@ -176,7 +176,7 @@ export const itemCreate = (input: ItemCreateInput) =>
         Effect.gen(function* () {
           const fields = [{ label: primary, value }, ...plain]
 
-          const created = yield* unverifiedOnTransport(
+          const created = yield* sentOnce(
             Client.request(Api, input.target, (client) =>
               client.admin.itemsCreate({ payload: { passphrase, vault, title, kind: input.kind, fields } }),
             ),

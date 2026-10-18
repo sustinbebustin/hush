@@ -138,6 +138,11 @@ export const unverifiedOnTransport = <A, E, R>(effect: Effect.Effect<A, E | Serv
     () => Effect.fail(new ChangeUnverified()),
   )
 
+// A write sent once whose answer is lost or not understood: either way it may or may not have changed anything, so
+// both read as "do not retry" (invariant 3).
+export const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
+  unverifiedOnTransport(write).pipe(Effect.catchTag("UnexpectedResponse", () => Effect.fail(new ChangeUnverified())))
+
 // `hush vault create <name>`: one `admin/vaults/create`.
 export const vaultCreate = (input: {
   readonly target: Target
