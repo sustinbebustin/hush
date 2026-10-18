@@ -57,6 +57,9 @@ export type State = Data.TaggedEnum<{
     // A write confirmed with `y` (a delete, release or revoke) is out and unanswered: no other confirmation opens
     // until it answers, so a second `d` `y` during the Server's Passphrase check cannot send another.
     readonly confirmed: "idle" | "sending"
+    // Reveals asked for since the UI opened: the next one's generation, so no hide tick of an earlier Reveal (of
+    // any detail) matches it.
+    readonly reveals: number
   }
 }>
 

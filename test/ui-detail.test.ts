@@ -158,6 +158,22 @@ describe("Reveal", () => {
     assert.strictEqual(detailOf(stale)?.reveal._tag, "Shown")
   })
 
+  it("ignores the hide tick of a Reveal made in an earlier detail of the same Field", () => {
+    const first = revealed()
+    const reopened = press(first.state, Key.char("x"), Key.named("escape"), Key.named("return"), Key.char("r"))
+    const [reveal] = reopened.effects
+    const generation = reveal !== undefined && UiEffect.$is("Reveal")(reveal) ? reveal.generation : -1
+    assert.notStrictEqual(generation, first.generation)
+
+    const shown = Reducer.reduce(
+      reopened.state,
+      Event.Revealed({ reference: first.reference, generation, value: Redacted.make(sentinel) }),
+    ).state
+
+    const early = Reducer.reduce(shown, Event.RevealExpired({ generation: first.generation })).state
+    assert.strictEqual(detailOf(early)?.reveal._tag, "Shown")
+  })
+
   it("drops an answer that arrives after the Owner left the detail", () => {
     const asking = press(onStripe().state, Key.char("r"), Key.named("escape"))
 

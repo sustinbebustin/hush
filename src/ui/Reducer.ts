@@ -110,6 +110,7 @@ const openOn = (
     idle: State.Idle.Active(),
     clipboard,
     confirmed: "idle",
+    reveals: 0,
   })
 
   return vaults.length === 0 ? stay(open) : select(open, 0)
@@ -444,11 +445,11 @@ const detailKey = (state: Open, view: ItemDetail, key: Key): Step => {
     })
 
   if (!Key.is(key, "r") || field === undefined) return stay(state)
-  const generation = view.reveals + 1
+  const generation = state.reveals + 1
   const reference = View.reference(view.list.vault, view.item, field.label)
 
   return {
-    state: { ...state, view: { ...view, reveal: View.Reveal.Asking({ generation, reference }), reveals: generation } },
+    state: { ...state, view: { ...view, reveal: View.Reveal.Asking({ generation, reference }) }, reveals: generation },
     effects: [UiEffect.Reveal({ passphrase: state.passphrase, reference, generation })],
   }
 }
@@ -579,7 +580,6 @@ const detailOn = (list: ItemListOf, item: ItemMeta, label: string): View =>
       item.fields.findIndex((field) => field.label === label),
     ),
     reveal: View.Reveal.Hidden(),
-    reveals: 0,
   })
 
 // Where Escape leaves the form: the Item list a create was opened from, or the detail of the Item an edit changes.
