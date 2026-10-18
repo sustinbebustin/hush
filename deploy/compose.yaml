@@ -1,7 +1,6 @@
 # hush Server under Docker Compose:`docker compose -f deploy/compose.yaml up -d`.
 # Init from the host: `docker exec hush cat /data/init-code`, then `hush init --vault Personal` with the host CLI.
 # Inside the container `hush init --vault` and `hush token issue` need `--print`: there is no writable home.
-# Run `hush ui` from the host CLI: the container's /tmp is noexec, so the UI's native library cannot load in it.
 # Deploy check: `docker exec hush sh -c 'ulimit -c'` prints 0.
 services:
   hush:
