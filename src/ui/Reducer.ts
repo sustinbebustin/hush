@@ -618,13 +618,12 @@ const formAnswer = (state: Open, phase: ItemFormView["phase"], update: (view: It
   return View.$is("ItemForm")(view) && view.phase === phase ? update(view) : stay(state)
 }
 
-// A verified create: the Vault's Item list fetched again to show the new Item, and its count one higher.
+// A verified create: the Vault's Item list fetched again to show the new Item (and count it in the sidebar).
 const created = (state: Open, view: ItemFormView): Step => {
   const { vault } = view.list
-  const vaults = state.vaults.map((row) => (row.vault === vault ? { ...row, items: row.items + 1 } : row))
 
   return {
-    state: { ...state, vaults, view: View.loading(vault) },
+    state: { ...state, view: View.loading(vault) },
     effects: [UiEffect.ListItems({ passphrase: state.passphrase, vault })],
   }
 }
@@ -700,9 +699,11 @@ const fromOpen = (state: Open, event: Event): Step =>
   Event.$match(event, {
     Key: ({ key }) => openKey(active(state), key),
     Paste: ({ text }) => openPaste(active(state), text),
+    // The sidebar counts the Items just listed, so a create or delete shows in it too.
     ItemsLoaded: ({ list }) =>
       answerFor(state, list.vault, (view) => ({
         ...state,
+        vaults: state.vaults.map((row) => (row.vault === list.vault ? { ...row, items: list.items.length } : row)),
         view: { ...view, items: View.Items.Loaded({ items: list.items, retired: list.retired }) },
       })),
     ItemsRefused: ({ vault, problem }) =>

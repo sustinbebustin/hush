@@ -564,6 +564,9 @@ const pane = (state: State) =>
     TooSmall: () => undefined,
   })
 
+// The sidebar's Item counts, Vault by Vault.
+const counts = (state: State) => (State.$is("Open")(state) ? state.vaults.map(({ items }) => items) : undefined)
+
 describe("Reducer rename, delete and release", () => {
   it("deletes the Item under the cursor through a Confirm modal naming its title, only on y", () => {
     const before = listed(["GitHub token", "Stripe live key"])
@@ -587,6 +590,21 @@ describe("Reducer rename, delete and release", () => {
     assert.deepStrictEqual(asked(refreshed.effects), ["Personal"])
     assert.strictEqual(State.$is("Open")(refreshed.state) ? refreshed.state.view._tag : undefined, "ItemList")
     assertCancels(press(listed(["Stripe live key"]), Key.named("return")).state, Key.char("d"))
+  })
+
+  it("counts the Vault's Items in the sidebar as its list answers, so a delete lowers the count", () => {
+    const before = press(opened(["a", "b"]), Key.named("tab"))
+    assert.deepStrictEqual(counts(before.state), [2, 0])
+
+    const deleted = press(before.state, Key.char("d"), Key.char("y")).state
+    const reloading = Reducer.reduce(deleted, Event.ItemsChanged({ vault: "Personal" })).state
+
+    const answered = Reducer.reduce(
+      reloading,
+      Event.ItemsLoaded({ list: { vault: "Personal", items: [item("b")], retired: ["a"] } }),
+    )
+
+    assert.deepStrictEqual(counts(answered.state), [1, 0])
   })
 
   it("opens no create form while the list is asked for again, so its answer is not dropped behind the form", () => {
