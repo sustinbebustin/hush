@@ -197,6 +197,10 @@ const createInput = (flags: CreateFlags) => ({
   ),
 })
 
+const referenceArgument = Argument.String("reference").pipe(
+  Argument.withDescription("The Field's Reference, `hush://Vault/Item/field`"),
+)
+
 const itemArguments = {
   vault: Argument.String("vault").pipe(Argument.withDescription("The Item's Vault")),
   title: Argument.String("title").pipe(Argument.withDescription("The Item's title")),
@@ -307,16 +311,13 @@ const item = Command.make("item").pipe(
         }).pipe(Effect.flatMap(printJson)),
       ),
     ).pipe(Command.withDescription("Let Tokens create a title that a rename or delete retired")),
-    Command.make(
-      "reveal",
-      { reference: Argument.String("reference"), ...passphraseLineFlags },
-      ({ reference, passphraseStdin }) =>
-        withTarget((target) =>
-          ItemAdmin.itemReveal({ target, source: secretSource(passphraseStdin), reference }).pipe(
-            // Byte-exact, with nothing appended, as `read` writes it.
-            Effect.flatMap((value) => Effect.promise(() => Bun.write(Bun.stdout, Redacted.value(value)))),
-          ),
+    Command.make("reveal", { reference: referenceArgument, ...passphraseLineFlags }, ({ reference, passphraseStdin }) =>
+      withTarget((target) =>
+        ItemAdmin.itemReveal({ target, source: secretSource(passphraseStdin), reference }).pipe(
+          // Byte-exact, with nothing appended, as `read` writes it.
+          Effect.flatMap((value) => Effect.promise(() => Bun.write(Bun.stdout, Redacted.value(value)))),
         ),
+      ),
     ).pipe(
       Command.withDescription("Reveal one Field's value on stdout under the Passphrase; audited by its Reference"),
     ),
@@ -355,7 +356,7 @@ const create = Command.make("create", createFlags, (flags) =>
   ),
 ).pipe(Command.withDescription("Create an Item from private input with the Token and verify it"))
 
-const read = Command.make("read", { reference: Argument.String("reference") }, ({ reference }) =>
+const read = Command.make("read", { reference: referenceArgument }, ({ reference }) =>
   withTarget(
     (target) =>
       Read.run(target, reference, LaunchEnv.snapshot).pipe(

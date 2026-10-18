@@ -186,7 +186,7 @@ describe.skipIf(!serverSupported)("hush ui Reveal", () => {
       noSecretIn(ui.frames())
     }))
 
-  it("shows the CLI's wrong-Passphrase message after the Passphrase was changed elsewhere", () =>
+  it("locks at the prompt saying the Passphrase is incorrect after the Passphrase was changed elsewhere", () =>
     withUi(async (ui, box) => {
       const changed = await box.run(["passphrase", "change", "--passphrase-stdin"], {
         input: `${seedPassphrase}\nfictional new passphrase 2Wd\n`,
@@ -196,12 +196,29 @@ describe.skipIf(!serverSupported)("hush ui Reveal", () => {
       await open(ui, "GitHub")
       await ui.type("r")
 
-      await ui.waitUntil((frame) =>
-        flat(frame).includes(
-          "The Passphrase is incorrect; nothing was changed. You can try again now; repeated failures slow every Passphrase operation on this Server.",
-        ),
-      )
+      const locked = await ui.waitFor("The Passphrase is incorrect.")
+      assert.include(locked, "hush Passphrase:")
+      assert.notInclude(locked, "GitHub")
+      assert.lengthOf(reveals(await box.calls()), 1)
 
       noSecretIn(ui.frames())
+    }))
+
+  it("leaves no Revealed value in any renderable once the UI locks, hidden or drawn", () =>
+    withUi(async (ui) => {
+      await open(ui, "GitHub")
+      await ui.type("r")
+      await ui.waitUntil(showsValue)
+      assert.isTrue(ui.contents().some(showsAnyOfValue))
+
+      // One real idle tick first, so the idle time has started; then ten minutes on the UI's clock.
+      await new Promise((resolve) => setTimeout(resolve, 1_500))
+      ui.advanceClock(10 * 60 * 1_000)
+      await ui.waitFor("hush Passphrase:")
+
+      for (const text of ui.contents()) {
+        assert.isFalse(showsAnyOfValue(text), text)
+        assert.notInclude(text, username)
+      }
     }))
 })

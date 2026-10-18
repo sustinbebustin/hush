@@ -9,7 +9,7 @@ import { State } from "../src/ui/State.js"
 
 // The state after typing `text` at the Locked prompt, one key per code point.
 const typed = (text: string): State =>
-  [...text].reduce(
+  [...text].reduce<State>(
     (state, character) => Reducer.reduce(state, Event.Key({ key: Key.char(character) })).state,
     State.initial,
   )

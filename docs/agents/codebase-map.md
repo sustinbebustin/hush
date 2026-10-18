@@ -22,6 +22,7 @@ src/cli/PassphraseStdin.ts  `--passphrase-stdin`: TTY refusal, strict UTF-8, one
 src/cli/PrivateInput.ts     one value from exactly one source flag: `--stdin`, `--prompt` or `--clipboard` (macOS)
 src/cli/TokenStore.ts       `HUSH_TOKEN`, else this origin's entry in `~/.config/hush/tokens.json`; `checkSavable`, `checkReplaceable`, `save`, `forget`, `context`, `health`
 src/cli/Create.ts           `hush create <kind>`: local checks, one `items/create`, then the read-back compare
+src/cli/PlainField.ts       the pure check of a plain Field given to a create (a plain Field of the Kind, a non-blank value), shared by `hush create`, `hush item create` and the UI's Item form
 src/cli/Read.ts             `hush read <reference>`: local parse, one `secrets/resolve`
 src/cli/Discover.ts         `hush find` and `hush inventory`: one `items/list`, then title matching
 src/cli/HostCommand.ts      `hush server revoke|backup` for the command table: state dir, `-` or a file, one `Host` call, error render
@@ -38,7 +39,7 @@ src/cli/Doctor.ts           `hush doctor`: one unauthenticated `status` (5 s), t
 `hush ui`, on `@opentui/core` (Core API only). The reducer side (`State` to `Display`) imports neither OpenTUI nor the Client; `Screen`, `Interpreter` and `Clipboard` are the only modules that touch the outside.
 
 ```
-src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input, resizes (the renderer's size first), SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off, `exitSignals: []`
+src/ui/Ui.ts                `run({ renderer, target, clipboard })`: input, resizes (the renderer's size first), SIGTSTP, exit signals and the idle clock (Clock, every second) -> `Reducer` -> `Screen.draw` -> `Interpreter`, until `Quit`; a Lock interrupts every request in flight, and an effect's defect becomes `Defect`; `Suspend` (renderer suspend, SIGSTOP, resume on SIGCONT); `launch` (the command): TTY check (`UiNeedsTerminal`), host clipboard, alternate screen, `exitOnCtrlC` off, `exitSignals: []`
 src/ui/State.ts             the one state: `Locked` (prompt, `Phase`, attempt count; never a Passphrase) or `Open` (Passphrase as Redacted, Vaults, cursor, view, modal stack, `Idle`); both carry the terminal `Size`; `idleLimitMillis` (ten minutes, ADR-0010)
 src/ui/Size.ts              the terminal's size and the 80x24 minimum; below it the UI draws one notice and takes only Ctrl-C and Ctrl-Z
 src/ui/View.ts              the main pane's views (`NoVaults`, `ItemList` with `Filter`, `Items` and `Focus`, `ItemDetail` with its `Reveal`, `Tokens` with its `TokenTable`, `Audit`, `ItemForm` with its phase), the `Modal`s (`Notice`, `Confirm`, `IssueForm`, `Issued`, `Rename`, `Renamed`, `VaultName`, `Help`), the Item rows then the Retired titles under one row cursor, the title filter (`Match.matches`) and Field References
@@ -58,7 +59,8 @@ src/ui/Key.ts               a keypress decoupled from OpenTUI's `KeyEvent`: `nam
 src/ui/Concealed.ts         concealed input owned by the state (Redacted), drawn only as a mask of its length
 src/ui/Display.ts           pure `State -> Display`: the plain text the screen shows (`Locked`, `Open`, or `TooSmall` below 80x24), never a secret but a Revealed value or an issued Token while the state holds it; the hint bars (80 columns at most) and the `?` help of each view and modal
 src/ui/Screen.ts            the sync layer: one OpenTUI renderable tree, `draw(display)`; `KeyEvent` and paste to the reducer's types
-src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer; `ListAudit` filters resolved by `Admin.auditQuery`, as `hush audit` does), `SaveItem` after the CLI's own value checks (`Create.plainField`, `PrivateInput.value`; a lost or undecodable answer is `ChangeUnverified`), `CopyToken` and `ReadClipboard` through `Clipboard`, and `After`; every outcome is one `Event`; every refusal in an Open UI is a notice with the CLI's own message (`CliError.render` / `renderServer`), the unlock's Passphrase waits excepted
+src/ui/Interpreter.ts       runs each request through `Client` (one request, no retry; writes unverified on a lost answer; `ListAudit` filters resolved by `Admin.auditQuery`, as `hush audit` does), `SaveItem` of an `ItemWrite` the reducer already checked (a lost or undecodable answer is `ChangeUnverified`, via `Admin.sentOnce`), `CopyToken` and `ReadClipboard` through `Clipboard`, and `After`; every outcome is one `Event`; a Passphrase refusal (`PassphraseIncorrect`, `BackoffActive`) is `PassphraseRejected`, which Locks an Open UI; every other refusal in an Open UI is a notice with the CLI's own message (`CliError.render` / `renderServer`)
+src/ui/ItemWrite.ts         the Item form's one write, checked as `hush item create` / `item edit` check theirs before sending (`parseName`, `Create.plainField`, `PrivateInput.value`): the reducer runs `check` on Enter, so a refusal keeps the concealed buffer
 ```
 
 ## Shared (`src/shared/`)

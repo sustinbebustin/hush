@@ -85,6 +85,10 @@ export type Event = Data.TaggedEnum<{
   ItemsChanged: { readonly vault: string }
   // A rename, delete or release refused.
   ChangeRefused: { readonly problem: Problem }
+  // An Open UI's request refused for its Passphrase (changed elsewhere) or by the backoff: the UI Locks.
+  PassphraseRejected: { readonly problem: Problem }
+  // An effect died (a bug, not an expected failure): whatever waited on its answer would wait forever, so the UI Locks.
+  Defect: {}
 }>
 
 const {
@@ -116,10 +120,12 @@ const { Renamed, ItemsChanged, ChangeRefused } = Data.taggedEnum<Event>()
 
 const { VaultChanged, VaultRefused, VaultsListed } = Data.taggedEnum<Event>()
 
-const { Resize } = Data.taggedEnum<Event>()
+const { Resize, PassphraseRejected, Defect } = Data.taggedEnum<Event>()
 
 export const Event = {
   Resize,
+  PassphraseRejected,
+  Defect,
   VaultChanged,
   VaultRefused,
   VaultsListed,

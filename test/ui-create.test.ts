@@ -5,7 +5,7 @@ import { Target } from "../src/cli/Target.js"
 import { Clipboard } from "../src/ui/Clipboard.js"
 import { Event } from "../src/ui/Event.js"
 import { Interpreter } from "../src/ui/Interpreter.js"
-import { ItemForm } from "../src/ui/ItemForm.js"
+import { ItemWrite } from "../src/ui/ItemWrite.js"
 import { Problem } from "../src/ui/Problem.js"
 import { UiEffect } from "../src/ui/UiEffect.js"
 import { type FakeClipboard, fakeClipboard, type Headless, headless } from "./headless.js"
@@ -27,7 +27,8 @@ const multiline = "fictional-pasted-line-one-8Lz\nfictional-pasted-line-two-8Lz"
 
 const withUi = async (
   body: (ui: Headless, box: Sandbox, clipboard: FakeClipboard) => Promise<void>,
-  options: { readonly viaProxy?: boolean; readonly noClipboard?: boolean } = {},
+  // `host` in place of the fake clipboard, or none.
+  options: { readonly viaProxy?: boolean; readonly noClipboard?: boolean; readonly host?: Clipboard } = {},
 ): Promise<void> => {
   const box = await sandbox()
   const clipboard = fakeClipboard()
@@ -36,7 +37,7 @@ const withUi = async (
     await box.seed({ items: [{ kind: "login", title: "GitHub", value: secret, plain: { username: "octo" } }] })
 
     const ui = await headless(box, {
-      clipboard: options.noClipboard === true ? Clipboard.none : clipboard.clipboard,
+      clipboard: options.noClipboard === true ? Clipboard.none : (options.host ?? clipboard.clipboard),
       server: options.viaProxy === true ? box.proxy.url : box.server.url,
     })
 
@@ -252,15 +253,19 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
       assert.strictEqual(clipboard.reads(), 1)
     }))
 
+  // `checked`: refused by a check the UI makes before sending, as the CLI does, so the concealed buffer is kept; the
+  // Server's refusal comes after the buffer left with the write.
   const refusals = [
     {
       name: "ItemExists",
+      checked: false,
       title: "GitHub",
       steps: 1,
       cli: ["item", "create", "login", "--vault", "Personal", "--title", "GitHub", "--stdin"],
     },
     {
       name: "InvalidValue",
+      checked: true,
       title: "Stripe live key",
       notes: "   ",
       cli: [
@@ -278,8 +283,8 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
     },
   ] as const
 
-  for (const { name, title, cli, ...rest } of refusals)
-    it(`shows the CLI's ${name} message and keeps the form, its concealed buffer dropped`, () =>
+  for (const { name, checked, title, cli, ...rest } of refusals)
+    it(`shows the CLI's ${name} message and keeps the form, its concealed buffer ${checked ? "kept" : "dropped"}`, () =>
       withUi(async (ui, box) => {
         const message = await cliMessage(box, cli, secret)
         await fill(ui, { title, steps: "steps" in rest ? rest.steps : 0 })
@@ -295,7 +300,9 @@ describe.skipIf(!serverSupported)("hush ui create", () => {
 
         const form = await ui.waitUntil((frame) => !frame.includes("nothing was"))
         assert.include(form, `New Item in Personal`)
-        assert.match(form, /(password|credential) +\(required, hidden\)/)
+
+        if (checked) assert.match(form, new RegExp(`credential +\\*{${[...secret].length}}`))
+        else assert.match(form, /(password|credential) +\(required, hidden\)/)
         noSecretIn(ui.frames())
       }))
 
@@ -468,6 +475,30 @@ describe.skipIf(!serverSupported)("hush ui edit", () => {
 
 // The form offers only its Kind's Fields, so no key reaches `UnknownField`; the write it would send is run here
 // through the interpreter against the real Server instead.
+describe.skipIf(!serverSupported)("hush ui internal errors", () => {
+  it("locks with a fixed notice when an effect dies, instead of waiting on it forever", () =>
+    withUi(
+      async (ui) => {
+        await openCreate(ui)
+        ui.keys.pressArrow("down")
+        ui.keys.pressArrow("down")
+        await ui.waitFor("> credential")
+        ui.keys.pressKey("v", { ctrl: true })
+
+        const locked = await ui.waitFor("internal error")
+        assert.include(locked, "hush Passphrase:")
+        assert.notInclude(locked, "Reading the clipboard")
+      },
+      {
+        host: {
+          available: true,
+          write: () => Effect.succeed("unsupported"),
+          read: Effect.die(new Error("fictional clipboard defect")),
+        },
+      },
+    ))
+})
+
 describe.skipIf(!serverSupported)("hush ui Item write refusals", () => {
   it("shows the CLI's UnknownField message for a Field the Kind lacks", async () => {
     const box = await sandbox()
@@ -480,15 +511,14 @@ describe.skipIf(!serverSupported)("hush ui Item write refusals", () => {
         Target.load({ HOME: box.home, HUSH_SERVER: box.server.url, HUSH_PROXY: "direct" }),
       )
 
-      const save = ItemForm.Save.Edit({
-        vault: "Personal",
-        item: { title: "GitHub", kind: "login", createdAt: "", updatedAt: "", fields: [] },
-        label: "nosuch",
-        change: ItemForm.Change.Remove(),
-      })
+      const write = ItemWrite.Edit({ vault: "Personal", item: "GitHub", change: { remove: "nosuch" } })
 
       const answer = await Effect.runPromise(
-        Interpreter.run(target, UiEffect.SaveItem({ passphrase: Redacted.make(seedPassphrase), save }), Clipboard.none),
+        Interpreter.run(
+          target,
+          UiEffect.SaveItem({ passphrase: Redacted.make(seedPassphrase), write }),
+          Clipboard.none,
+        ),
       )
 
       assert.deepStrictEqual(answer, Event.ItemSaveRefused({ problem: Problem.Failed({ message }) }))

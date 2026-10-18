@@ -27,6 +27,9 @@ const press = (state: State, ...keys: ReadonlyArray<Key>) =>
 
 const typing = (text: string) => [...text].map(Key.char)
 
+// The Locked prompt with `text` pasted into it.
+const promptWith = (text: string) => Reducer.reduce(State.initial, Event.Paste({ text })).state
+
 // What the effects asked for: the Vault of each Item request, else the effect's tag.
 const asked = (effects: ReadonlyArray<UiEffect>) =>
   effects.map((effect) => (UiEffect.$is("ListItems")(effect) ? effect.vault : effect._tag))
@@ -194,6 +197,21 @@ describe("Reducer from Locked", () => {
       state: again.state,
       effects: [],
     })
+  })
+
+  it("sends no Passphrase over the 1024-byte wire limit and says so at the prompt", () => {
+    // 513 two-byte code points: 1026 bytes, short of the 1024 code points the length limit counts.
+    const { state, effects } = press(promptWith("é".repeat(513)), Key.named("return"))
+
+    assert.deepStrictEqual(effects, [])
+    assert.strictEqual(State.$is("Locked")(state) ? state.phase._tag : undefined, "Refused")
+    assert.strictEqual(State.$is("Locked")(state) ? state.entered.length : undefined, 0)
+    assert.include(
+      Display.$match(Display.of(state), { Locked: ({ notice }) => notice, Open: () => "", TooSmall: () => "" }),
+      "1024 bytes",
+    )
+
+    assert.deepStrictEqual(asked(press(promptWith("é".repeat(512)), Key.named("return")).effects), ["ListVaults"])
   })
 
   it("types q into the prompt rather than quitting, and quits on Ctrl-C", () => {
@@ -400,6 +418,16 @@ describe("Reducer when Open", () => {
     )
   })
 
+  it("applies a copy's answer to the issued Token under the help opened while it was copying", () => {
+    const issued = Reducer.reduce(tokensOpened(), Event.TokenIssued({ receipt: receipt(issuedToken), copyable: true }))
+    const helped = press(issued.state, Key.char("c"), Key.char("?")).state
+    const copied = Reducer.reduce(helped, Event.TokenCopied({ written: "written" })).state
+    const closed = press(copied, Key.char("x")).state
+
+    assert.include(modalText(closed), "Copied to the clipboard.")
+    assert.deepStrictEqual(asked(press(closed, Key.char("c")).effects), ["CopyToken"])
+  })
+
   it("offers to replace a listed Label, keeping its Grants or starting the picker from them", () => {
     // Personal, Work, TTL, then the replace row that a listed Label adds.
     const toReplace = [...typing("AGENT ON BOX"), ...Array.from({ length: 4 }, () => Key.named("down"))]
@@ -492,6 +520,23 @@ describe("Reducer when Open", () => {
     const dismissed = press(refused, Key.named("escape")).state
     assert.deepStrictEqual(State.$is("Open")(dismissed) ? dismissed.modals : undefined, [])
   })
+
+  it("locks on a Passphrase refusal of any request, showing it at the prompt with its wait, so nothing more is sent", () => {
+    const work = press(opened(["a"]), Key.named("down"), Key.named("return")).state
+    const problem = Problem.Incorrect({ retryAfterSeconds: 2 })
+    const { state, effects } = Reducer.reduce(work, Event.PassphraseRejected({ problem }))
+
+    assert.isUndefined(State.passphrase(state))
+    assert.deepStrictEqual(State.$is("Locked")(state) ? state.phase : undefined, State.Phase.Refused({ problem }))
+    assert.deepStrictEqual(asked(effects), ["After"])
+    assert.include(
+      Display.$match(Display.of(state), { Locked: ({ notice }) => notice, Open: () => "", TooSmall: () => "" }),
+      "The Passphrase is incorrect.",
+    )
+
+    const late = Reducer.reduce(state, Event.PassphraseRejected({ problem: Problem.Backoff({ retryAfterSeconds: 9 }) }))
+    assert.deepStrictEqual(late, { state, effects: [] })
+  })
 })
 
 // Personal listed again with `titles` and the Retired title keys `retired`, the Item rows focused.
@@ -529,6 +574,9 @@ const pane = (state: State) =>
     TooSmall: () => undefined,
   })
 
+// The sidebar's Item counts, Vault by Vault.
+const counts = (state: State) => (State.$is("Open")(state) ? state.vaults.map(({ items }) => items) : undefined)
+
 describe("Reducer rename, delete and release", () => {
   it("deletes the Item under the cursor through a Confirm modal naming its title, only on y", () => {
     const before = listed(["GitHub token", "Stripe live key"])
@@ -552,6 +600,91 @@ describe("Reducer rename, delete and release", () => {
     assert.deepStrictEqual(asked(refreshed.effects), ["Personal"])
     assert.strictEqual(State.$is("Open")(refreshed.state) ? refreshed.state.view._tag : undefined, "ItemList")
     assertCancels(press(listed(["Stripe live key"]), Key.named("return")).state, Key.char("d"))
+  })
+
+  it("sends one confirmed write until it is answered: d and y again while it is out send nothing", () => {
+    const twice = press(listed(["a", "b"]), Key.char("d"), Key.char("y"), Key.char("d"), Key.char("y"))
+    assert.deepStrictEqual(asked(twice.effects), ["DeleteItem"])
+    assert.include(
+      Display.$match(Display.of(twice.state), { Locked: () => "", Open: ({ hints }) => hints, TooSmall: () => "" }),
+      "Sending",
+    )
+
+    const refused = Reducer.reduce(twice.state, Event.ChangeRefused({ problem: Problem.Failed({ message: "no" }) }))
+    const again = press(refused.state, Key.named("escape"), Key.char("d"), Key.char("y"))
+    assert.deepStrictEqual(asked(again.effects), ["DeleteItem"])
+
+    const revoking = press(tokensOpened(), Key.char("d"), Key.char("y"), Key.char("d"), Key.char("y"))
+    assert.deepStrictEqual(asked(revoking.effects), ["RevokeToken"])
+    const revoked = Reducer.reduce(revoking.state, Event.TokenRevoked({ label: "agent on box" }))
+    const listedAgain = Reducer.reduce(revoked.state, Event.TokensLoaded({ list: { tokens: [tokenInfo("b")] } }))
+    assert.deepStrictEqual(asked(press(listedAgain.state, Key.char("d"), Key.char("y")).effects), ["RevokeToken"])
+  })
+
+  it("checks the Item form as the CLI does before sending, keeping the hidden value when a check refuses", () => {
+    const filled = press(
+      listed(["a"]),
+      Key.char("c"),
+      Key.named("down"),
+      ...typing("-bad title"),
+      Key.named("down"),
+      ...typing("fictional-kept-secret"),
+    ).state
+
+    const refused = press(filled, Key.named("return"))
+    assert.deepStrictEqual(refused.effects, [])
+    assert.include(modalText(refused.state), "title is not a valid name")
+
+    const form =
+      State.$is("Open")(refused.state) && View.$is("ItemForm")(refused.state.view) ? refused.state.view : undefined
+
+    assert.strictEqual(form?.phase, "editing")
+    assert.strictEqual(
+      form?.form._tag === "Create" ? Redacted.value(form.form.concealed.value) : undefined,
+      "fictional-kept-secret",
+    )
+
+    const fixed = press(
+      refused.state,
+      Key.named("escape"),
+      Key.named("up"),
+      ...Array.from({ length: 10 }, () => Key.named("backspace")),
+      ...typing("good title"),
+      Key.named("return"),
+    )
+
+    assert.deepStrictEqual(asked(fixed.effects), ["SaveItem"])
+  })
+
+  it("counts the Vault's Items in the sidebar as its list answers, so a delete lowers the count", () => {
+    const before = press(opened(["a", "b"]), Key.named("tab"))
+    assert.deepStrictEqual(counts(before.state), [2, 0])
+
+    const deleted = press(before.state, Key.char("d"), Key.char("y")).state
+    const reloading = Reducer.reduce(deleted, Event.ItemsChanged({ vault: "Personal" })).state
+
+    const answered = Reducer.reduce(
+      reloading,
+      Event.ItemsLoaded({ list: { vault: "Personal", items: [item("b")], retired: ["a"] } }),
+    )
+
+    assert.deepStrictEqual(counts(answered.state), [1, 0])
+  })
+
+  it("opens no create form while the list is asked for again, so its answer is not dropped behind the form", () => {
+    const deleted = press(listed(["a", "b"]), Key.char("d"), Key.char("y")).state
+    const reloading = Reducer.reduce(deleted, Event.ItemsChanged({ vault: "Personal" })).state
+    const pressed = press(reloading, Key.char("c"))
+    assert.deepStrictEqual(pressed, { state: reloading, effects: [] })
+
+    const answered = Reducer.reduce(
+      pressed.state,
+      Event.ItemsLoaded({ list: { vault: "Personal", items: [item("b")], retired: [] } }),
+    ).state
+
+    assert.deepStrictEqual(shown(answered), ["b"])
+    const creating = press(answered, Key.char("c")).state
+    assert.strictEqual(State.$is("Open")(creating) ? creating.view._tag : undefined, "ItemForm")
   })
 
   it("lists the Retired titles below the Items and releases the one under the cursor only on y", () => {

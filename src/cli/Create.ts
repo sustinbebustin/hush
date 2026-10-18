@@ -1,13 +1,13 @@
 import { Effect, Redacted, Result } from "effect"
 
 import { Api } from "../shared/Api.js"
-import { InvalidValue, parseName, UnknownField } from "../shared/ApiError.js"
+import { parseName } from "../shared/ApiError.js"
 import { Kind } from "../shared/Kind.js"
 import { Name } from "../shared/Name.js"
 import { Reference } from "../shared/Reference.js"
-import { Value } from "../shared/Value.js"
 import { Client } from "./Client.js"
 import { CreationMayHaveSucceeded, CreationUnverified } from "./CliError.js"
+import { PlainField } from "./PlainField.js"
 import { PrivateInput } from "./PrivateInput.js"
 import type { Target } from "./Target.js"
 import type { EnvVars } from "./LaunchEnv.js"
@@ -36,31 +36,12 @@ export interface Receipt {
 
 const parse = (what: string, input: string) => Effect.fromResult(parseName(what, input))
 
-// A plain flag must name a plain Field of the Kind and carry a non-blank value.
-export const plainField = (kind: Kind, field: { readonly label: string; readonly value: string }) =>
-  Effect.gen(function* () {
-    const label = yield* parse("field", field.label)
-    const spec = Kind.spec(kind, Name.key(label))
-
-    if (spec?.role !== "plain")
-      return yield* new UnknownField({
-        kind,
-        field: field.label,
-        allowed: Kind.fields(kind).flatMap((candidate) => (candidate.role === "plain" ? [candidate.label] : [])),
-      })
-    const problem = field.value.trim() === "" ? "empty" : Value.problem(field.value)
-
-    if (problem !== undefined) return yield* new InvalidValue({ field: spec.label, reason: problem })
-
-    return { label: spec.label, value: Redacted.make(field.value) }
-  })
-
 export const run = (target: Target, input: CreateInput, env: EnvVars) =>
   Effect.gen(function* () {
     const source = yield* Effect.fromResult(PrivateInput.source(input.sources, "created"))
     const vault = yield* parse("vault", input.vault)
     const title = yield* parse("title", input.title)
-    const plain = yield* Effect.forEach(input.plain, (field) => plainField(input.kind, field))
+    const plain = yield* Effect.forEach(input.plain, (field) => Effect.fromResult(PlainField.check(input.kind, field)))
     const choice = yield* TokenStore.current(target, env, vault)
     const primary = Kind.primary(input.kind)
 

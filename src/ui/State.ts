@@ -54,6 +54,12 @@ export type State = Data.TaggedEnum<{
     readonly idle: Idle
     // Whether the host has a clipboard: the paste key is offered only then.
     readonly clipboard: boolean
+    // A write confirmed with `y` (a delete, release or revoke) is out and unanswered: no other confirmation opens
+    // until it answers, so a second `d` `y` during the Server's Passphrase check cannot send another.
+    readonly confirmed: "idle" | "sending"
+    // Reveals asked for since the UI opened: the next one's generation, so no hide tick of an earlier Reveal (of
+    // any detail) matches it.
+    readonly reveals: number
   }
 }>
 
@@ -65,7 +71,7 @@ export type Open = Extract<State, { readonly _tag: "Open" }>
 
 // A Locked UI with an empty prompt: the start, and every Lock or quit. It keeps only the attempt count and the
 // terminal's size.
-const locked = (attempt = 0, size: Size = Size.minimum): State =>
+const locked = (attempt = 0, size: Size = Size.minimum): Locked =>
   Locked({ entered: Concealed.empty, phase: Phase.Ready(), attempt, size })
 
 const initial: State = locked()

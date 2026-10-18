@@ -3,6 +3,7 @@ import { Schema } from "effect"
 
 import { VaultItems } from "../src/shared/Api.js"
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { onPty, sandbox, type Sandbox } from "./sandbox.js"
 
 // `hush item create` through the seam: the Owner creates an Item with the Passphrase, verified before commit by
@@ -420,4 +421,37 @@ describe("item create at a terminal", () => {
       assert.strictEqual((await read(box, "hush://Personal/GitHub/password")).stdout, "fictional typed password")
     }),
   )
+})
+
+describe("an item create whose answer cannot be decoded", () => {
+  it("reports ChangeUnverified, never the body, and creates exactly once", () =>
+    withSandbox(async (box, seen) => {
+      await seeded(box, seen)
+      box.proxy.mode("garble-response")
+
+      const result = await box.run(
+        [
+          "item",
+          "create",
+          "api-credential",
+          "--vault",
+          "Personal",
+          "--title",
+          "Stripe",
+          "--stdin",
+          "--passphrase-stdin",
+        ],
+        { input: `${passphrase}\n${value}\n`, env: { HUSH_SERVER: box.proxy.url } },
+      )
+
+      assert.strictEqual(result.code, 1)
+      assert.strictEqual(result.stdout, "")
+      assert.strictEqual(
+        result.stderr,
+        "hush: The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
+      )
+      assert.notInclude(result.stderr, garbledMarker)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/items/create HTTP/1.1"])
+      assert.deepStrictEqual(await itemRows(box), [{ title: "Stripe", kind: "api-credential" }])
+    }))
 })

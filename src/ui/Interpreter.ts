@@ -1,18 +1,10 @@
 import { Clock, Effect, Match, Redacted } from "effect"
 
-import { Admin, type AuditQuery, unverifiedOnTransport } from "../cli/Admin.js"
+import { Admin, type AuditQuery, sentOnce, unverifiedOnTransport } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
-import {
-  type AuditFlagsInvalid,
-  ChangeUnverified,
-  CliError,
-  type ServerUnreachable,
-  type UnexpectedResponse,
-} from "../cli/CliError.js"
-import { Create } from "../cli/Create.js"
-import { PrivateInput } from "../cli/PrivateInput.js"
+import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
 import type { Target } from "../cli/Target.js"
-import { Api, type ItemChange } from "../shared/Api.js"
+import { Api } from "../shared/Api.js"
 import {
   type ApiError,
   BackoffActive,
@@ -21,19 +13,18 @@ import {
   parseName,
   PassphraseIncorrect,
 } from "../shared/ApiError.js"
-import { Kind } from "../shared/Kind.js"
 import { Audit, type Ask } from "./Audit.js"
 import type { Clipboard } from "./Clipboard.js"
 import { Event } from "./Event.js"
-import { ItemForm, type Save } from "./ItemForm.js"
+import { ItemWrite } from "./ItemWrite.js"
 import { Problem } from "./Problem.js"
 import type { UiEffect } from "./UiEffect.js"
 
 // Runs the reducer's effects that leave the process or wait: each Server request through the CLI's typed Client
 // (one request, no retry), timers and clipboard reads and writes. Each ends in the one event that reports it; every
 // expected failure becomes a `Problem` rendered from typed fields, so no response body reaches the screen
-// (invariant 2). In an Open UI every refusal, a wrong Passphrase (changed elsewhere) included, is a notice with the
-// CLI's message.
+// (invariant 2). In an Open UI a wrong Passphrase (changed elsewhere) or the backoff Locks the UI; every other
+// refusal is a notice with the CLI's message.
 
 // The effects run here; `Quit` and `Suspend` act on the renderer, so they are the loop's own.
 export type Work = Exclude<UiEffect, { readonly _tag: "Quit" | "Suspend" }>
@@ -48,16 +39,30 @@ const noticeOf =
       message: isApiError(error) ? CliError.renderServer(error, target.origin) : CliError.render(error),
     })
 
-// The Locked prompt's refusal: the two Passphrase refusals keep the Server's wait, so the prompt counts it down;
-// every other error is the notice an Open UI would show.
+// The two Passphrase refusals, keeping the Server's wait so the Locked prompt counts it down; undefined for any other
+// error.
+const passphraseProblemOf = (error: ApiError | CliError.CliError): Problem | undefined => {
+  if (error instanceof PassphraseIncorrect) return Problem.Incorrect({ retryAfterSeconds: error.retryAfterSeconds })
+
+  return error instanceof BackoffActive ? Problem.Backoff({ retryAfterSeconds: error.retryAfterSeconds }) : undefined
+}
+
+// The Locked prompt's refusal: a Passphrase refusal, or the notice an Open UI would show.
 const unlockProblemOf =
   (target: Target) =>
-  (error: ApiError | CliError.CliError): Problem => {
-    if (error instanceof PassphraseIncorrect) return Problem.Incorrect({ retryAfterSeconds: error.retryAfterSeconds })
+  (error: ApiError | CliError.CliError): Problem =>
+    passphraseProblemOf(error) ?? noticeOf(target)(error)
 
-    if (error instanceof BackoffActive) return Problem.Backoff({ retryAfterSeconds: error.retryAfterSeconds })
+// An Open UI's refusal: a Passphrase refusal Locks it (`PassphraseRejected`), so it sends nothing more with a
+// Passphrase that no longer works; any other error is the event `otherwise` makes of its notice.
+const refusalOf =
+  (target: Target) =>
+  (error: ApiError | CliError.CliError, otherwise: (problem: Problem) => Event): Effect.Effect<Event> => {
+    const problem = passphraseProblemOf(error)
 
-    return noticeOf(target)(error)
+    return Effect.succeed(
+      problem === undefined ? otherwise(noticeOf(target)(error)) : Event.PassphraseRejected({ problem }),
+    )
   }
 
 // A filter as `hush audit` takes its flag: empty is no filter.
@@ -77,69 +82,24 @@ const auditQuery = (ask: Ask): Effect.Effect<AuditQuery, AuditFlagsInvalid | Inv
     Next: ({ query }) => Effect.succeed(query),
   })
 
-// A write sent once: an answer lost or not understood after sending may or may not have changed anything, so it
-// reads as the CLI's "do not retry" (invariant 3).
-const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
-  unverifiedOnTransport(write).pipe(Effect.catchTag("UnexpectedResponse", () => Effect.fail(new ChangeUnverified())))
-
-const parsedName = (what: string, input: string) => Effect.fromResult(parseName(what, input))
-
-// The Item form's one write, after the checks `hush item create` and `hush item edit` make before sending, in
-// their order, each failing with the CLI's own error.
-const saveItem = (target: Target, passphrase: Redacted.Redacted<string>, save: Save) =>
-  ItemForm.Save.$match(save, {
-    Create: ({ vault, title, kind, value, plain }) =>
-      Effect.gen(function* () {
-        const primary = Kind.primary(kind).label
-        const names = { vault: yield* parsedName("vault", vault), title: yield* parsedName("title", title) }
-
-        const fields = yield* Effect.forEach(plain, ({ label, text }) =>
-          Create.plainField(kind, { label, value: text }),
-        )
-
-        const secret = yield* Effect.fromResult(
-          PrivateInput.value(Redacted.value(value), { noun: `value for ${primary}`, outcome: "created" }),
-        )
-
-        const receipt = yield* sentOnce(
-          Client.request(Api, target, (client) =>
-            client.admin.itemsCreate({
-              payload: { passphrase, ...names, kind, fields: [{ label: primary, value: secret }, ...fields] },
-            }),
-          ),
-        )
-
-        return Event.ItemCreated({ receipt })
-      }),
-    Edit: ({ vault, item, label, change }) =>
-      Effect.gen(function* () {
-        const field = yield* parsedName("field", label)
-        const names = { vault: yield* parsedName("vault", vault), item: yield* parsedName("title", item.title) }
-
-        const wire: ItemChange = ItemForm.Change.$is("Set")(change)
-          ? {
-              set: {
-                label: field,
-                value: yield* Effect.fromResult(
-                  PrivateInput.value(Redacted.value(change.value), { noun: `value for ${field}`, outcome: "changed" }),
-                ),
-              },
-            }
-          : { remove: field }
-
-        const receipt = yield* sentOnce(
-          Client.request(Api, target, (client) =>
-            client.admin.itemsEdit({ payload: { passphrase, ...names, change: wire } }),
-          ),
-        )
-
-        return Event.ItemEdited({ receipt })
-      }),
+// The Item form's one write, checked by the reducer before it was asked for (`ItemWrite.check`).
+const saveItem = (target: Target, passphrase: Redacted.Redacted<string>, write: ItemWrite) =>
+  ItemWrite.$match(write, {
+    Create: ({ payload }) =>
+      sentOnce(
+        Client.request(Api, target, (client) => client.admin.itemsCreate({ payload: { passphrase, ...payload } })),
+      ).pipe(Effect.map((receipt) => Event.ItemCreated({ receipt }))),
+    Edit: ({ vault, item, change }) =>
+      sentOnce(
+        Client.request(Api, target, (client) =>
+          client.admin.itemsEdit({ payload: { passphrase, vault, item, change } }),
+        ),
+      ).pipe(Effect.map((receipt) => Event.ItemEdited({ receipt }))),
   })
 
 // `clipboard` is the host clipboard the copy key writes to and the paste key reads from.
 export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Effect<Event> => {
-  const refused = noticeOf(target)
+  const refused = refusalOf(target)
 
   return Match.valueTags(work, {
     ListVaults: ({ passphrase, attempt }) =>
@@ -152,7 +112,7 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
     ListItems: ({ passphrase, vault }) =>
       Client.request(Api, target, (client) => client.admin.itemsList({ payload: { passphrase, vault } })).pipe(
         Effect.map((list) => Event.ItemsLoaded({ list })),
-        Effect.catch((error) => Effect.succeed(Event.ItemsRefused({ vault, problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.ItemsRefused({ vault, problem }))),
       ),
     ListAudit: ({ passphrase, ask }) =>
       auditQuery(ask).pipe(
@@ -165,26 +125,26 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
             }),
           ).pipe(Effect.map((page) => Event.AuditListed({ ask, query, page }))),
         ),
-        Effect.catch((error) => Effect.succeed(Event.AuditRefused({ ask, problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.AuditRefused({ ask, problem }))),
       ),
     ListTokens: ({ passphrase }) =>
       Client.request(Api, target, (client) => client.admin.tokensList({ payload: { passphrase } })).pipe(
         Effect.map((list) => Event.TokensLoaded({ list })),
-        Effect.catch((error) => Effect.succeed(Event.TokensRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.TokensRefused({ problem }))),
       ),
     RevokeToken: ({ passphrase, label }) =>
       unverifiedOnTransport(
         Client.request(Api, target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
       ).pipe(
         Effect.map((receipt) => Event.TokenRevoked({ label: receipt.label })),
-        Effect.catch((error) => Effect.succeed(Event.RevokeRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.RevokeRefused({ problem }))),
       ),
     IssueToken: ({ passphrase, fields }) =>
       unverifiedOnTransport(
         Client.request(Api, target, (client) => client.admin.tokensIssue({ payload: { passphrase, ...fields } })),
       ).pipe(
         Effect.map((receipt) => Event.TokenIssued({ receipt, copyable: clipboard.available })),
-        Effect.catch((error) => Effect.succeed(Event.IssueRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.IssueRefused({ problem }))),
       ),
     CreateVault: ({ passphrase, vault }) =>
       Effect.fromResult(parseName("vault", vault)).pipe(
@@ -196,32 +156,30 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
           ),
         ),
         Effect.map(() => Event.VaultChanged()),
-        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.VaultRefused({ problem }))),
       ),
     DeleteVault: ({ passphrase, vault }) =>
       unverifiedOnTransport(
         Client.request(Api, target, (client) => client.admin.vaultsDelete({ payload: { passphrase, vault } })),
       ).pipe(
         Effect.map(() => Event.VaultChanged()),
-        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.VaultRefused({ problem }))),
       ),
     RefreshVaults: ({ passphrase }) =>
       Client.request(Api, target, (client) => client.admin.vaultsList({ payload: { passphrase } })).pipe(
         Effect.map(({ vaults }) => Event.VaultsListed({ vaults })),
-        Effect.catch((error) => Effect.succeed(Event.VaultRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.VaultRefused({ problem }))),
       ),
     CopyToken: ({ token }) => Effect.map(clipboard.write(token), (written) => Event.TokenCopied({ written })),
     After: ({ millis, event }) => Effect.as(Effect.sleep(millis), event),
     Reveal: ({ passphrase, reference, generation }) =>
       Client.request(Api, target, (client) => client.admin.itemsReveal({ payload: { passphrase, reference } })).pipe(
         Effect.map(({ value }) => Event.Revealed({ reference, generation, value })),
-        Effect.catch((error) =>
-          Effect.succeed(Event.RevealRefused({ reference, generation, problem: refused(error) })),
-        ),
+        Effect.catch((error) => refused(error, (problem) => Event.RevealRefused({ reference, generation, problem }))),
       ),
-    SaveItem: ({ passphrase, save }) =>
-      saveItem(target, passphrase, save).pipe(
-        Effect.catch((error) => Effect.succeed(Event.ItemSaveRefused({ problem: refused(error) }))),
+    SaveItem: ({ passphrase, write }) =>
+      saveItem(target, passphrase, write).pipe(
+        Effect.catch((error) => refused(error, (problem) => Event.ItemSaveRefused({ problem }))),
       ),
     ReadClipboard: () => Effect.map(clipboard.read, (pasted) => Event.ClipboardRead({ pasted })),
     // Writes, so a lost answer reads as unverified (invariant 3); refusals read as the CLI's `item` commands say.
@@ -232,21 +190,21 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         ),
       ).pipe(
         Effect.map((receipt) => Event.Renamed({ receipt })),
-        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.ChangeRefused({ problem }))),
       ),
     DeleteItem: ({ passphrase, vault, item }) =>
       unverifiedOnTransport(
         Client.request(Api, target, (client) => client.admin.itemsDelete({ payload: { passphrase, vault, item } })),
       ).pipe(
         Effect.map(() => Event.ItemsChanged({ vault })),
-        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.ChangeRefused({ problem }))),
       ),
     ReleaseTitle: ({ passphrase, vault, title }) =>
       unverifiedOnTransport(
         Client.request(Api, target, (client) => client.admin.itemsRelease({ payload: { passphrase, vault, title } })),
       ).pipe(
         Effect.map(() => Event.ItemsChanged({ vault })),
-        Effect.catch((error) => Effect.succeed(Event.ChangeRefused({ problem: refused(error) }))),
+        Effect.catch((error) => refused(error, (problem) => Event.ChangeRefused({ problem }))),
       ),
   })
 }

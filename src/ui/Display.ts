@@ -103,6 +103,7 @@ const tokensSidebarHints = "Up/Down move  Enter open  Tab Tokens  i issue  ? hel
 const issueFormHints = "Up/Down move  Space change  Enter issue  Esc cancel"
 const vaultNameHints = "Type a name  Enter create  Esc cancel"
 const helpHints = "Any key closes the help"
+const sendingHints = "Sending the change; nothing else is confirmed until it answers  ? help  q quit"
 
 // One help line: the keys, then what they do.
 type HelpLine = readonly [keys: string, action: string]
@@ -426,6 +427,8 @@ const hintsFor = (state: Open) => {
   const top = state.modals.at(-1)
 
   if (top !== undefined) return modalShown(state, top).hints
+
+  if (state.confirmed === "sending") return sendingHints
   const { view } = state
 
   if (View.$is("Tokens")(view)) return View.Focus.$is("Rows")(view.focus) ? tableHints : tokensSidebarHints
@@ -468,6 +471,25 @@ const open = (state: Open): Display => {
   })
 }
 
+// The Open layout with nothing in it: what the screen puts in its hidden Open renderables while the frame is Locked
+// or too small, so their buffers keep nothing of the session (a Revealed value, an issued Token, typed text).
+const blank: Extract<Display, { readonly _tag: "Open" }> = OpenDisplay({
+  vaults: [],
+  sections: [],
+  tokens: undefined,
+  title: "",
+  filter: "",
+  rows: [],
+  retired: [],
+  message: "",
+  detail: [],
+  log: [],
+  form: undefined,
+  modal: undefined,
+  modalTitle: "",
+  hints: "",
+})
+
 const tooSmall = ({ width, height }: Size) =>
   TooSmall({
     notice: `hush ui needs ${Size.minimum.width}x${Size.minimum.height}; this terminal is ${width}x${height}. Enlarge it; Ctrl-C quits.`,
@@ -482,4 +504,4 @@ const of = (state: State): Display =>
       })
     : tooSmall(state.size)
 
-export const Display = { of, $match } as const
+export const Display = { of, blank, $match } as const

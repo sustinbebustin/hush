@@ -59,7 +59,8 @@ export interface ItemListOf {
 }
 
 // One Reveal of one Field in the Item detail: none, asked for, or answered and drawn until hidden. `generation`
-// numbers the detail's Reveals, so the hide tick of an earlier one is ignored; `reference` ties an answer to the
+// numbers the session's Reveals (`Open.reveals`), so the hide tick of an earlier one, in this detail or an earlier
+// one, is ignored; `reference` ties an answer to the
 // Field it was asked for. The value is held only while `Shown`.
 export type Reveal = Data.TaggedEnum<{
   Hidden: {}
@@ -79,8 +80,6 @@ export type View = Data.TaggedEnum<{
     readonly item: ItemMeta
     readonly field: number
     readonly reveal: Reveal
-    // Reveals asked for in this detail so far: the next one's generation.
-    readonly reveals: number
   }
   // The Audit Log from `top`, the first row shown (see `Audit`).
   Audit: {
@@ -183,8 +182,7 @@ const reference = (vault: string, item: ItemMeta, label: string): string =>
   `${Reference.scheme}${vault}/${item.title}/${label}`
 
 // The detail of `item`, opened from `list` with the cursor on its first Field and nothing Revealed.
-const detail = (list: ItemListOf, item: ItemMeta): View =>
-  ItemDetail({ list, item, field: 0, reveal: Reveal.Hidden(), reveals: 0 })
+const detail = (list: ItemListOf, item: ItemMeta): View => ItemDetail({ list, item, field: 0, reveal: Reveal.Hidden() })
 
 // The Field under the detail's cursor.
 const selectedField = (view: Extract<View, { readonly _tag: "ItemDetail" }>) => view.item.fields[view.field]

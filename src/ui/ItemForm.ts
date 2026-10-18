@@ -9,7 +9,7 @@ import { Key } from "./Key.js"
 // The Item form as plain state, for a create (a Kind, a title, the concealed Field and the plain ones) or an edit
 // of one Item (one change per submit, to the Field under the cursor). The concealed value is a `Concealed` buffer
 // the screen draws only as a mask, never text an OpenTUI `Input` holds. `submit` turns the form into the one write
-// it sends; every check of the values is the CLI's own, made by the interpreter before sending.
+// it sends; every check of the values is the CLI's own, made by `ItemWrite.check` before the buffer is dropped.
 
 // A plain Field of a create: its label (the Kind's) and the text typed so far (empty: not sent).
 export interface Draft {

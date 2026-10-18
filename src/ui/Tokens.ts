@@ -116,15 +116,18 @@ const copyFailed = {
   }),
 } as const
 
-// A copy's answer, for the issued Token still on screen; after a dismissal it is dropped.
-const copied = (state: Open, written: Written): Step => {
-  const top = state.modals.at(-1)
+const copying = (modal: Modal): modal is IssuedModal => View.Modal.$is("Issued")(modal) && modal.copy === "copying"
 
-  if (top === undefined || !View.Modal.$is("Issued")(top) || top.copy !== "copying") return stay(state)
+// A copy's answer, for the issued Token still held, wherever it sits in the stack (the help or a notice may be over
+// it); after a dismissal it is dropped.
+const copied = (state: Open, written: Written): Step => {
+  if (!state.modals.some(copying)) return stay(state)
+  const copy = written === "written" ? "copied" : "ready"
+  const modals = state.modals.map((modal) => (copying(modal) ? View.Modal.Issued({ ...modal, copy }) : modal))
 
   return written === "written"
-    ? stay(withTop(state, { ...top, copy: "copied" }))
-    : stay(withNotice(withTop(state, { ...top, copy: "ready" }), copyFailed[written]))
+    ? stay({ ...state, modals })
+    : stay(withNotice({ ...state, modals }, copyFailed[written]))
 }
 
 // Keys on the Token rows: Up and Down move the row cursor, `d` asks to revoke the Token under it, and Escape or

@@ -1,12 +1,15 @@
-import { Redacted } from "effect"
+import { Redacted, Result } from "effect"
 
 import type { ItemEditReceipt, ItemMeta, ItemRenamed } from "../shared/Api.js"
+import { Passphrase } from "../shared/Passphrase.js"
+import { Utf8 } from "../shared/Utf8.js"
 import { Audit, type Move } from "./Audit.js"
 import { Clipboard, type Pasted } from "./Clipboard.js"
 import { Concealed } from "./Concealed.js"
 import { Event } from "./Event.js"
 import { IssueForm } from "./IssueForm.js"
 import { ItemForm } from "./ItemForm.js"
+import { ItemWrite } from "./ItemWrite.js"
 import { Key } from "./Key.js"
 import { Problem } from "./Problem.js"
 import { Sidebar } from "./Sidebar.js"
@@ -30,7 +33,7 @@ type AuditView = Extract<View, { readonly _tag: "Audit" }>
 
 export type { Step } from "./Step.js"
 
-const { stay, dismissed, withTop, withNotice, confirming } = Step
+const { stay, dismissed, withTop, withNotice, confirming, confirmedSent, confirmedAnswered } = Step
 
 // Quitting drops everything Open held before the renderer goes.
 const quit = (): Step => ({ state: State.locked(), effects: [UiEffect.Quit()] })
@@ -106,10 +109,22 @@ const openOn = (
     modals: [],
     idle: State.Idle.Active(),
     clipboard,
+    confirmed: "idle",
+    reveals: 0,
   })
 
   return vaults.length === 0 ? stay(open) : select(open, 0)
 }
+
+const tooLong = Problem.Failed({
+  message: `That Passphrase is longer than ${Passphrase.maxBytes} bytes, which no hush Passphrase is; nothing was sent. Type it again.`,
+})
+
+// Fixed: a defect's cause may hold anything, a value included.
+const defect = Problem.Failed({
+  message:
+    "hush ui hit an internal error (details suppressed) and Locked. A request it had sent may or may not have reached the Server, so check before redoing a change. Type the Passphrase to open it again.",
+})
 
 const lockedKey = (state: Locked, key: Key): Step => {
   if (isQuitChord(key)) return quit()
@@ -120,6 +135,10 @@ const lockedKey = (state: Locked, key: Key): Step => {
 
   if (Key.is(key, "return")) {
     if (state.entered.length === 0) return stay({ ...state, phase: State.Phase.Empty() })
+
+    // The request could not carry it, so nothing is sent; the entry is dropped for a fresh one.
+    if (Utf8.byteLength(Redacted.value(state.entered.value)) > Passphrase.maxBytes)
+      return refusedWith({ ...state, entered: Concealed.empty }, tooLong)
     const attempt = state.attempt + 1
 
     return {
@@ -185,6 +204,9 @@ const fromLocked = (state: Locked, event: Event): Step => {
     Renamed: drop,
     ItemsChanged: drop,
     ChangeRefused: drop,
+    PassphraseRejected: drop,
+    // A check that died never answers: the prompt says so and takes a fresh entry.
+    Defect: () => refusedWith({ ...state, entered: Concealed.empty }, defect),
   })
 }
 
@@ -208,7 +230,7 @@ const modalKey = (state: Open, top: Modal, key: Key): Step =>
   View.Modal.$match(top, {
     Notice: () => (Key.is(key, "escape") || Key.is(key, "return") ? stay(dismissed(state)) : stay(state)),
     Confirm: ({ effect }) =>
-      Key.is(key, "y") ? { state: dismissed(state), effects: [effect] } : stay(dismissed(state)),
+      Key.is(key, "y") ? { state: confirmedSent(dismissed(state)), effects: [effect] } : stay(dismissed(state)),
     IssueForm: (form) => Tokens.issueFormKey(state, form, key),
     Issued: (issued) => Tokens.issuedKey(state, issued, key),
     Rename: (rename) => renameKey(state, rename, key),
@@ -316,8 +338,12 @@ const openKey = (state: Open, key: Key): Step => {
 
   if (onVaults !== undefined) return onVaults
 
+  // Not while the list is asked for: its answer applies only to the list on screen, so the form's Escape would
+  // return to a list loading forever.
   if (View.$is("ItemList")(view) && Key.is(key, "c"))
-    return stay({ ...state, view: View.ItemForm({ list: view, form: ItemForm.create(view.vault), phase: "editing" }) })
+    return View.Items.$is("Loading")(view.items)
+      ? stay(state)
+      : stay({ ...state, view: View.ItemForm({ list: view, form: ItemForm.create(view.vault), phase: "editing" }) })
 
   if (View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus)) {
     const onRows = rowsKey(state, view, view.focus.row, key)
@@ -419,11 +445,11 @@ const detailKey = (state: Open, view: ItemDetail, key: Key): Step => {
     })
 
   if (!Key.is(key, "r") || field === undefined) return stay(state)
-  const generation = view.reveals + 1
+  const generation = state.reveals + 1
   const reference = View.reference(view.list.vault, view.item, field.label)
 
   return {
-    state: { ...state, view: { ...view, reveal: View.Reveal.Asking({ generation, reference }), reveals: generation } },
+    state: { ...state, view: { ...view, reveal: View.Reveal.Asking({ generation, reference }) }, reveals: generation },
     effects: [UiEffect.Reveal({ passphrase: state.passphrase, reference, generation })],
   }
 }
@@ -554,7 +580,6 @@ const detailOn = (list: ItemListOf, item: ItemMeta, label: string): View =>
       item.fields.findIndex((field) => field.label === label),
     ),
     reveal: View.Reveal.Hidden(),
-    reveals: 0,
   })
 
 // Where Escape leaves the form: the Item list a create was opened from, or the detail of the Item an edit changes.
@@ -582,10 +607,14 @@ const formKey = (state: Open, view: ItemFormView, key: Key): Step => {
 
   if (!Key.is(key, "return")) return stay({ ...state, view: { ...view, form: ItemForm.key(view.form, key) } })
 
-  return {
-    state: { ...state, view: { ...view, form: ItemForm.sent(view.form), phase: "sending" } },
-    effects: [UiEffect.SaveItem({ passphrase: state.passphrase, save: ItemForm.submit(view.form) })],
-  }
+  // The CLI's checks first, so a refusal keeps what was typed (the concealed value too) under its notice.
+  return Result.match(ItemWrite.check(ItemForm.submit(view.form)), {
+    onFailure: (problem) => stay(withNotice(state, problem)),
+    onSuccess: (write) => ({
+      state: { ...state, view: { ...view, form: ItemForm.sent(view.form), phase: "sending" } },
+      effects: [UiEffect.SaveItem({ passphrase: state.passphrase, write })],
+    }),
+  })
 }
 
 // `update` applied to the Item form while it waits in `phase`; an answer after the Owner left it is dropped.
@@ -595,13 +624,12 @@ const formAnswer = (state: Open, phase: ItemFormView["phase"], update: (view: It
   return View.$is("ItemForm")(view) && view.phase === phase ? update(view) : stay(state)
 }
 
-// A verified create: the Vault's Item list fetched again to show the new Item, and its count one higher.
+// A verified create: the Vault's Item list fetched again to show the new Item (and count it in the sidebar).
 const created = (state: Open, view: ItemFormView): Step => {
   const { vault } = view.list
-  const vaults = state.vaults.map((row) => (row.vault === vault ? { ...row, items: row.items + 1 } : row))
 
   return {
-    state: { ...state, vaults, view: View.loading(vault) },
+    state: { ...state, view: View.loading(vault) },
     effects: [UiEffect.ListItems({ passphrase: state.passphrase, vault })],
   }
 }
@@ -677,9 +705,11 @@ const fromOpen = (state: Open, event: Event): Step =>
   Event.$match(event, {
     Key: ({ key }) => openKey(active(state), key),
     Paste: ({ text }) => openPaste(active(state), text),
+    // The sidebar counts the Items just listed, so a create or delete shows in it too.
     ItemsLoaded: ({ list }) =>
       answerFor(state, list.vault, (view) => ({
         ...state,
+        vaults: state.vaults.map((row) => (row.vault === list.vault ? { ...row, items: list.items.length } : row)),
         view: { ...view, items: View.Items.Loaded({ items: list.items, retired: list.retired }) },
       })),
     ItemsRefused: ({ vault, problem }) =>
@@ -693,13 +723,13 @@ const fromOpen = (state: Open, event: Event): Step =>
       auditAnswer(state, (view) => Audit.refused(view, ask), [View.Modal.Notice({ problem })]),
     TokensLoaded: ({ list }) => Tokens.loaded(state, list),
     TokensRefused: ({ problem }) => Tokens.refused(state, problem),
-    TokenRevoked: () => Tokens.revoked(state),
-    RevokeRefused: ({ problem }) => stay(withNotice(state, problem)),
+    TokenRevoked: () => Tokens.revoked(confirmedAnswered(state)),
+    RevokeRefused: ({ problem }) => stay(withNotice(confirmedAnswered(state), problem)),
     TokenIssued: ({ receipt, copyable }) => Tokens.issued(state, receipt, copyable),
     IssueRefused: ({ problem }) => Tokens.issueRefused(state, problem),
     TokenCopied: ({ written }) => Tokens.copied(state, written),
-    VaultChanged: () => Vaults.changed(state),
-    VaultRefused: ({ problem }) => Vaults.refused(state, problem),
+    VaultChanged: () => Vaults.changed(confirmedAnswered(state)),
+    VaultRefused: ({ problem }) => Vaults.refused(confirmedAnswered(state), problem),
     VaultsListed: ({ vaults }) => Vaults.listed(state, vaults, select),
     // Locked-only events: none reaches an Open UI except late, and none changes it.
     Unlocked: () => stay(state),
@@ -727,8 +757,14 @@ const fromOpen = (state: Open, event: Event): Step =>
       ),
     ClipboardRead: ({ pasted }) => formAnswer(state, "pasting", (view) => pastedInto(state, view, pasted)),
     Renamed: ({ receipt }) => renamed(state, receipt),
-    ItemsChanged: ({ vault }) => refreshed(state, vault),
-    ChangeRefused: ({ problem }) => changeRefused(state, problem),
+    ItemsChanged: ({ vault }) => refreshed(confirmedAnswered(state), vault),
+    ChangeRefused: ({ problem }) => changeRefused(confirmedAnswered(state), problem),
+    // The held Passphrase no longer opens the Server (changed elsewhere) or the backoff is on: every further request
+    // would add a `denied` Audit row and advance the backoff for the whole Server, so the UI Locks, dropping all it
+    // held, and the prompt shows why with the Server's wait, as an unlock's refusal does.
+    PassphraseRejected: ({ problem }) => refusedWith(State.locked(0, state.size), problem),
+    // A request, timer or clipboard call that died leaves its phase waiting forever; Locking resets every phase.
+    Defect: () => refusedWith(State.locked(0, state.size), defect),
   })
 
 // Input the Owner cannot see the effect of: a key or paste while the frame is below 80x24, which draws only its

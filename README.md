@@ -165,7 +165,7 @@ Needing no credential: `hush status` (the Server's state and versions), `hush do
 - Audit: the Audit Log, newest first; `/` filters by Vault, Label and since, PgUp and PgDn scroll and load older pages.
 - In the sidebar, `c` creates a Vault and `d` deletes one. Every destructive step asks for `y`.
 
-The bottom line lists the main keys of the current view, and `?` lists them all. `q` quits outside a prompt or form, Ctrl-C quits anywhere, and Ctrl-Z locks before suspending. Each Owner action is one Server request, plus one list refresh after a change; it never retries. While Open, the UI holds the Passphrase in its memory and sends it with every request ([ADR-0010](docs/adr/0010-ui-holds-the-passphrase-in-memory.md)). It drops it and Locks after ten minutes without a key and on Ctrl-Z, and drops it when it exits (on quit, or when the terminal closes). Errors read exactly as the CLI prints them. A smaller terminal shows a one-line notice until it is resized.
+The bottom line lists the main keys of the current view, and `?` lists them all. `q` quits outside a prompt or form, Ctrl-C quits anywhere, and Ctrl-Z locks before suspending. Each Owner action is one Server request, plus one list refresh after a change; it never retries. While Open, the UI holds the Passphrase in its memory and sends it with every request ([ADR-0010](docs/adr/0010-ui-holds-the-passphrase-in-memory.md)). It drops it and Locks after ten minutes without a key, on Ctrl-Z, and when the Server refuses it (changed elsewhere, or the backoff is on), saying why at the prompt; and it drops it when it exits (on quit, or when the terminal closes). Errors read exactly as the CLI prints them. A smaller terminal shows a one-line notice until it is resized.
 
 ## Configuration
 

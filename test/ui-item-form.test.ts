@@ -6,7 +6,6 @@ import type { ItemMeta } from "../src/shared/Api.js"
 import { Clipboard } from "../src/ui/Clipboard.js"
 import { Display } from "../src/ui/Display.js"
 import { Event } from "../src/ui/Event.js"
-import { ItemForm } from "../src/ui/ItemForm.js"
 import { Key } from "../src/ui/Key.js"
 import { Reducer, type Step } from "../src/ui/Reducer.js"
 import { State } from "../src/ui/State.js"
@@ -72,7 +71,7 @@ const draws = (state: State, text: string) => stringsIn([Display.of(state)]).som
 
 // What the write effects carried.
 const saved = (effects: Step["effects"]) =>
-  effects.flatMap((effect) => (UiEffect.$is("SaveItem")(effect) ? [effect.save] : []))
+  effects.flatMap((effect) => (UiEffect.$is("SaveItem")(effect) ? [effect.write] : []))
 
 // A concealed value: a fixed prefix, so it matches nothing else in the state, then any printable text.
 const concealedValue = fc
@@ -112,11 +111,12 @@ describe("Item form concealed buffer", () => {
         assert.isFalse(holds(submitted.state, value))
         assert.isFalse(draws(submitted.state, value))
 
-        const [save, ...more] = saved(submitted.effects)
+        const [write, ...more] = saved(submitted.effects)
         assert.deepStrictEqual(more, [])
+        const [primary] = write?._tag === "Create" ? write.payload.fields : []
 
         assert.isTrue(
-          save !== undefined && ItemForm.Save.$is("Create")(save) && Redacted.value(save.value) === value,
+          primary !== undefined && Redacted.value(primary.value) === value,
           "the one write carries the value",
         )
       }),
