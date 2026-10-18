@@ -571,6 +571,22 @@ describe("Reducer rename, delete and release", () => {
     assertCancels(press(listed(["Stripe live key"]), Key.named("return")).state, Key.char("d"))
   })
 
+  it("opens no create form while the list is asked for again, so its answer is not dropped behind the form", () => {
+    const deleted = press(listed(["a", "b"]), Key.char("d"), Key.char("y")).state
+    const reloading = Reducer.reduce(deleted, Event.ItemsChanged({ vault: "Personal" })).state
+    const pressed = press(reloading, Key.char("c"))
+    assert.deepStrictEqual(pressed, { state: reloading, effects: [] })
+
+    const answered = Reducer.reduce(
+      pressed.state,
+      Event.ItemsLoaded({ list: { vault: "Personal", items: [item("b")], retired: [] } }),
+    ).state
+
+    assert.deepStrictEqual(shown(answered), ["b"])
+    const creating = press(answered, Key.char("c")).state
+    assert.strictEqual(State.$is("Open")(creating) ? creating.view._tag : undefined, "ItemForm")
+  })
+
   it("lists the Retired titles below the Items and releases the one under the cursor only on y", () => {
     const before = listed(["Stripe live key"], ["old key", "spare"])
 

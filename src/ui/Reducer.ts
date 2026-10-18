@@ -317,8 +317,12 @@ const openKey = (state: Open, key: Key): Step => {
 
   if (onVaults !== undefined) return onVaults
 
+  // Not while the list is asked for: its answer applies only to the list on screen, so the form's Escape would
+  // return to a list loading forever.
   if (View.$is("ItemList")(view) && Key.is(key, "c"))
-    return stay({ ...state, view: View.ItemForm({ list: view, form: ItemForm.create(view.vault), phase: "editing" }) })
+    return View.Items.$is("Loading")(view.items)
+      ? stay(state)
+      : stay({ ...state, view: View.ItemForm({ list: view, form: ItemForm.create(view.vault), phase: "editing" }) })
 
   if (View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus)) {
     const onRows = rowsKey(state, view, view.focus.row, key)
