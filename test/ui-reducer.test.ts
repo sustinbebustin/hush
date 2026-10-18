@@ -27,6 +27,9 @@ const press = (state: State, ...keys: ReadonlyArray<Key>) =>
 
 const typing = (text: string) => [...text].map(Key.char)
 
+// The Locked prompt with `text` pasted into it.
+const promptWith = (text: string) => Reducer.reduce(State.initial, Event.Paste({ text })).state
+
 // What the effects asked for: the Vault of each Item request, else the effect's tag.
 const asked = (effects: ReadonlyArray<UiEffect>) =>
   effects.map((effect) => (UiEffect.$is("ListItems")(effect) ? effect.vault : effect._tag))
@@ -194,6 +197,21 @@ describe("Reducer from Locked", () => {
       state: again.state,
       effects: [],
     })
+  })
+
+  it("sends no Passphrase over the 1024-byte wire limit and says so at the prompt", () => {
+    // 513 two-byte code points: 1026 bytes, short of the 1024 code points the length limit counts.
+    const { state, effects } = press(promptWith("é".repeat(513)), Key.named("return"))
+
+    assert.deepStrictEqual(effects, [])
+    assert.strictEqual(State.$is("Locked")(state) ? state.phase._tag : undefined, "Refused")
+    assert.strictEqual(State.$is("Locked")(state) ? state.entered.length : undefined, 0)
+    assert.include(
+      Display.$match(Display.of(state), { Locked: ({ notice }) => notice, Open: () => "", TooSmall: () => "" }),
+      "1024 bytes",
+    )
+
+    assert.deepStrictEqual(asked(press(promptWith("é".repeat(512)), Key.named("return")).effects), ["ListVaults"])
   })
 
   it("types q into the prompt rather than quitting, and quits on Ctrl-C", () => {

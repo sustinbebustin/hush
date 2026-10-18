@@ -123,8 +123,13 @@ export const run = (input: {
             continue
           }
 
+          // A defect (a bug, say a request the Client could not encode) would end the fiber silently and leave its
+          // phase waiting forever; it becomes `Defect` instead, its cause dropped since it may hold a value.
           yield* FiberSet.run(work)(
-            Effect.flatMap(Interpreter.run(target, effect, clipboard), (event) => Queue.offer(events, event)),
+            Interpreter.run(target, effect, clipboard).pipe(
+              Effect.catchDefect(() => Effect.succeed(Event.Defect())),
+              Effect.flatMap((event) => Queue.offer(events, event)),
+            ),
           )
         }
       }

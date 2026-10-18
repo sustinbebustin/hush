@@ -1,6 +1,8 @@
 import { Redacted } from "effect"
 
 import type { ItemEditReceipt, ItemMeta, ItemRenamed } from "../shared/Api.js"
+import { Passphrase } from "../shared/Passphrase.js"
+import { Utf8 } from "../shared/Utf8.js"
 import { Audit, type Move } from "./Audit.js"
 import { Clipboard, type Pasted } from "./Clipboard.js"
 import { Concealed } from "./Concealed.js"
@@ -111,6 +113,16 @@ const openOn = (
   return vaults.length === 0 ? stay(open) : select(open, 0)
 }
 
+const tooLong = Problem.Failed({
+  message: `That Passphrase is longer than ${Passphrase.maxBytes} bytes, which no hush Passphrase is; nothing was sent. Type it again.`,
+})
+
+// Fixed: a defect's cause may hold anything, a value included.
+const defect = Problem.Failed({
+  message:
+    "hush ui hit an internal error (details suppressed) and Locked. A request it had sent may or may not have reached the Server, so check before redoing a change. Type the Passphrase to open it again.",
+})
+
 const lockedKey = (state: Locked, key: Key): Step => {
   if (isQuitChord(key)) return quit()
 
@@ -120,6 +132,10 @@ const lockedKey = (state: Locked, key: Key): Step => {
 
   if (Key.is(key, "return")) {
     if (state.entered.length === 0) return stay({ ...state, phase: State.Phase.Empty() })
+
+    // The request could not carry it, so nothing is sent; the entry is dropped for a fresh one.
+    if (Utf8.byteLength(Redacted.value(state.entered.value)) > Passphrase.maxBytes)
+      return refusedWith({ ...state, entered: Concealed.empty }, tooLong)
     const attempt = state.attempt + 1
 
     return {
@@ -186,6 +202,8 @@ const fromLocked = (state: Locked, event: Event): Step => {
     ItemsChanged: drop,
     ChangeRefused: drop,
     PassphraseRejected: drop,
+    // A check that died never answers: the prompt says so and takes a fresh entry.
+    Defect: () => refusedWith({ ...state, entered: Concealed.empty }, defect),
   })
 }
 
@@ -738,6 +756,8 @@ const fromOpen = (state: Open, event: Event): Step =>
     // would add a `denied` Audit row and advance the backoff for the whole Server, so the UI Locks, dropping all it
     // held, and the prompt shows why with the Server's wait, as an unlock's refusal does.
     PassphraseRejected: ({ problem }) => refusedWith(State.locked(0, state.size), problem),
+    // A request, timer or clipboard call that died leaves its phase waiting forever; Locking resets every phase.
+    Defect: () => refusedWith(State.locked(0, state.size), defect),
   })
 
 // Input the Owner cannot see the effect of: a key or paste while the frame is below 80x24, which draws only its

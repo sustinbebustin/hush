@@ -27,7 +27,8 @@ const multiline = "fictional-pasted-line-one-8Lz\nfictional-pasted-line-two-8Lz"
 
 const withUi = async (
   body: (ui: Headless, box: Sandbox, clipboard: FakeClipboard) => Promise<void>,
-  options: { readonly viaProxy?: boolean; readonly noClipboard?: boolean } = {},
+  // `host` in place of the fake clipboard, or none.
+  options: { readonly viaProxy?: boolean; readonly noClipboard?: boolean; readonly host?: Clipboard } = {},
 ): Promise<void> => {
   const box = await sandbox()
   const clipboard = fakeClipboard()
@@ -36,7 +37,7 @@ const withUi = async (
     await box.seed({ items: [{ kind: "login", title: "GitHub", value: secret, plain: { username: "octo" } }] })
 
     const ui = await headless(box, {
-      clipboard: options.noClipboard === true ? Clipboard.none : clipboard.clipboard,
+      clipboard: options.noClipboard === true ? Clipboard.none : (options.host ?? clipboard.clipboard),
       server: options.viaProxy === true ? box.proxy.url : box.server.url,
     })
 
@@ -468,6 +469,30 @@ describe.skipIf(!serverSupported)("hush ui edit", () => {
 
 // The form offers only its Kind's Fields, so no key reaches `UnknownField`; the write it would send is run here
 // through the interpreter against the real Server instead.
+describe.skipIf(!serverSupported)("hush ui internal errors", () => {
+  it("locks with a fixed notice when an effect dies, instead of waiting on it forever", () =>
+    withUi(
+      async (ui) => {
+        await openCreate(ui)
+        ui.keys.pressArrow("down")
+        ui.keys.pressArrow("down")
+        await ui.waitFor("> credential")
+        ui.keys.pressKey("v", { ctrl: true })
+
+        const locked = await ui.waitFor("internal error")
+        assert.include(locked, "hush Passphrase:")
+        assert.notInclude(locked, "Reading the clipboard")
+      },
+      {
+        host: {
+          available: true,
+          write: () => Effect.succeed("unsupported"),
+          read: Effect.die(new Error("fictional clipboard defect")),
+        },
+      },
+    ))
+})
+
 describe.skipIf(!serverSupported)("hush ui Item write refusals", () => {
   it("shows the CLI's UnknownField message for a Field the Kind lacks", async () => {
     const box = await sandbox()
