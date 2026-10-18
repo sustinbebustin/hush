@@ -23,7 +23,11 @@ fail() {
   exit 1
 }
 
-unset HUSH_SERVER HUSH_TOKEN
+# The container listens on the host's loopback. Pin the CLI to it so neither the free-port probe nor any later step
+# reads the Owner's config file and talks to their real Server instead.
+unset HUSH_TOKEN
+HUSH_SERVER="http://127.0.0.1:7787"
+export HUSH_SERVER
 if docker container inspect hush >/dev/null 2>&1; then fail "a container named hush exists; remove it first"; fi
 if docker volume inspect hush-data >/dev/null 2>&1; then fail "the volume hush-data exists; this test would delete it"; fi
 if "$hush" status >/dev/null 2>&1; then fail "a Server already answers on 127.0.0.1:7787; stop it first"; fi
