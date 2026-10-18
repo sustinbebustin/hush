@@ -418,6 +418,16 @@ describe("Reducer when Open", () => {
     )
   })
 
+  it("applies a copy's answer to the issued Token under the help opened while it was copying", () => {
+    const issued = Reducer.reduce(tokensOpened(), Event.TokenIssued({ receipt: receipt(issuedToken), copyable: true }))
+    const helped = press(issued.state, Key.char("c"), Key.char("?")).state
+    const copied = Reducer.reduce(helped, Event.TokenCopied({ written: "written" })).state
+    const closed = press(copied, Key.char("x")).state
+
+    assert.include(modalText(closed), "Copied to the clipboard.")
+    assert.deepStrictEqual(asked(press(closed, Key.char("c")).effects), ["CopyToken"])
+  })
+
   it("offers to replace a listed Label, keeping its Grants or starting the picker from them", () => {
     // Personal, Work, TTL, then the replace row that a listed Label adds.
     const toReplace = [...typing("AGENT ON BOX"), ...Array.from({ length: 4 }, () => Key.named("down"))]
