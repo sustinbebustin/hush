@@ -24,8 +24,15 @@ const withNotice = (state: Open, problem: Problem): Open => ({
   modals: [...state.modals, View.Modal.Notice({ problem })],
 })
 
-// A Confirm modal over the state, held until `y` runs `effect`.
+// A Confirm modal over the state, held until `y` runs `effect`; none while a confirmed write is still out.
 const confirming = (state: Open, description: string, effect: UiEffect): Step =>
-  stay({ ...state, modals: [...state.modals, View.Modal.Confirm({ description, effect })] })
+  state.confirmed === "sending"
+    ? stay(state)
+    : stay({ ...state, modals: [...state.modals, View.Modal.Confirm({ description, effect })] })
 
-export const Step = { stay, dismissed, withTop, withNotice, confirming } as const
+// The state with a confirmed write sent, and once it has answered, either way.
+const confirmedSent = (state: Open): Open => ({ ...state, confirmed: "sending" })
+
+const confirmedAnswered = (state: Open): Open => ({ ...state, confirmed: "idle" })
+
+export const Step = { stay, dismissed, withTop, withNotice, confirming, confirmedSent, confirmedAnswered } as const

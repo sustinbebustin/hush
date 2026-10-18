@@ -602,6 +602,25 @@ describe("Reducer rename, delete and release", () => {
     assertCancels(press(listed(["Stripe live key"]), Key.named("return")).state, Key.char("d"))
   })
 
+  it("sends one confirmed write until it is answered: d and y again while it is out send nothing", () => {
+    const twice = press(listed(["a", "b"]), Key.char("d"), Key.char("y"), Key.char("d"), Key.char("y"))
+    assert.deepStrictEqual(asked(twice.effects), ["DeleteItem"])
+    assert.include(
+      Display.$match(Display.of(twice.state), { Locked: () => "", Open: ({ hints }) => hints, TooSmall: () => "" }),
+      "Sending",
+    )
+
+    const refused = Reducer.reduce(twice.state, Event.ChangeRefused({ problem: Problem.Failed({ message: "no" }) }))
+    const again = press(refused.state, Key.named("escape"), Key.char("d"), Key.char("y"))
+    assert.deepStrictEqual(asked(again.effects), ["DeleteItem"])
+
+    const revoking = press(tokensOpened(), Key.char("d"), Key.char("y"), Key.char("d"), Key.char("y"))
+    assert.deepStrictEqual(asked(revoking.effects), ["RevokeToken"])
+    const revoked = Reducer.reduce(revoking.state, Event.TokenRevoked({ label: "agent on box" }))
+    const listedAgain = Reducer.reduce(revoked.state, Event.TokensLoaded({ list: { tokens: [tokenInfo("b")] } }))
+    assert.deepStrictEqual(asked(press(listedAgain.state, Key.char("d"), Key.char("y")).effects), ["RevokeToken"])
+  })
+
   it("counts the Vault's Items in the sidebar as its list answers, so a delete lowers the count", () => {
     const before = press(opened(["a", "b"]), Key.named("tab"))
     assert.deepStrictEqual(counts(before.state), [2, 0])

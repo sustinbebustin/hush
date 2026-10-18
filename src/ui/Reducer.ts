@@ -32,7 +32,7 @@ type AuditView = Extract<View, { readonly _tag: "Audit" }>
 
 export type { Step } from "./Step.js"
 
-const { stay, dismissed, withTop, withNotice, confirming } = Step
+const { stay, dismissed, withTop, withNotice, confirming, confirmedSent, confirmedAnswered } = Step
 
 // Quitting drops everything Open held before the renderer goes.
 const quit = (): Step => ({ state: State.locked(), effects: [UiEffect.Quit()] })
@@ -108,6 +108,7 @@ const openOn = (
     modals: [],
     idle: State.Idle.Active(),
     clipboard,
+    confirmed: "idle",
   })
 
   return vaults.length === 0 ? stay(open) : select(open, 0)
@@ -227,7 +228,7 @@ const modalKey = (state: Open, top: Modal, key: Key): Step =>
   View.Modal.$match(top, {
     Notice: () => (Key.is(key, "escape") || Key.is(key, "return") ? stay(dismissed(state)) : stay(state)),
     Confirm: ({ effect }) =>
-      Key.is(key, "y") ? { state: dismissed(state), effects: [effect] } : stay(dismissed(state)),
+      Key.is(key, "y") ? { state: confirmedSent(dismissed(state)), effects: [effect] } : stay(dismissed(state)),
     IssueForm: (form) => Tokens.issueFormKey(state, form, key),
     Issued: (issued) => Tokens.issuedKey(state, issued, key),
     Rename: (rename) => renameKey(state, rename, key),
@@ -717,13 +718,13 @@ const fromOpen = (state: Open, event: Event): Step =>
       auditAnswer(state, (view) => Audit.refused(view, ask), [View.Modal.Notice({ problem })]),
     TokensLoaded: ({ list }) => Tokens.loaded(state, list),
     TokensRefused: ({ problem }) => Tokens.refused(state, problem),
-    TokenRevoked: () => Tokens.revoked(state),
-    RevokeRefused: ({ problem }) => stay(withNotice(state, problem)),
+    TokenRevoked: () => Tokens.revoked(confirmedAnswered(state)),
+    RevokeRefused: ({ problem }) => stay(withNotice(confirmedAnswered(state), problem)),
     TokenIssued: ({ receipt, copyable }) => Tokens.issued(state, receipt, copyable),
     IssueRefused: ({ problem }) => Tokens.issueRefused(state, problem),
     TokenCopied: ({ written }) => Tokens.copied(state, written),
-    VaultChanged: () => Vaults.changed(state),
-    VaultRefused: ({ problem }) => Vaults.refused(state, problem),
+    VaultChanged: () => Vaults.changed(confirmedAnswered(state)),
+    VaultRefused: ({ problem }) => Vaults.refused(confirmedAnswered(state), problem),
     VaultsListed: ({ vaults }) => Vaults.listed(state, vaults, select),
     // Locked-only events: none reaches an Open UI except late, and none changes it.
     Unlocked: () => stay(state),
@@ -751,8 +752,8 @@ const fromOpen = (state: Open, event: Event): Step =>
       ),
     ClipboardRead: ({ pasted }) => formAnswer(state, "pasting", (view) => pastedInto(state, view, pasted)),
     Renamed: ({ receipt }) => renamed(state, receipt),
-    ItemsChanged: ({ vault }) => refreshed(state, vault),
-    ChangeRefused: ({ problem }) => changeRefused(state, problem),
+    ItemsChanged: ({ vault }) => refreshed(confirmedAnswered(state), vault),
+    ChangeRefused: ({ problem }) => changeRefused(confirmedAnswered(state), problem),
     // The held Passphrase no longer opens the Server (changed elsewhere) or the backoff is on: every further request
     // would add a `denied` Audit row and advance the backoff for the whole Server, so the UI Locks, dropping all it
     // held, and the prompt shows why with the Server's wait, as an unlock's refusal does.

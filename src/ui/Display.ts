@@ -103,6 +103,7 @@ const tokensSidebarHints = "Up/Down move  Enter open  Tab Tokens  i issue  ? hel
 const issueFormHints = "Up/Down move  Space change  Enter issue  Esc cancel"
 const vaultNameHints = "Type a name  Enter create  Esc cancel"
 const helpHints = "Any key closes the help"
+const sendingHints = "Sending the change; nothing else is confirmed until it answers  ? help  q quit"
 
 // One help line: the keys, then what they do.
 type HelpLine = readonly [keys: string, action: string]
@@ -426,6 +427,8 @@ const hintsFor = (state: Open) => {
   const top = state.modals.at(-1)
 
   if (top !== undefined) return modalShown(state, top).hints
+
+  if (state.confirmed === "sending") return sendingHints
   const { view } = state
 
   if (View.$is("Tokens")(view)) return View.Focus.$is("Rows")(view.focus) ? tableHints : tokensSidebarHints

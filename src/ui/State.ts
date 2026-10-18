@@ -54,6 +54,9 @@ export type State = Data.TaggedEnum<{
     readonly idle: Idle
     // Whether the host has a clipboard: the paste key is offered only then.
     readonly clipboard: boolean
+    // A write confirmed with `y` (a delete, release or revoke) is out and unanswered: no other confirmation opens
+    // until it answers, so a second `d` `y` during the Server's Passphrase check cannot send another.
+    readonly confirmed: "idle" | "sending"
   }
 }>
 
