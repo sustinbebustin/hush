@@ -10,7 +10,8 @@ FROM --platform=$BUILDPLATFORM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f
 ARG TARGETARCH
 WORKDIR /src
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+# Every platform's OpenTUI native package: the builder compiles for TARGETARCH, which may not be its own.
+RUN bun install --frozen-lockfile --os="*" --cpu="*"
 COPY . .
 RUN target=linux-$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x64) \
  && sh scripts/build.sh "$target" \
