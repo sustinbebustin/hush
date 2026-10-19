@@ -158,14 +158,14 @@ Needing no credential: `hush status` (the Server's state and versions), `hush do
 
 ### Terminal UI
 
-`hush ui` is the Owner's full-screen view of a Server, for a terminal of at least 80x24 ([ADR-0009](docs/adr/0009-terminal-ui-not-web-ui.md)). It starts **Locked**, at the same hidden Passphrase prompt as the CLI. The right Passphrase makes it **Open**: a sidebar of Vaults with their Item counts, then Tokens and Audit, and a main pane showing the selection.
+`hush ui` is the Owner's full-screen view of a Server, for a terminal of at least 60x10 ([ADR-0009](docs/adr/0009-terminal-ui-not-web-ui.md)). It starts **Locked**, at the same hidden Passphrase prompt as the CLI. The right Passphrase makes it **Open**: a sidebar of Vaults with their Item counts, then Tokens and Audit, and a main pane showing the selection.
 
 - A Vault: its Items and Retired titles; an Item's detail shows its Kind, times, Fields and References. `r` Reveals the Field under the cursor until any key or 10 s, `e` edits it, `c` creates an Item, `n` renames, `d` deletes, `x` releases a Retired title.
 - Tokens: every Token with its Grants and state; `i` issues one (shown once, `c` copies it), `d` revokes.
 - Audit: the Audit Log, newest first; `/` filters by Vault, Label and since, PgUp and PgDn scroll and load older pages.
 - In the sidebar, `c` creates a Vault and `d` deletes one. Every destructive step asks for `y`.
 
-The bottom line lists the main keys of the current view, and `?` lists them all. `q` quits outside a prompt or form, Ctrl-C quits anywhere, and Ctrl-Z locks before suspending. Each Owner action is one Server request, plus one list refresh after a change; it never retries. While Open, the UI holds the Passphrase in its memory and sends it with every request ([ADR-0010](docs/adr/0010-ui-holds-the-passphrase-in-memory.md)). It drops it and Locks after ten minutes without a key, on Ctrl-Z, and when the Server refuses it (changed elsewhere, or the backoff is on), saying why at the prompt; and it drops it when it exits (on quit, or when the terminal closes). Errors read exactly as the CLI prints them. A smaller terminal shows a one-line notice until it is resized.
+The bottom line lists the main keys of the current view, and `?` lists them all. `q` quits outside a prompt or form, Ctrl-C quits anywhere, and Ctrl-Z locks before suspending. Each Owner action is one Server request, plus one list refresh after a change; it never retries. While Open, the UI holds the Passphrase in its memory and sends it with every request ([ADR-0010](docs/adr/0010-ui-holds-the-passphrase-in-memory.md)). It drops it and Locks after ten minutes without a key, on Ctrl-Z, and when the Server refuses it (changed elsewhere, or the backoff is on), saying why at the prompt; and it drops it when it exits (on quit, or when the terminal closes). Errors read exactly as the CLI prints them. A short or narrow terminal shows fewer rows and a shorter key line; one below 60x10 shows a one-line notice until it is resized.
 
 ## Configuration
 

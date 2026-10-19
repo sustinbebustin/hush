@@ -75,7 +75,7 @@ export type Display = Data.TaggedEnum<{
     readonly modalTitle: string
     readonly hints: string
   }
-  // A frame below 80x24: one notice in place of the layout, which would not fit.
+  // A frame below `Size.minimum`: one notice in place of the layout, which would not fit.
   TooSmall: { readonly notice: string }
 }>
 
@@ -84,7 +84,7 @@ const { Locked, Open: OpenDisplay, TooSmall, $match } = Data.taggedEnum<Display>
 // The CLI's own prompt text, so the Owner meets the same words in both.
 const prompt = "hush Passphrase: "
 
-// Each hint bar fits 80 columns; where `?` opens the help, the bar names the commonest keys and the help lists every
+// Each hint bar fits 80 columns, and `fitted` drops keys from it to fit a narrower frame; where `?` opens the help, the bar names the commonest keys and the help lists every
 // one. Where `?` is typed or cancels, the bar lists every key.
 const lockedHints = "Enter unlock  Ctrl-C quit"
 const listHints = "Up/Down move  Enter open  c create Vault  d delete Vault  ? help  q quit"
@@ -423,6 +423,19 @@ const retiredRows = (view: View): ReadonlyArray<RetiredRow> => {
   return View.retired(view).map((key, index) => ({ key, underCursor: items + index === cursor }))
 }
 
+// The keys a hint bar keeps longest: how to see every key, and how to leave.
+const lastingKeys: ReadonlySet<string> = new Set(["? help", "q quit", "Ctrl-C quit"])
+
+// `hints` on one line of `width` columns: whole keys dropped from the end, the lasting ones last and the first one
+// never, then cut at the edge if the first key still does not fit. OpenTUI would wrap a longer line over the pane.
+const fitted = (hints: string, width: number): string => {
+  if (hints.length <= width) return hints
+  const keys = hints.split("  ")
+  const dropped = keys.findLastIndex((key) => !lastingKeys.has(key))
+
+  return dropped <= 0 ? hints.slice(0, width) : fitted(keys.toSpliced(dropped, 1).join("  "), width)
+}
+
 const hintsFor = (state: Open) => {
   const top = state.modals.at(-1)
 
@@ -467,7 +480,7 @@ const open = (state: Open): Display => {
     form: View.$is("ItemForm")(state.view) ? ItemForm.lines(state.view.form) : undefined,
     modal: modal?.text,
     modalTitle: modal?.title ?? "",
-    hints: hintsFor(state),
+    hints: fitted(hintsFor(state), state.size.width),
   })
 }
 
@@ -492,14 +505,19 @@ const blank: Extract<Display, { readonly _tag: "Open" }> = OpenDisplay({
 
 const tooSmall = ({ width, height }: Size) =>
   TooSmall({
-    notice: `hush ui needs ${Size.minimum.width}x${Size.minimum.height}; this terminal is ${width}x${height}. Enlarge it; Ctrl-C quits.`,
+    notice: `hush ui needs at least ${Size.minimum.width}x${Size.minimum.height}; this terminal is ${width}x${height}. Enlarge it; Ctrl-C quits.`,
   })
 
 const of = (state: State): Display =>
   Size.fits(state.size)
     ? State.$match(state, {
-        Locked: ({ entered, phase }) =>
-          Locked({ prompt, mask: "*".repeat(entered.length), notice: lockedNotice(phase), hints: lockedHints }),
+        Locked: ({ entered, phase, size }) =>
+          Locked({
+            prompt,
+            mask: "*".repeat(entered.length),
+            notice: lockedNotice(phase),
+            hints: fitted(lockedHints, size.width),
+          }),
         Open: open,
       })
     : tooSmall(state.size)

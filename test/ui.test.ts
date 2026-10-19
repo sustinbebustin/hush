@@ -351,7 +351,7 @@ describe("hush ui at the command line", () => {
   )
 })
 
-// The smallest frame the UI lays out.
+// The classic terminal, where every hint bar fits whole.
 const minimum = { width: 80, height: 24 } as const
 
 describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
@@ -379,7 +379,7 @@ describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
       minimum,
     ))
 
-  it("draws one notice below 80x24, takes no key there but Ctrl-C, and redraws the view on a resize back", () =>
+  it("draws one notice below 60x10, takes no key there but Ctrl-C, and redraws the view on a resize back", () =>
     withUi(
       seeded,
       async (ui) => {
@@ -387,9 +387,9 @@ describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
         await ui.waitFor("Stripe live key")
         const before = (await ui.calls()).length
 
-        ui.resize(60, 20)
-        const small = await ui.waitFor("needs 80x24")
-        assert.include(small, "60x20")
+        ui.resize(59, 20)
+        const small = await ui.waitFor("needs at least 60x10")
+        assert.include(small, "59x20")
         assert.notInclude(small, "Stripe live key")
 
         // Neither quits nor selects anything the Owner cannot see.
@@ -406,6 +406,71 @@ describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
         assert.include(await ui.waitFor("Stripe live key"), "GitHub")
       },
       minimum,
+    ))
+
+  it("works on a short, wide 121x19 terminal: unlock, Item list, detail, Tokens and Audit, with no notice", () =>
+    withUi(
+      seeded,
+      async (ui) => {
+        await unlock(ui)
+        const list = await ui.waitFor("Stripe live key")
+        assert.match(list, /> Personal\s+2/)
+
+        ui.keys.pressTab()
+        ui.keys.pressEnter()
+        const detail = await ui.waitFor("hush://Personal/GitHub/password")
+        assert.include(detail, "Personal / GitHub")
+
+        ui.keys.pressEscape()
+        await ui.waitFor("c create  n rename")
+        ui.keys.pressTab()
+        await ui.waitFor("c create Vault")
+        ui.keys.pressArrow("down")
+        ui.keys.pressArrow("down")
+        ui.keys.pressEnter()
+        assert.match(await ui.waitFor("agent on box"), /agent on box\s+active/)
+
+        ui.keys.pressEscape()
+        await ui.waitFor("Tab Tokens")
+        ui.keys.pressArrow("down")
+        ui.keys.pressEnter()
+        const audit = await ui.waitFor("item.list")
+        assert.include(audit, "PgUp/PgDn scroll")
+        assert.match(audit, /Passphrase\s+item\.list\s+Personal/)
+
+        for (const frame of ui.frames()) {
+          assert.notInclude(frame, "needs at least")
+          assert.lengthOf(frame.trimEnd().split("\n"), 19)
+        }
+      },
+      { width: 121, height: 19 },
+    ))
+
+  it("keeps the panes, a modal and the hint bar inside the frame at 80x12 and 60x10", () =>
+    withUi(
+      seeded,
+      async (ui) => {
+        await unlock(ui)
+        await ui.waitFor("Stripe live key")
+
+        // The help is taller than the frame: it is cut above the hint bar, which stays on the last line.
+        ui.keys.pressKey("?")
+        const help = (await ui.waitFor("Help")).split("\n")
+        assert.strictEqual(help[11]?.trimEnd(), "Any key closes the help")
+        ui.keys.pressKey("x")
+        await ui.waitUntil((frame) => !frame.includes("Help"))
+
+        // The detail is taller than the pane at 60x10: it is cut inside the pane's border.
+        ui.resize(60, 10)
+        ui.keys.pressTab()
+        ui.keys.pressEnter()
+        const detail = (await ui.waitFor("Personal / GitHub")).split("\n")
+        assert.match(detail[8] ?? "", /^└─+┘└─+┘$/)
+        assert.match(detail[9] ?? "", /^Up\/Down move/)
+
+        for (const line of detail) assert.isAtMost([...line].length, 60)
+      },
+      { width: 80, height: 12 },
     ))
 
   it("locks on a Passphrase changed elsewhere, at the prompt saying why, after the one request that found out", () =>

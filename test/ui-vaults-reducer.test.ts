@@ -18,7 +18,7 @@ const vault = (name: string): Vault => ({
 
 const open = (cursor: number, view: View, ...names: ReadonlyArray<string>): State =>
   State.Open({
-    size: Size.minimum,
+    size: Size.initial,
     passphrase: Redacted.make("right"),
     vaults: names.map(vault),
     cursor,
