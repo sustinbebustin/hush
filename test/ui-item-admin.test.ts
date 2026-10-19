@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 
 import { type Headless, headless } from "./headless.js"
 import { valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { type Sandbox, sandbox, seedPassphrase, serverSupported } from "./sandbox.js"
 
 // Rename, delete and release in `hush ui` under the headless renderer against a real Server: one write per action
@@ -13,9 +14,11 @@ const value = valueSentinel.text
 const admin = (box: Sandbox, args: ReadonlyArray<string>) =>
   box.run([...args, "--passphrase-stdin"], { input: `${seedPassphrase}\n` })
 
+// `viaProxy`: the UI talks to the Server through the test proxy, for fault injection.
 const withUi = async (
   seed: (box: Sandbox) => Promise<void>,
   body: (ui: Headless, box: Sandbox) => Promise<void>,
+  options: { readonly viaProxy?: boolean } = {},
 ): Promise<void> => {
   const box = await sandbox()
 
@@ -27,7 +30,7 @@ const withUi = async (
       ],
     })
     await seed(box)
-    const ui = await headless(box)
+    const ui = await headless(box, options.viaProxy === true ? { server: box.proxy.url } : {})
 
     try {
       await ui.waitFor("hush Passphrase:")
@@ -180,4 +183,79 @@ describe.skipIf(!serverSupported)("hush ui rename, delete and release", () => {
 
       await waitForText(ui, "Item Stripe live key does not exist in Vault Personal; nothing was changed.")
     }))
+})
+
+const unverified = "the change may or may not have happened. Do not retry blindly"
+
+const titles = (box: Sandbox) => box.inspect((db) => db.query("SELECT title FROM items ORDER BY id").all())
+
+const retired = (box: Sandbox) =>
+  box.inspect((db) => db.query("SELECT title_key FROM retired_titles ORDER BY title_key").all())
+
+// Sends the write `act` starts with the proxy garbling its answer, then waits for the unverified notice.
+const garbledWrite = async (ui: Headless, box: Sandbox, act: () => Promise<void>) => {
+  box.proxy.mode("garble-response")
+  await act()
+  await waitForText(ui, unverified)
+  box.proxy.mode("pass")
+
+  for (const frame of ui.frames()) assert.notInclude(frame, garbledMarker)
+}
+
+describe.skipIf(!serverSupported)("hush ui Item writes whose answer cannot be decoded", () => {
+  it("says a rename is unverified, never draws the body, and renames exactly once", () =>
+    withUi(
+      unchanged,
+      async (ui, box) => {
+        await onRow(ui, "Stripe")
+        const before = (await ui.calls()).length
+
+        await ui.type("n")
+        await ui.waitFor('Rename Item "Stripe live key"')
+        await ui.type("Stripe prod key")
+        await garbledWrite(ui, box, async () => ui.keys.pressEnter())
+
+        assert.deepStrictEqual(await pathsSince(ui, before), ["/v1/admin/items/rename"])
+        assert.deepStrictEqual(await titles(box), [{ title: "Stripe prod key" }, { title: "GitHub" }])
+      },
+      { viaProxy: true },
+    ))
+
+  it("says a delete is unverified, never draws the body, and deletes exactly once", () =>
+    withUi(
+      unchanged,
+      async (ui, box) => {
+        await onRow(ui, "Stripe")
+        const before = (await ui.calls()).length
+
+        await ui.type("d")
+        await ui.waitFor("Delete Item")
+        await garbledWrite(ui, box, () => ui.type("y"))
+
+        assert.deepStrictEqual(await pathsSince(ui, before), ["/v1/admin/items/delete"])
+        assert.deepStrictEqual(await titles(box), [{ title: "GitHub" }])
+      },
+      { viaProxy: true },
+    ))
+
+  it("says a release is unverified, never draws the body, and releases exactly once", () =>
+    withUi(
+      async (box) => {
+        assert.strictEqual((await admin(box, ["item", "delete", "Personal", "Stripe live key"])).code, 0)
+      },
+      async (ui, box) => {
+        ui.keys.pressTab()
+        ui.keys.pressArrow("down")
+        await ui.waitFor("> stripe live key")
+        const before = (await ui.calls()).length
+
+        await ui.type("x")
+        await ui.waitFor("Release the Retired")
+        await garbledWrite(ui, box, () => ui.type("y"))
+
+        assert.deepStrictEqual(await pathsSince(ui, before), ["/v1/admin/items/release"])
+        assert.deepStrictEqual(await retired(box), [])
+      },
+      { viaProxy: true },
+    ))
 })

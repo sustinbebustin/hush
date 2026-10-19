@@ -1,6 +1,6 @@
 import { Clock, Effect, Match, Redacted } from "effect"
 
-import { Admin, type AuditQuery, sentOnce, unverifiedOnTransport } from "../cli/Admin.js"
+import { Admin, type AuditQuery, sentOnce } from "../cli/Admin.js"
 import { Client } from "../cli/Client.js"
 import { type AuditFlagsInvalid, CliError } from "../cli/CliError.js"
 import type { Target } from "../cli/Target.js"
@@ -133,14 +133,14 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         Effect.catch((error) => refused(error, (problem) => Event.TokensRefused({ problem }))),
       ),
     RevokeToken: ({ passphrase, label }) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
       ).pipe(
         Effect.map((receipt) => Event.TokenRevoked({ label: receipt.label })),
         Effect.catch((error) => refused(error, (problem) => Event.RevokeRefused({ problem }))),
       ),
     IssueToken: ({ passphrase, fields }) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, target, (client) => client.admin.tokensIssue({ payload: { passphrase, ...fields } })),
       ).pipe(
         Effect.map((receipt) => Event.TokenIssued({ receipt, copyable: clipboard.available })),
@@ -149,7 +149,7 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
     CreateVault: ({ passphrase, vault }) =>
       Effect.fromResult(parseName("vault", vault)).pipe(
         Effect.flatMap((name) =>
-          unverifiedOnTransport(
+          sentOnce(
             Client.request(Api, target, (client) =>
               client.admin.vaultsCreate({ payload: { passphrase, vault: name } }),
             ),
@@ -159,7 +159,7 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         Effect.catch((error) => refused(error, (problem) => Event.VaultRefused({ problem }))),
       ),
     DeleteVault: ({ passphrase, vault }) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, target, (client) => client.admin.vaultsDelete({ payload: { passphrase, vault } })),
       ).pipe(
         Effect.map(() => Event.VaultChanged()),
@@ -182,9 +182,10 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         Effect.catch((error) => refused(error, (problem) => Event.ItemSaveRefused({ problem }))),
       ),
     ReadClipboard: () => Effect.map(clipboard.read, (pasted) => Event.ClipboardRead({ pasted })),
-    // Writes, so a lost answer reads as unverified (invariant 3); refusals read as the CLI's `item` commands say.
+    // Writes, so a lost or undecodable answer reads as unverified (invariant 3); refusals read as the CLI's `item`
+    // commands say.
     RenameItem: ({ passphrase, vault, item, newTitle }) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, target, (client) =>
           client.admin.itemsRename({ payload: { passphrase, vault, item, newTitle } }),
         ),
@@ -193,14 +194,14 @@ export const run = (target: Target, work: Work, clipboard: Clipboard): Effect.Ef
         Effect.catch((error) => refused(error, (problem) => Event.ChangeRefused({ problem }))),
       ),
     DeleteItem: ({ passphrase, vault, item }) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, target, (client) => client.admin.itemsDelete({ payload: { passphrase, vault, item } })),
       ).pipe(
         Effect.map(() => Event.ItemsChanged({ vault })),
         Effect.catch((error) => refused(error, (problem) => Event.ChangeRefused({ problem }))),
       ),
     ReleaseTitle: ({ passphrase, vault, title }) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, target, (client) => client.admin.itemsRelease({ payload: { passphrase, vault, title } })),
       ).pipe(
         Effect.map(() => Event.ItemsChanged({ vault })),

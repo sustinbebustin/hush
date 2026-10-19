@@ -129,19 +129,16 @@ export const passphraseCommand = <P, E1, R1, S, ES, A, E2, R2>(spec: {
     return yield* spec.send(prepared, secrets)
   })
 
-// A Passphrase write sent but not answered: it may or may not have happened. A refused connection
-// never carried the request, so it stays `ServerUnreachable`.
-export const unverifiedOnTransport = <A, E, R>(effect: Effect.Effect<A, E | ServerUnreachable, R>) =>
+// A write sent once whose answer is lost or not understood: either way it may or may not have changed anything, so
+// both read as "do not retry" (invariant 3). A refused connection never carried the request, so it stays
+// `ServerUnreachable`.
+export const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
   Effect.catchIf(
-    effect,
-    (error): error is ServerUnreachable => error instanceof ServerUnreachable && error.reason !== "refused",
+    write,
+    (error): error is ServerUnreachable | UnexpectedResponse =>
+      error instanceof UnexpectedResponse || (error instanceof ServerUnreachable && error.reason !== "refused"),
     () => Effect.fail(new ChangeUnverified()),
   )
-
-// A write sent once whose answer is lost or not understood: either way it may or may not have changed anything, so
-// both read as "do not retry" (invariant 3).
-export const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
-  unverifiedOnTransport(write).pipe(Effect.catchTag("UnexpectedResponse", () => Effect.fail(new ChangeUnverified())))
 
 // `hush vault create <name>`: one `admin/vaults/create`.
 export const vaultCreate = (input: {
