@@ -155,7 +155,7 @@ export const vaultCreate = (input: {
     secrets: passphraseOnly,
     prepare: parse("vault", input.vault),
     send: (vault, passphrase) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) => client.admin.vaultsCreate({ payload: { passphrase, vault } })),
       ),
   })
@@ -183,7 +183,7 @@ export const vaultDelete = (input: {
     secrets: passphraseOnly,
     prepare: parse("vault", input.vault),
     send: (vault, passphrase) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) => client.admin.vaultsDelete({ payload: { passphrase, vault } })),
       ),
   })
@@ -338,7 +338,7 @@ export const passphraseChange = (input: { readonly target: Target; readonly sour
     secrets: withNewPassphrase(sequences.change),
     prepare: Effect.void,
     send: (_, secrets) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) =>
           client.admin.passphraseChange({
             payload: { passphrase: secrets.first, newPassphrase: secrets.passphrase },
