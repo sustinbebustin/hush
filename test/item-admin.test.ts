@@ -4,6 +4,7 @@ import { readFile, stat } from "node:fs/promises"
 import { join } from "node:path"
 
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { onPty, sandbox, type Sandbox } from "./sandbox.js"
 
 // The Owner's Item commands through the seam: `item edit|rename|delete|release`, Retired titles and
@@ -522,6 +523,84 @@ describe("an Item write whose answer is lost", () => {
       )
       assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/items/delete HTTP/1.1"])
       assert.deepStrictEqual(await rows(box, "SELECT title FROM items ORDER BY id"), [{ title: "GitHub" }])
+    }))
+})
+
+// An Item command through the proxy in `garble-response` mode: the Server makes the change, and the CLI gets an
+// answer it cannot decode in its place.
+const garbled = async (box: Sandbox, args: ReadonlyArray<string>, rest = "") => {
+  box.proxy.mode("garble-response")
+
+  const result = await box.run([...args, "--passphrase-stdin"], {
+    input: `${passphrase}\n${rest}`,
+    env: { HUSH_SERVER: box.proxy.url },
+  })
+
+  box.proxy.mode("pass")
+
+  return result
+}
+
+// As far as the CLI knows the change may or may not have happened, so it says so and never shows the body.
+const assertUnverified = (result: Awaited<ReturnType<Sandbox["run"]>>) => {
+  assert.strictEqual(result.code, 1)
+  assert.strictEqual(result.stdout, "")
+  assert.strictEqual(
+    result.stderr,
+    "hush: The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
+  )
+  assert.notInclude(result.stderr, garbledMarker)
+}
+
+describe("an Item write whose answer cannot be decoded", () => {
+  it("reports item edit as ChangeUnverified, never the body, and edits exactly once", () =>
+    withSandbox(async (box, seen) => {
+      await seeded(box, seen)
+
+      const result = await garbled(
+        box,
+        ["item", "edit", "Personal", "Stripe", "--field", "credential", "--stdin"],
+        `${rotated}\n`,
+      )
+
+      assertUnverified(result)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/items/edit HTTP/1.1"])
+      const resolved = await read(box, "hush://Personal/Stripe/credential")
+      assert.strictEqual(resolved.code, 0, resolved.stderr)
+      assert.strictEqual(resolved.stdout, rotated)
+    }))
+
+  it("reports item rename as ChangeUnverified, never the body, and renames exactly once", () =>
+    withSandbox(async (box, seen) => {
+      await seeded(box, seen)
+      const result = await garbled(box, ["item", "rename", "Personal", "Stripe", "Stripe Live"])
+      assertUnverified(result)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/items/rename HTTP/1.1"])
+      assert.deepStrictEqual(await rows(box, "SELECT title FROM items ORDER BY id"), [
+        { title: "Stripe Live" },
+        { title: "GitHub" },
+      ])
+      assert.deepStrictEqual(await retiredKeys(box), ["stripe"])
+    }))
+
+  it("reports item delete as ChangeUnverified, never the body, and deletes exactly once", () =>
+    withSandbox(async (box, seen) => {
+      await seeded(box, seen)
+      const result = await garbled(box, ["item", "delete", "Personal", "Stripe"])
+      assertUnverified(result)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/items/delete HTTP/1.1"])
+      assert.deepStrictEqual(await rows(box, "SELECT title FROM items ORDER BY id"), [{ title: "GitHub" }])
+    }))
+
+  it("reports item release as ChangeUnverified, never the body, and releases exactly once", () =>
+    withSandbox(async (box, seen) => {
+      await seeded(box, seen)
+      assert.strictEqual((await admin(box, ["item", "delete", "Personal", "Stripe"])).code, 0)
+      assert.deepStrictEqual(await retiredKeys(box), ["stripe"])
+      const result = await garbled(box, ["item", "release", "Personal", "Stripe"])
+      assertUnverified(result)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/items/release HTTP/1.1"])
+      assert.deepStrictEqual(await retiredKeys(box), [])
     }))
 })
 
