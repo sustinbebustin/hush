@@ -767,7 +767,7 @@ const fromOpen = (state: Open, event: Event): Step =>
     Defect: () => refusedWith(State.locked(0, state.size), defect),
   })
 
-// Input the Owner cannot see the effect of: a key or paste while the frame is below 80x24, which draws only its
+// Input the Owner cannot see the effect of: a key or paste while the frame is below `Size.minimum`, which draws only its
 // notice. Ctrl-C and Ctrl-Z still work.
 const unseen = (state: State, event: Event): boolean =>
   !Size.fits(state.size) &&

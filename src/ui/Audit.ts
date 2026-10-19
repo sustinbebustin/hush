@@ -3,8 +3,9 @@ import { Data } from "effect"
 import type { AuditQuery } from "../cli/Admin.js"
 import type { AuditEntry, AuditPage } from "../shared/Api.js"
 import { Key } from "./Key.js"
-import type { Size } from "./Size.js"
+import { Size } from "./Size.js"
 import { View } from "./View.js"
+import { Viewport } from "./Viewport.js"
 
 // The Audit view: the Audit Log newest first under three filters (Vault, Label, since), read a page at a time.
 // Its transitions are pure and say which request, if any, to send; the reducer adds the Passphrase.
@@ -70,10 +71,11 @@ export interface Move {
 }
 
 // The Audit rows the main pane shows at least at `size`, and so how far PageUp and PageDown move: the frame less the
-// hint bar, the pane's border, its filter line, a status line wrapped to two lines at 80 columns, and the column
-// header. When the last loaded entry is within this many rows of the top, the bottom is in view and the next page
-// is fetched.
-const rowsAt = (size: Size): number => Math.max(1, size.height - 7)
+// hint bar, the pane's border, its filter line, the status line as the longest status wraps at the pane's width,
+// and the column header; never fewer than one. When the last loaded entry is within this many rows of the top, the
+// bottom is in view and the next page is fetched.
+const rowsAt = (size: Size): number =>
+  Math.max(1, size.height - 5 - Viewport.wordLines(longestStatus, Size.paneWidth(size)))
 
 const firstPage = (filters: Filters): Move => ({
   view: View.Audit({ filters, form: Form.Shut(), log: Log.Loading(), top: 0 }),
@@ -195,18 +197,29 @@ const filterLine = (view: AuditView): string =>
 
 const count = (n: number) => `${n} ${n === 1 ? "entry" : "entries"}`
 
+const loadedStatus = (entries: number, row: number, rest: string) => `${count(entries)}, from row ${row}, ${rest}`
+
+const moreBelow = "older entries load at the bottom (PgDn)"
+
 // The line above the rows: loading, refused, or how many entries are loaded and what lies below them.
 const status = (view: AuditView): string =>
   Log.$match(view.log, {
     Loading: () => "Loading...",
     Refused: () => "Could not read the Audit Log.",
     Loaded: ({ entries, rest }) =>
-      `${count(entries.length)}, from row ${view.top + 1}, ${Rest.$match(rest, {
-        End: () => "end of the log",
-        More: () => "older entries load at the bottom (PgDn)",
-        Fetching: () => "loading older entries...",
-      })}`,
+      loadedStatus(
+        entries.length,
+        view.top + 1,
+        Rest.$match(rest, {
+          End: () => "end of the log",
+          More: () => moreBelow,
+          Fetching: () => "loading older entries...",
+        }),
+      ),
   })
+
+// The longest status line, for up to six-digit counts: what `rowsAt` leaves room for.
+const longestStatus = loadedStatus(999_999, 999_999, moreBelow)
 
 // The action column fits the longest action, `passphrase.change`.
 const widths = { time: 19, actor: 12, action: 17, vaults: 12 } as const

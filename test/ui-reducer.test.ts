@@ -971,19 +971,19 @@ describe("Reducer help and hints", () => {
 const resized = (state: State, width: number, height: number) => Reducer.reduce(state, Event.Resize({ width, height }))
 
 describe("Reducer resize", () => {
-  it("draws one notice below 80x24, takes no key but Ctrl-C and Ctrl-Z there, and redraws the view at 80x24", () => {
+  it("draws one notice below 60x10, takes no key but Ctrl-C and Ctrl-Z there, and redraws the view at 80x24", () => {
     const rows = listed(["a"])
 
     for (const [width, height] of [
-      [79, 24],
-      [80, 23],
+      [59, 24],
+      [80, 9],
       [20, 5],
     ] as const) {
       const small = resized(rows, width, height)
       assert.deepStrictEqual(small.effects, [])
       const { hints } = drawn(small.state)
       assert.include(hints, `${width}x${height}`)
-      assert.include(hints, "80x24")
+      assert.include(hints, "60x10")
       assert.notInclude(hints, "\n")
 
       fc.assert(
@@ -1002,10 +1002,10 @@ describe("Reducer resize", () => {
   })
 
   it("keeps the frame size through a Lock, so the prompt is drawn at the size the terminal has", () => {
-    const small = resized(opened(), 60, 20).state
+    const small = resized(opened(), 59, 20).state
     const locked = press(small, Key.named("z", { ctrl: true })).state
 
     assert.strictEqual(locked._tag, "Locked")
-    assert.include(drawn(locked).hints, "60x20")
+    assert.include(drawn(locked).hints, "59x20")
   })
 })
