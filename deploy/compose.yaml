@@ -4,7 +4,7 @@
 # Deploy check: `docker exec hush sh -c 'ulimit -c'` prints 0.
 services:
   hush:
-    image: ghcr.io/sustinbebustin/hush:0.1.0
+    image: ghcr.io/sustinbebustin/hush:0.2.0
     container_name: hush # every documented `docker exec hush ...` relies on it
     network_mode: host # the Server listens on 127.0.0.1:7787 of the host
     restart: unless-stopped # rides out the tailnet boot race
