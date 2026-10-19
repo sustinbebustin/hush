@@ -109,7 +109,9 @@ export const run = (input: {
       yield* FiberSet.run(clock)(idleClock((event) => Queue.offer(events, event)))
       const screen = Screen.mount(renderer)
       let state: State = State.initial
-      screen.draw(Display.of(state))
+      // Each display keeps the windows of the one before, so a long list scrolls only as the cursor needs.
+      let display = Display.of(state)
+      screen.draw(display)
 
       for (;;) {
         const step = Reducer.reduce(state, yield* Queue.take(events))
@@ -118,7 +120,8 @@ export const run = (input: {
         // would drop its answer anyway.
         if (State.$is("Open")(state) && State.$is("Locked")(step.state)) yield* FiberSet.clear(work)
         state = step.state
-        screen.draw(Display.of(state))
+        display = Display.of(state, display)
+        screen.draw(display)
 
         for (const effect of step.effects) {
           if (UiEffect.$is("Quit")(effect)) return
@@ -151,7 +154,9 @@ const notTerminal = (stdin: boolean, stdout: boolean): UiNeedsTerminal["stream"]
 
 // `hush ui`: refuses unless stdin and stdout are terminals, then runs on the alternate screen. Ctrl-C reaches the
 // reducer (`exitOnCtrlC` off) so quitting drops the Passphrase, and `run` owns the exit signals, so they Lock
-// before the renderer is destroyed. The host clipboard lives as long as the UI.
+// before the renderer is destroyed. Mouse tracking stays off (`useMouse`): the UI takes no mouse input, and with it
+// on the terminal would send drags to the UI instead of selecting text to copy. The host clipboard lives as long as
+// the UI.
 export const launch = (target: Target): Effect.Effect<void, UiNeedsTerminal> =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -161,7 +166,7 @@ export const launch = (target: Target): Effect.Effect<void, UiNeedsTerminal> =>
       const clipboard = yield* Clipboard.host(process.platform, process.env)
 
       const renderer = yield* Effect.promise(() =>
-        createCliRenderer({ exitOnCtrlC: false, exitSignals: [], screenMode: "alternate-screen" }),
+        createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: false, screenMode: "alternate-screen" }),
       )
 
       return yield* run({ renderer, target, clipboard })

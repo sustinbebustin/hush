@@ -166,14 +166,24 @@ describe("Audit view", () => {
 
   it("moves PgUp and PgDn by the rows the pane shows, which a resize changes", () => {
     const loaded = answered(selected().state, first, page(ids(100, 100), 1))
-    // 80x24, the smallest frame: 17 rows.
+    // 80x24, the size before the renderer reports one: 17 rows.
     assert.include(shown(press(loaded, pageDown).state).message, "from row 18,")
 
     const tall = Reducer.reduce(loaded, Event.Resize({ width: 120, height: 40 })).state
-    // 40 rows less 7: 33.
+    // 40 rows less 6, the status fitting one line of the 90-column pane: 34.
     const down = press(tall, pageDown).state
-    assert.include(shown(down).message, "from row 34,")
+    assert.include(shown(down).message, "from row 35,")
     assert.include(shown(press(down, Key.named("pageup")).state).message, "from row 1,")
+  })
+
+  it("counts the rows the pane shows below a status line wrapped to its width, never fewer than one", () => {
+    // The frame less the hint bar, border, filter and header lines, and the longest status (six-digit counts) wrapped:
+    // one line in 91 columns, two in 50, three in 34 or 30.
+    assert.strictEqual(Audit.rowsAt({ width: 121, height: 19 }), 13)
+    assert.strictEqual(Audit.rowsAt({ width: 80, height: 24 }), 17)
+    assert.strictEqual(Audit.rowsAt({ width: 64, height: 24 }), 16)
+    assert.strictEqual(Audit.rowsAt({ width: 60, height: 10 }), 2)
+    assert.strictEqual(Audit.rowsAt({ width: 60, height: 5 }), 1)
   })
 
   it("drops a first page answered after the filters changed, and a page nothing is waiting for", () => {

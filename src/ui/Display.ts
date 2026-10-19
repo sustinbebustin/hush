@@ -8,6 +8,7 @@ import { type Section, Sidebar } from "./Sidebar.js"
 import { type Open, type Phase, State } from "./State.js"
 import { Size } from "./Size.js"
 import { type Copy, type Modal, View } from "./View.js"
+import { Viewport } from "./Viewport.js"
 
 // What the screen shows for a state, as plain text: the model the sync layer (`Screen`) copies into renderables.
 // It is pure and holds no secret but a Revealed value or a freshly issued Token, while the state holds one (ADR-0009:
@@ -46,6 +47,29 @@ export interface TokenRow {
   readonly underCursor: boolean
 }
 
+// The entries `[top, end)` of `count` that a box of rows draws of a longer list (all of them when it fits), and the
+// line of the list's text the first one starts on.
+export interface Window {
+  readonly top: number
+  readonly end: number
+  readonly line: number
+  readonly count: number
+}
+
+// The window of each list the cursor moves through; the Audit log keeps its own (`top` in its view).
+export interface Windows {
+  readonly sidebar: Window
+  readonly rows: Window
+  readonly tokens: Window
+  readonly detail: Window
+}
+
+// A column of the Token table after Label, which is always drawn.
+export type TokenColumn = "state" | "created" | "expires" | "grants"
+
+// Each Token table column's width; Grants takes the rest.
+const tokenColumnWidths = { label: 18, state: 8, created: 11, expires: 11 } as const
+
 export type Display = Data.TaggedEnum<{
   Locked: { readonly prompt: string; readonly mask: string; readonly notice: string; readonly hints: string }
   Open: {
@@ -54,6 +78,8 @@ export type Display = Data.TaggedEnum<{
     readonly sections: ReadonlyArray<SectionRow>
     // The Token table's rows in the Tokens view, else undefined.
     readonly tokens: ReadonlyArray<TokenRow> | undefined
+    // The Token table's columns after Label that fit the pane, in table order.
+    readonly tokenColumns: ReadonlyArray<TokenColumn>
     // The main pane's title: the Vault whose Items it lists, or empty.
     readonly title: string
     // The filter line: empty when no filter is applied or typed.
@@ -69,22 +95,26 @@ export type Display = Data.TaggedEnum<{
     readonly log: ReadonlyArray<string>
     // The Item form's rows in the Item form, else undefined; the concealed value appears only as its mask.
     readonly form: ReadonlyArray<FormLine> | undefined
+    readonly windows: Windows
+    // What the sidebar's and the main pane's windows hide, for their bottom borders: `3 above, 12 below`, or empty.
+    readonly sidebarHidden: string
+    readonly paneHidden: string
     // The topmost modal's text, or undefined when there is none.
     readonly modal: string | undefined
     // The topmost modal's box title, or empty when there is none.
     readonly modalTitle: string
     readonly hints: string
   }
-  // A frame below 80x24: one notice in place of the layout, which would not fit.
+  // A frame below `Size.minimum`: one notice in place of the layout, which would not fit.
   TooSmall: { readonly notice: string }
 }>
 
-const { Locked, Open: OpenDisplay, TooSmall, $match } = Data.taggedEnum<Display>()
+const { Locked, Open: OpenDisplay, TooSmall, $is, $match } = Data.taggedEnum<Display>()
 
 // The CLI's own prompt text, so the Owner meets the same words in both.
 const prompt = "hush Passphrase: "
 
-// Each hint bar fits 80 columns; where `?` opens the help, the bar names the commonest keys and the help lists every
+// Each hint bar fits 80 columns, and `fitted` drops keys from it to fit a narrower frame; where `?` opens the help, the bar names the commonest keys and the help lists every
 // one. Where `?` is typed or cancels, the bar lists every key.
 const lockedHints = "Enter unlock  Ctrl-C quit"
 const listHints = "Up/Down move  Enter open  c create Vault  d delete Vault  ? help  q quit"
@@ -423,6 +453,19 @@ const retiredRows = (view: View): ReadonlyArray<RetiredRow> => {
   return View.retired(view).map((key, index) => ({ key, underCursor: items + index === cursor }))
 }
 
+// The keys a hint bar keeps longest: how to see every key, and how to leave.
+const lastingKeys: ReadonlySet<string> = new Set(["? help", "q quit", "Ctrl-C quit"])
+
+// `hints` on one line of `width` columns: whole keys dropped from the end, the lasting ones last and the first one
+// never, then cut at the edge if the first key still does not fit. OpenTUI would wrap a longer line over the pane.
+const fitted = (hints: string, width: number): string => {
+  if (hints.length <= width) return hints
+  const keys = hints.split("  ")
+  const dropped = keys.findLastIndex((key) => !lastingKeys.has(key))
+
+  return dropped <= 0 ? hints.slice(0, width) : fitted(keys.toSpliced(dropped, 1).join("  "), width)
+}
+
 const hintsFor = (state: Open) => {
   const top = state.modals.at(-1)
 
@@ -446,9 +489,111 @@ const hintsFor = (state: Open) => {
   return View.$is("ItemList")(view) && View.Focus.$is("Rows")(view.focus) ? rowsHints : listHints
 }
 
-const open = (state: Open): Display => {
+const ones = (count: number): ReadonlyArray<number> => Array.from({ length: count }, () => 1)
+
+const noWindow: Window = { top: 0, end: 0, line: 0, count: 0 }
+
+const noWindows: Windows = { sidebar: noWindow, rows: noWindow, tokens: noWindow, detail: noWindow }
+
+const windowOf = (heights: ReadonlyArray<number>, cursor: number, rows: number, previous: number) => {
+  const { top, end } = Viewport.follow(heights, cursor, rows, previous)
+
+  return { top, end, count: heights.length }
+}
+
+// The Item rows' window: one entry per Item, then per Retired title, the first of those three lines tall with the
+// blank line and heading above it.
+const rowsWindow = (view: View, rows: number, previous: number): Window => {
+  if (!View.$is("ItemList")(view)) return noWindow
+  const items = View.shown(view).length
+  const heights = [...ones(items), ...View.retired(view).map((_, index) => (index === 0 ? 3 : 1))]
+  const window = windowOf(heights, View.cursorRow(view) ?? -1, rows, previous)
+
+  return { ...window, line: window.top <= items ? window.top : window.top + 2 }
+}
+
+// The Token table's window below its header line.
+const tokensWindow = (view: View, rows: number, previous: number): Window => {
+  if (!View.$is("Tokens")(view) || !View.TokenTable.$is("Loaded")(view.table)) return noWindow
+  const { tokens } = view.table
+  const selected = View.selectedToken(view)
+  const window = windowOf(ones(tokens.length), selected === undefined ? -1 : tokens.indexOf(selected), rows, previous)
+
+  return { ...window, line: window.top }
+}
+
+// Lines of the detail before its first Field: Kind, Created, Updated and a blank line.
+const detailHead = 4
+
+// The detail's window: its head, then each Field's line and Reference line, as tall as they wrap at `width`.
+const detailWindow = (view: View, lines: ReadonlyArray<string>, rows: number, width: number, previous: number) => {
+  if (!View.$is("ItemDetail")(view)) return noWindow
+  const tall = (line: string | undefined) => Viewport.charLines(line ?? "", width)
+  const head = lines.slice(0, detailHead).reduce((total, line) => total + tall(line), 0)
+
+  const fields = view.item.fields.map(
+    (_, index) => tall(lines[detailHead + 2 * index]) + tall(lines[detailHead + 2 * index + 1]),
+  )
+
+  const window = windowOf([head, ...fields], view.field + 1, rows, previous)
+
+  return { ...window, line: window.top === 0 ? 0 : detailHead + 2 * (window.top - 1) }
+}
+
+const windowsOf = (state: Open, shown: ReturnType<typeof pane>, previous: Windows): Windows => {
+  const { size, view } = state
+  const width = Size.paneWidth(size)
+  // Inside the borders, above the hint bar; the main pane's box of rows also sits below the filter and status.
+  const inner = size.height - 3
+  const messageLines = shown.message === "" ? 0 : Viewport.wordLines(shown.message, width)
+  const box = inner - (shown.filter === "" ? 0 : 1) - messageLines
+  const sidebar = windowOf(ones(Sidebar.rows(state.vaults.length)), state.cursor, inner, previous.sidebar.top)
+
+  return {
+    sidebar: { ...sidebar, line: sidebar.top },
+    rows: rowsWindow(view, box, previous.rows.top),
+    tokens: tokensWindow(view, box - 1, previous.tokens.top),
+    detail: detailWindow(view, shown.detail, inner, width, previous.detail.top),
+  }
+}
+
+// What a window hides, as its box's border says it: `3 above, 12 below`, or nothing.
+const hidden = (above: number, below: number): string =>
+  [above > 0 ? `${above} above` : "", below > 0 ? `${below} below` : ""].filter((part) => part !== "").join(", ")
+
+const beyond = ({ top, end, count }: Window): string => hidden(top, count - end)
+
+// The main pane's: the Item rows' or the Token table's rows, or the detail's Fields.
+const paneHidden = (view: View, windows: Windows): string =>
+  View.$is("ItemList")(view)
+    ? beyond(windows.rows)
+    : View.$is("Tokens")(view)
+      ? beyond(windows.tokens)
+      : View.$is("ItemDetail")(view)
+        ? hidden(Math.max(0, windows.detail.top - 1), windows.detail.count - windows.detail.end)
+        : ""
+
+// The least width the Grants column is drawn in.
+const grantsWidth = 12
+
+// The Token table's columns after Label that fit in `width`: whole columns dropped in this order, so no cell is cut.
+const tokenColumnsAt = (width: number): ReadonlyArray<TokenColumn> => {
+  const widths: Readonly<Record<TokenColumn, number>> = { ...tokenColumnWidths, grants: grantsWidth }
+  let shown: ReadonlyArray<TokenColumn> = ["state", "created", "expires", "grants"]
+
+  for (const dropped of ["expires", "created", "state", "grants"] as const) {
+    if (shown.reduce<number>((total, column) => total + widths[column], tokenColumnWidths.label) <= width) break
+    shown = shown.filter((column) => column !== dropped)
+  }
+
+  return shown
+}
+
+const open = (state: Open, previous: Windows): Display => {
   const top = state.modals.at(-1)
   const modal = top === undefined ? undefined : modalShown(state, top)
+  const shown = pane(state.view)
+  const windows = windowsOf(state, shown, previous)
 
   return OpenDisplay({
     vaults: state.vaults.map(({ vault, items }, index) => ({
@@ -461,13 +606,17 @@ const open = (state: Open): Display => {
       underCursor: state.vaults.length + index === state.cursor,
     })),
     tokens: tokenRows(state.view),
-    ...pane(state.view),
+    tokenColumns: tokenColumnsAt(Size.paneWidth(state.size)),
+    ...shown,
     retired: retiredRows(state.view),
     log: View.$is("Audit")(state.view) ? Audit.lines(state.view) : [],
     form: View.$is("ItemForm")(state.view) ? ItemForm.lines(state.view.form) : undefined,
+    windows,
+    sidebarHidden: beyond(windows.sidebar),
+    paneHidden: paneHidden(state.view, windows),
     modal: modal?.text,
     modalTitle: modal?.title ?? "",
-    hints: hintsFor(state),
+    hints: fitted(hintsFor(state), state.size.width),
   })
 }
 
@@ -477,6 +626,7 @@ const blank: Extract<Display, { readonly _tag: "Open" }> = OpenDisplay({
   vaults: [],
   sections: [],
   tokens: undefined,
+  tokenColumns: [],
   title: "",
   filter: "",
   rows: [],
@@ -485,6 +635,9 @@ const blank: Extract<Display, { readonly _tag: "Open" }> = OpenDisplay({
   detail: [],
   log: [],
   form: undefined,
+  windows: noWindows,
+  sidebarHidden: "",
+  paneHidden: "",
   modal: undefined,
   modalTitle: "",
   hints: "",
@@ -492,16 +645,22 @@ const blank: Extract<Display, { readonly _tag: "Open" }> = OpenDisplay({
 
 const tooSmall = ({ width, height }: Size) =>
   TooSmall({
-    notice: `hush ui needs ${Size.minimum.width}x${Size.minimum.height}; this terminal is ${width}x${height}. Enlarge it; Ctrl-C quits.`,
+    notice: `hush ui needs at least ${Size.minimum.width}x${Size.minimum.height}; this terminal is ${width}x${height}. Enlarge it; Ctrl-C quits.`,
   })
 
-const of = (state: State): Display =>
+// The display of `state`, its windows over long lists kept from the `previous` display where the cursor allows.
+const of = (state: State, previous?: Display): Display =>
   Size.fits(state.size)
     ? State.$match(state, {
-        Locked: ({ entered, phase }) =>
-          Locked({ prompt, mask: "*".repeat(entered.length), notice: lockedNotice(phase), hints: lockedHints }),
-        Open: open,
+        Locked: ({ entered, phase, size }) =>
+          Locked({
+            prompt,
+            mask: "*".repeat(entered.length),
+            notice: lockedNotice(phase),
+            hints: fitted(lockedHints, size.width),
+          }),
+        Open: (shown) => open(shown, previous !== undefined && $is("Open")(previous) ? previous.windows : noWindows),
       })
     : tooSmall(state.size)
 
-export const Display = { of, blank, $match } as const
+export const Display = { of, blank, tokenColumnWidths, $match } as const
