@@ -3,22 +3,31 @@ import { Schema } from "effect"
 
 import { type FakeClipboard, fakeClipboard, type Headless, headless } from "./headless.js"
 import { scan, valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { type Sandbox, sandbox, seedPassphrase, serverSupported } from "./sandbox.js"
 
 // The Tokens view of `hush ui` under the headless renderer against a real Server: the table, issuing (with its
 // one-time Token modal and copy key), replacing and revoking, each checked through the Server's request log and,
 // for issued Tokens, through the CLI.
 
+// `viaProxy`: the UI talks to the Server through the test proxy, for fault injection.
 const withUi = async (
   seed: (box: Sandbox) => Promise<void>,
   body: (ui: Headless, box: Sandbox, clipboard: FakeClipboard) => Promise<void>,
+  options: { readonly viaProxy?: boolean } = {},
 ): Promise<void> => {
   const box = await sandbox()
   const clipboard = fakeClipboard()
 
   try {
     await seed(box)
-    const ui = await headless(box, { clipboard: clipboard.clipboard })
+
+    const ui = await headless(
+      box,
+      options.viaProxy === true
+        ? { clipboard: clipboard.clipboard, server: box.proxy.url }
+        : { clipboard: clipboard.clipboard },
+    )
 
     try {
       await body(ui, box, clipboard)
@@ -307,4 +316,67 @@ describe.skipIf(!serverSupported)("hush ui Tokens", () => {
 
       assert.include(refused, "Notice")
     }))
+})
+
+// A frame's text with box borders and line breaks folded to single spaces, so a wrapped message reads whole.
+const flat = (frame: string) => frame.replaceAll(/[│\s]+/g, " ")
+
+const unverified = "the change may or may not have happened. Do not retry blindly"
+
+// The Labels of the Server's Tokens that are not revoked.
+const activeLabels = (box: Sandbox) =>
+  box.inspect((db) => db.query("SELECT label FROM tokens WHERE revoked_at IS NULL ORDER BY id").all())
+
+describe.skipIf(!serverSupported)("hush ui Token writes whose answer cannot be decoded", () => {
+  it("says an issue is unverified, never draws the body, and issues exactly once", () =>
+    withUi(
+      seeded,
+      async (ui, box) => {
+        await unlock(ui)
+        await openTokens(ui, 2)
+        const before = (await ui.calls()).length
+
+        await ui.type("i")
+        await ui.waitFor("Issue a Token")
+        await ui.type("deploy bot")
+        ui.keys.pressArrow("down")
+        await ui.type(" ")
+        ui.keys.pressArrow("down")
+        ui.keys.pressArrow("down")
+        await ui.type("30d")
+        await ui.waitFor("TTL: 30d")
+        box.proxy.mode("garble-response")
+        ui.keys.pressEnter()
+        await ui.waitUntil((frame) => flat(frame).includes(unverified))
+        box.proxy.mode("pass")
+
+        for (const frame of ui.frames()) assert.notInclude(frame, garbledMarker)
+        assert.notMatch(ui.frames().join("\n"), tokenPattern)
+        assert.deepStrictEqual(paths((await ui.calls()).slice(before)), ["/v1/admin/tokens/issue"])
+        assert.deepStrictEqual(await activeLabels(box), [{ label: "agent on box" }, { label: "deploy bot" }])
+      },
+      { viaProxy: true },
+    ))
+
+  it("says a Revoke is unverified, never draws the body, and revokes exactly once", () =>
+    withUi(
+      seeded,
+      async (ui, box) => {
+        await unlock(ui)
+        await openTokens(ui, 2)
+        const before = (await ui.calls()).length
+
+        await ui.type("d")
+        await ui.waitFor("Revoke Token agent on box?")
+        box.proxy.mode("garble-response")
+        await ui.type("y")
+        await ui.waitUntil((frame) => flat(frame).includes(unverified))
+        box.proxy.mode("pass")
+
+        for (const frame of ui.frames()) assert.notInclude(frame, garbledMarker)
+        assert.deepStrictEqual(paths((await ui.calls()).slice(before)), ["/v1/admin/tokens/revoke"])
+        assert.deepStrictEqual(await activeLabels(box), [])
+      },
+      { viaProxy: true },
+    ))
 })

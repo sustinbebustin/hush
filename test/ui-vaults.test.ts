@@ -3,17 +3,23 @@ import { Schema } from "effect"
 
 import { type Headless, headless } from "./headless.js"
 import { valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { type Sandbox, sandbox, seedPassphrase, serverSupported } from "./sandbox.js"
 
 // Creating and deleting Vaults from the sidebar of `hush ui` under the headless renderer against a real Server,
 // each checked through the Server's request log and the CLI.
 
-const withUi = async (seed: (box: Sandbox) => Promise<void>, body: (ui: Headless, box: Sandbox) => Promise<void>) => {
+// `viaProxy`: the UI talks to the Server through the test proxy, for fault injection.
+const withUi = async (
+  seed: (box: Sandbox) => Promise<void>,
+  body: (ui: Headless, box: Sandbox) => Promise<void>,
+  options: { readonly viaProxy?: boolean } = {},
+) => {
   const box = await sandbox()
 
   try {
     await seed(box)
-    const ui = await headless(box)
+    const ui = await headless(box, options.viaProxy === true ? { server: box.proxy.url } : {})
 
     try {
       await body(ui, box)
@@ -195,4 +201,56 @@ describe.skipIf(!serverSupported)("hush ui Vaults", () => {
       assert.notInclude(ui.frame(), "Delete Vault")
       assert.strictEqual((await ui.calls()).length, before)
     }))
+})
+
+// A frame's text with box borders and line breaks folded to single spaces, so a wrapped message reads whole.
+const flat = (frame: string) => frame.replaceAll(/[│\s]+/g, " ")
+
+const unverified = "the change may or may not have happened. Do not retry blindly"
+
+describe.skipIf(!serverSupported)("hush ui Vault writes whose answer cannot be decoded", () => {
+  it("says a Vault create is unverified, never draws the body, and creates exactly once", () =>
+    withUi(
+      seeded,
+      async (ui, box) => {
+        await unlock(ui)
+        const before = (await ui.calls()).length
+
+        await ui.type("c")
+        await ui.waitFor("Create a Vault")
+        await ui.type("Archive")
+        await ui.waitFor("Name: Archive")
+        box.proxy.mode("garble-response")
+        ui.keys.pressEnter()
+        await ui.waitUntil((frame) => flat(frame).includes(unverified))
+        box.proxy.mode("pass")
+
+        for (const frame of ui.frames()) assert.notInclude(frame, garbledMarker)
+        assert.deepStrictEqual(paths((await ui.calls()).slice(before)), ["/v1/admin/vaults/create"])
+        assert.deepStrictEqual(await vaultNames(box), ["Archive", "Personal", "Work"])
+      },
+      { viaProxy: true },
+    ))
+
+  it("says a Vault delete is unverified, never draws the body, and deletes exactly once", () =>
+    withUi(
+      seeded,
+      async (ui, box) => {
+        await unlock(ui)
+        ui.keys.pressArrow("down")
+        const before = (await ui.calls()).length
+
+        await ui.type("d")
+        await ui.waitFor("Delete Vault Work?")
+        box.proxy.mode("garble-response")
+        await ui.type("y")
+        await ui.waitUntil((frame) => flat(frame).includes(unverified))
+        box.proxy.mode("pass")
+
+        for (const frame of ui.frames()) assert.notInclude(frame, garbledMarker)
+        assert.deepStrictEqual(paths((await ui.calls()).slice(before)), ["/v1/admin/vaults/delete"])
+        assert.deepStrictEqual(await vaultNames(box), ["Personal"])
+      },
+      { viaProxy: true },
+    ))
 })

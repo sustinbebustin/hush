@@ -5,7 +5,7 @@ import { parseName } from "../shared/ApiError.js"
 import { Kind } from "../shared/Kind.js"
 import { Name } from "../shared/Name.js"
 import { Reference } from "../shared/Reference.js"
-import { passphraseCommand, passphraseOnly, type SecretSource, sentOnce, unverifiedOnTransport } from "./Admin.js"
+import { passphraseCommand, passphraseOnly, type SecretSource, sentOnce } from "./Admin.js"
 import { Client } from "./Client.js"
 import {
   EditFlagsInvalid,
@@ -127,7 +127,7 @@ export const itemEdit = (input: ItemEditInput) =>
       prepare: Effect.all({ vault: parse("vault", input.vault), item: parse("title", input.title) }),
       send: ({ vault, item }, { passphrase, change }) =>
         Effect.gen(function* () {
-          const edited = yield* unverifiedOnTransport(
+          const edited = yield* sentOnce(
             Client.request(Api, input.target, (client) =>
               client.admin.itemsEdit({ payload: { passphrase, vault, item, change } }),
             ),
@@ -225,7 +225,7 @@ export const itemRename = (input: ItemInput & { readonly newTitle: string }) =>
     }),
     send: (names, passphrase) =>
       Effect.gen(function* () {
-        const renamed = yield* unverifiedOnTransport(
+        const renamed = yield* sentOnce(
           Client.request(Api, input.target, (client) =>
             client.admin.itemsRename({ payload: { passphrase, ...names } }),
           ),
@@ -253,7 +253,7 @@ export const itemDelete = (input: ItemInput) =>
     prepare: Effect.all({ vault: parse("vault", input.vault), item: parse("title", input.title) }),
     send: (names, passphrase) =>
       Effect.gen(function* () {
-        const deleted = yield* unverifiedOnTransport(
+        const deleted = yield* sentOnce(
           Client.request(Api, input.target, (client) =>
             client.admin.itemsDelete({ payload: { passphrase, ...names } }),
           ),
@@ -287,7 +287,7 @@ export const itemRelease = (input: ItemInput) =>
     secrets: passphraseOnly,
     prepare: Effect.all({ vault: parse("vault", input.vault), title: parse("title", input.title) }),
     send: (names, passphrase) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) => client.admin.itemsRelease({ payload: { passphrase, ...names } })),
       ),
   })

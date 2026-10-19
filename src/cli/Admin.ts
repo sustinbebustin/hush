@@ -129,19 +129,16 @@ export const passphraseCommand = <P, E1, R1, S, ES, A, E2, R2>(spec: {
     return yield* spec.send(prepared, secrets)
   })
 
-// A Passphrase write sent but not answered: it may or may not have happened. A refused connection
-// never carried the request, so it stays `ServerUnreachable`.
-export const unverifiedOnTransport = <A, E, R>(effect: Effect.Effect<A, E | ServerUnreachable, R>) =>
+// A write sent once whose answer is lost or not understood: either way it may or may not have changed anything, so
+// both read as "do not retry" (invariant 3). A refused connection never carried the request, so it stays
+// `ServerUnreachable`.
+export const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
   Effect.catchIf(
-    effect,
-    (error): error is ServerUnreachable => error instanceof ServerUnreachable && error.reason !== "refused",
+    write,
+    (error): error is ServerUnreachable | UnexpectedResponse =>
+      error instanceof UnexpectedResponse || (error instanceof ServerUnreachable && error.reason !== "refused"),
     () => Effect.fail(new ChangeUnverified()),
   )
-
-// A write sent once whose answer is lost or not understood: either way it may or may not have changed anything, so
-// both read as "do not retry" (invariant 3).
-export const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
-  unverifiedOnTransport(write).pipe(Effect.catchTag("UnexpectedResponse", () => Effect.fail(new ChangeUnverified())))
 
 // `hush vault create <name>`: one `admin/vaults/create`.
 export const vaultCreate = (input: {
@@ -155,7 +152,7 @@ export const vaultCreate = (input: {
     secrets: passphraseOnly,
     prepare: parse("vault", input.vault),
     send: (vault, passphrase) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) => client.admin.vaultsCreate({ payload: { passphrase, vault } })),
       ),
   })
@@ -183,7 +180,7 @@ export const vaultDelete = (input: {
     secrets: passphraseOnly,
     prepare: parse("vault", input.vault),
     send: (vault, passphrase) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) => client.admin.vaultsDelete({ payload: { passphrase, vault } })),
       ),
   })
@@ -226,7 +223,7 @@ export const tokenRevoke = (input: {
     prepare: parse("label", input.label),
     send: (label, passphrase) =>
       Effect.gen(function* () {
-        const revoked = yield* unverifiedOnTransport(
+        const revoked = yield* sentOnce(
           Client.request(Api, input.target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
         )
 
@@ -338,7 +335,7 @@ export const passphraseChange = (input: { readonly target: Target; readonly sour
     secrets: withNewPassphrase(sequences.change),
     prepare: Effect.void,
     send: (_, secrets) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) =>
           client.admin.passphraseChange({
             payload: { passphrase: secrets.first, newPassphrase: secrets.passphrase },
@@ -435,11 +432,13 @@ const sendInit = (input: {
 
     const secretsOnly = { initCode: Redacted.make(initCode), passphrase: secrets.passphrase }
 
-    const receipt = yield* Client.request(Api, target, (client) =>
-      client.admin.init({
-        payload:
-          first === undefined ? secretsOnly : { ...secretsOnly, first: { vault: first.vault, label: first.label } },
-      }),
+    const receipt = yield* sentOnce(
+      Client.request(Api, target, (client) =>
+        client.admin.init({
+          payload:
+            first === undefined ? secretsOnly : { ...secretsOnly, first: { vault: first.vault, label: first.label } },
+        }),
+      ),
     )
 
     if (first === undefined) return { state: receipt.state }
@@ -676,7 +675,7 @@ export const tokenIssue = (input: TokenIssueInput) => {
           if (replacement.keepGrants) payload.keepGrants = true
         }
 
-        const issued = yield* unverifiedOnTransport(
+        const issued = yield* sentOnce(
           Client.request(Api, input.target, (client) => client.admin.tokensIssue({ payload })),
         )
 

@@ -4,6 +4,7 @@ import { chmod, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { sandbox, type Sandbox } from "./sandbox.js"
 
 // `hush token issue`, Grant enforcement and the Token lifecycle (list, revoke, expiry, save, forget, status)
@@ -1042,5 +1043,53 @@ describe("hush token revoke", () => {
           { label: "agent on box", grants: [{ vault: "Personal", access: "read+create" }], state: "active" },
         ],
       )
+    }))
+})
+
+// A Passphrase command through the proxy in `garble-response` mode: the Server makes the change, and the CLI gets
+// an answer it cannot decode in its place.
+const garbled = async (box: Sandbox, args: ReadonlyArray<string>) => {
+  box.proxy.mode("garble-response")
+
+  const result = await box.run([...args, "--passphrase-stdin"], {
+    input: `${passphrase}\n`,
+    env: { HUSH_SERVER: box.proxy.url },
+  })
+
+  box.proxy.mode("pass")
+
+  return result
+}
+
+// As far as the CLI knows the change may or may not have happened, so it says so and never shows the body.
+const assertUnverified = (result: Awaited<ReturnType<Sandbox["run"]>>) => {
+  assert.strictEqual(result.code, 1)
+  assert.strictEqual(result.stdout, "")
+  assert.strictEqual(
+    result.stderr,
+    "hush: The request was sent but its answer was lost or could not be read, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
+  )
+  assert.notInclude(result.stderr, garbledMarker)
+}
+
+describe("a Token write whose answer cannot be decoded", () => {
+  it("reports token issue as ChangeUnverified, never the body, issues exactly once and saves nothing", () =>
+    withSandbox(async (box, seen) => {
+      await seeded(box, seen)
+      const file = await readFile(tokenFilePath(box), "utf8")
+      const result = await garbled(box, ["token", "issue", "--label", "reader", "--read", "Personal"])
+      assertUnverified(result)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/tokens/issue HTTP/1.1"])
+      assert.strictEqual((await timesOf(box, "reader")).revoked_at, null)
+      assert.strictEqual(await readFile(tokenFilePath(box), "utf8"), file)
+    }))
+
+  it("reports token revoke as ChangeUnverified, never the body, and revokes exactly once", () =>
+    withSandbox(async (box, seen) => {
+      await seeded(box, seen)
+      const result = await garbled(box, ["token", "revoke", "agent on box"])
+      assertUnverified(result)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/tokens/revoke HTTP/1.1"])
+      assert.notStrictEqual((await timesOf(box, "agent on box")).revoked_at, null)
     }))
 })
