@@ -226,7 +226,7 @@ export const tokenRevoke = (input: {
     prepare: parse("label", input.label),
     send: (label, passphrase) =>
       Effect.gen(function* () {
-        const revoked = yield* unverifiedOnTransport(
+        const revoked = yield* sentOnce(
           Client.request(Api, input.target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
         )
 
@@ -676,7 +676,7 @@ export const tokenIssue = (input: TokenIssueInput) => {
           if (replacement.keepGrants) payload.keepGrants = true
         }
 
-        const issued = yield* unverifiedOnTransport(
+        const issued = yield* sentOnce(
           Client.request(Api, input.target, (client) => client.admin.tokensIssue({ payload })),
         )
 
