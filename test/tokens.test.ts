@@ -1067,7 +1067,7 @@ const assertUnverified = (result: Awaited<ReturnType<Sandbox["run"]>>) => {
   assert.strictEqual(result.stdout, "")
   assert.strictEqual(
     result.stderr,
-    "hush: The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
+    "hush: The request was sent but its answer was lost or could not be read, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
   )
   assert.notInclude(result.stderr, garbledMarker)
 }

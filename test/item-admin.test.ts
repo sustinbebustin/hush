@@ -519,7 +519,7 @@ describe("an Item write whose answer is lost", () => {
       assert.strictEqual(result.stdout, "")
       assert.strictEqual(
         result.stderr,
-        "hush: The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
+        "hush: The request was sent but its answer was lost or could not be read, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
       )
       assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/items/delete HTTP/1.1"])
       assert.deepStrictEqual(await rows(box, "SELECT title FROM items ORDER BY id"), [{ title: "GitHub" }])
@@ -547,7 +547,7 @@ const assertUnverified = (result: Awaited<ReturnType<Sandbox["run"]>>) => {
   assert.strictEqual(result.stdout, "")
   assert.strictEqual(
     result.stderr,
-    "hush: The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
+    "hush: The request was sent but its answer was lost or could not be read, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
   )
   assert.notInclude(result.stderr, garbledMarker)
 }

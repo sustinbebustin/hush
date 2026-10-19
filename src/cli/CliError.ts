@@ -26,7 +26,7 @@ export class CreationUnverified extends Schema.TaggedError<CreationUnverified>()
   ref: Schema.String,
 }) {}
 
-// The connection failed after a Passphrase write was sent, so it may or may not have happened.
+// A Passphrase write was sent but its answer was lost or could not be decoded, so it may or may not have happened.
 export class ChangeUnverified extends Schema.TaggedError<ChangeUnverified>()("ChangeUnverified", {}) {}
 
 // A transport failure before any response. `route` is the way the request took, with a proxy as `host:port` only
@@ -535,7 +535,7 @@ export const render = (cliError: CliError, token?: TokenContext): string =>
     CreationUnverified: (error) =>
       `Creation is unverified. Do not retry creation; inspect the destination by title with ${findCommand(error.title, error.vault)} first. Item reference: ${error.ref}.`,
     ChangeUnverified: () =>
-      "The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.",
+      "The request was sent but its answer was lost or could not be read, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.",
     InvalidValue: (error) => `The ${error.noun} ${invalidInputText[error.reason]}; nothing was ${error.outcome}.`,
     InputEmpty: (error) => `The ${error.noun} is empty; nothing was ${error.outcome}.`,
     InputSourceRequired: inputSourceText,
