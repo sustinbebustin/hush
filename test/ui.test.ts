@@ -312,6 +312,34 @@ describe("hush ui at the command line", () => {
   )
 
   it.skipIf(!onPty || !serverSupported)(
+    "never turns on the terminal's mouse tracking, so a drag selects text for the terminal's own copy",
+    async () => {
+      const box = await sandbox()
+
+      try {
+        await seeded(box)
+
+        const result = await box.run(["ui"], {
+          tty: {
+            keys: [
+              { after: prompt, keys: `${seedPassphrase}\r` },
+              { after: "api-credential", keys: "q" },
+            ],
+          },
+        })
+
+        assert.strictEqual(result.code, 0, result.stdout)
+        assert.include(result.stdout, "api-credential")
+
+        // X10/normal, button-event, any-event and SGR mouse reporting.
+        for (const mode of ["1000", "1002", "1003", "1006"]) assert.notInclude(result.stdout, `\x1b[?${mode}h`, mode)
+      } finally {
+        await box.close()
+      }
+    },
+  )
+
+  it.skipIf(!onPty || !serverSupported)(
     "locks on Ctrl-Z, gives the terminal back while stopped, and shows the Locked prompt after `fg`",
     async () => {
       const box = await sandbox()

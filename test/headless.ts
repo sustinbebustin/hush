@@ -120,8 +120,9 @@ export const headless = async (
     readonly clipboard?: Clipboard
   } = {},
 ): Promise<Headless> => {
-  // `exitSignals: []` as `hush ui` runs it: the UI handles the exit signals itself.
-  const setup = await createTestRenderer({ width, height, exitSignals: [] })
+  // `exitSignals: []` and `useMouse: false` as `hush ui` runs it: the UI handles the exit signals itself and leaves
+  // the mouse to the terminal.
+  const setup = await createTestRenderer({ width, height, exitSignals: [], useMouse: false })
   const recorder = new TestRecorder(setup.renderer)
   recorder.rec()
 
