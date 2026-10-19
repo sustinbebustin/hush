@@ -5,6 +5,7 @@ import type { AuditEntry, AuditPage } from "../shared/Api.js"
 import { Key } from "./Key.js"
 import { Size } from "./Size.js"
 import { View } from "./View.js"
+import { Viewport } from "./Viewport.js"
 
 // The Audit view: the Audit Log newest first under three filters (Vault, Label, since), read a page at a time.
 // Its transitions are pure and say which request, if any, to send; the reducer adds the Passphrase.
@@ -69,23 +70,12 @@ export interface Move {
   readonly ask: Ask | undefined
 }
 
-// How many lines `text` takes word-wrapped to `width` columns.
-const wrappedLines = (text: string, width: number): number =>
-  text
-    .split(" ")
-    .reduce(
-      ({ lines, used }, word) =>
-        used + 1 + word.length <= width
-          ? { lines, used: used + 1 + word.length }
-          : { lines: lines + 1, used: word.length },
-      { lines: 1, used: -1 },
-    ).lines
-
 // The Audit rows the main pane shows at least at `size`, and so how far PageUp and PageDown move: the frame less the
 // hint bar, the pane's border, its filter line, the status line as the longest status wraps at the pane's width,
 // and the column header; never fewer than one. When the last loaded entry is within this many rows of the top, the
 // bottom is in view and the next page is fetched.
-const rowsAt = (size: Size): number => Math.max(1, size.height - 5 - wrappedLines(longestStatus, Size.paneWidth(size)))
+const rowsAt = (size: Size): number =>
+  Math.max(1, size.height - 5 - Viewport.wordLines(longestStatus, Size.paneWidth(size)))
 
 const firstPage = (filters: Filters): Move => ({
   view: View.Audit({ filters, form: Form.Shut(), log: Log.Loading(), top: 0 }),

@@ -109,7 +109,9 @@ export const run = (input: {
       yield* FiberSet.run(clock)(idleClock((event) => Queue.offer(events, event)))
       const screen = Screen.mount(renderer)
       let state: State = State.initial
-      screen.draw(Display.of(state))
+      // Each display keeps the windows of the one before, so a long list scrolls only as the cursor needs.
+      let display = Display.of(state)
+      screen.draw(display)
 
       for (;;) {
         const step = Reducer.reduce(state, yield* Queue.take(events))
@@ -118,7 +120,8 @@ export const run = (input: {
         // would drop its answer anyway.
         if (State.$is("Open")(state) && State.$is("Locked")(step.state)) yield* FiberSet.clear(work)
         state = step.state
-        screen.draw(Display.of(state))
+        display = Display.of(state, display)
+        screen.draw(display)
 
         for (const effect of step.effects) {
           if (UiEffect.$is("Quit")(effect)) return

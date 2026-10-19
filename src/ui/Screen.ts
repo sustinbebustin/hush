@@ -7,7 +7,7 @@ import {
   TextRenderable,
 } from "@opentui/core"
 
-import { Display, type RetiredRow, type TokenRow } from "./Display.js"
+import { Display, type RetiredRow, type TokenColumn, type TokenRow } from "./Display.js"
 import { ItemForm, type Line as FormLine } from "./ItemForm.js"
 import type { Key } from "./Key.js"
 import { Size } from "./Size.js"
@@ -35,30 +35,35 @@ const clipped = { flexGrow: 1, flexBasis: 0, overflow: "hidden" } as const
 const column = (renderer: CliRenderer, options: { readonly width?: number; readonly flexGrow?: number } = {}) =>
   new TextRenderable(renderer, { content: "", wrapMode: "none", truncate: true, ...options })
 
-const tokenColumns = { label: 18, state: 8, created: 11, expires: 11 } as const
+const tokenColumns = Display.tokenColumnWidths
 
-// The Token table: a header line, then one line per Token; Grants take the width left over.
+// The Token table: a header line, then one line per Token from the window's first; Grants take the width left
+// over. Only the columns `Display` says fit are drawn; Label always is.
 const mountTokenTable = (renderer: CliRenderer) => {
   const box = new BoxRenderable(renderer, { ...clipped, flexDirection: "row" })
 
-  const columns: ReadonlyArray<readonly [TextRenderable, string, (row: TokenRow) => string]> = [
+  const columns: ReadonlyArray<readonly [TokenColumn | "label", TextRenderable, string, (row: TokenRow) => string]> = [
     [
+      "label",
       column(renderer, { width: tokenColumns.label }),
       "  Label",
       (row) => `${row.underCursor ? ">" : " "} ${row.label}`,
     ],
-    [column(renderer, { width: tokenColumns.state }), "State", (row) => row.state],
-    [column(renderer, { width: tokenColumns.created }), "Created", (row) => row.created],
-    [column(renderer, { width: tokenColumns.expires }), "Expires", (row) => row.expires],
-    [column(renderer, { flexGrow: 1 }), "Grants", (row) => row.grants],
+    ["state", column(renderer, { width: tokenColumns.state }), "State", (row) => row.state],
+    ["created", column(renderer, { width: tokenColumns.created }), "Created", (row) => row.created],
+    ["expires", column(renderer, { width: tokenColumns.expires }), "Expires", (row) => row.expires],
+    ["grants", column(renderer, { flexGrow: 1 }), "Grants", (row) => row.grants],
   ]
 
-  for (const [text] of columns) box.add(text)
+  for (const [, text] of columns) box.add(text)
 
-  const draw = (rows: ReadonlyArray<TokenRow> | undefined) => {
+  const draw = (rows: ReadonlyArray<TokenRow> | undefined, shown: ReadonlyArray<TokenColumn>, top: number) => {
     box.visible = rows !== undefined
 
-    for (const [text, header, cell] of columns) text.content = [header, ...(rows ?? []).map(cell)].join("\n")
+    for (const [name, text, header, cell] of columns) {
+      text.visible = name === "label" || shown.includes(name)
+      text.content = [header, ...(rows ?? []).slice(top).map(cell)].join("\n")
+    }
   }
 
   return { box, draw }
@@ -166,7 +171,7 @@ const mount = (renderer: CliRenderer): Screen => {
   const filterLine = column(renderer)
   const rows = new BoxRenderable(renderer, { ...clipped, flexDirection: "row" })
   const titles = column(renderer, { flexGrow: 1 })
-  const kinds = column(renderer, { width: kindWidth })
+  const kinds = column(renderer, { width: kindWidth + 1 })
   const message = new TextRenderable(renderer, { content: "", wrapMode: "word" })
   const detailBox = new BoxRenderable(renderer, clipped)
   const detail = new TextRenderable(renderer, { content: "", wrapMode: "char" })
@@ -231,13 +236,21 @@ const mount = (renderer: CliRenderer): Screen => {
 
   // The Open layout's text, and which of its parts show.
   const fillOpen = (shown: OpenShown) => {
+    const { windows } = shown
     vaultNames.content = [...shown.vaults, ...shown.sections]
       .map(({ name, underCursor }) => `${underCursor ? ">" : " "} ${name}`)
+      .slice(windows.sidebar.line)
       .join("\n")
-    vaultCounts.content = shown.vaults.map(({ items }) => String(items)).join("\n")
+    vaultCounts.content = shown.vaults
+      .map(({ items }) => String(items))
+      .slice(windows.sidebar.line)
+      .join("\n")
+    // An empty bottom title would still draw its padding.
+    sidebar.bottomTitle = shown.sidebarHidden === "" ? undefined : shown.sidebarHidden
+    main.bottomTitle = shown.paneHidden === "" ? undefined : shown.paneHidden
     logBox.visible = shown.log.length > 0
     log.content = shown.log.join("\n")
-    tokenTable.draw(shown.tokens)
+    tokenTable.draw(shown.tokens, shown.tokenColumns, windows.tokens.line)
     itemForm.draw(shown.form)
     main.title = shown.title
     filterLine.content = shown.filter
@@ -247,11 +260,17 @@ const mount = (renderer: CliRenderer): Screen => {
     titles.content = [
       ...shown.rows.map(({ title, underCursor }) => `${underCursor ? ">" : " "} ${title}`),
       ...retiredLines(shown.retired),
-    ].join("\n")
-    kinds.content = shown.rows.map(({ kind }) => kind).join("\n")
+    ]
+      .slice(windows.rows.line)
+      .join("\n")
+    // Each Kind after a one-column gap, so a cut title never runs into it.
+    kinds.content = shown.rows
+      .map(({ kind }) => ` ${kind}`)
+      .slice(windows.rows.line)
+      .join("\n")
     rows.visible =
       shown.detail.length === 0 && shown.log.length === 0 && shown.tokens === undefined && shown.form === undefined
-    detail.content = shown.detail.join("\n")
+    detail.content = shown.detail.slice(windows.detail.line).join("\n")
     detailBox.visible = shown.detail.length > 0
     modalArea.visible = shown.modal !== undefined
     modalText.content = shown.modal ?? ""

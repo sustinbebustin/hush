@@ -474,6 +474,72 @@ describe.skipIf(!serverSupported)("hush ui help, resize and notices", () => {
       { width: 121, height: 19 },
     ))
 
+  it("keeps the Item under the cursor in view at 121x19 walking 25 Items to the last and back", () =>
+    withUi(
+      async (box) => {
+        await box.seed({
+          items: Array.from({ length: 25 }, (_, n) => ({
+            kind: "api-credential" as const,
+            title: `Item ${String(n + 1).padStart(2, "0")}`,
+            value: `fictional value ${n}`,
+          })),
+        })
+      },
+      async (ui) => {
+        await unlock(ui)
+        await ui.waitFor("Item 01")
+        ui.keys.pressTab()
+        assert.include(await ui.waitFor("> Item 01"), "9 below")
+
+        for (let n = 2; n <= 25; n += 1) {
+          ui.keys.pressArrow("down")
+          await ui.waitFor(`> Item ${String(n).padStart(2, "0")}`)
+        }
+
+        assert.include(ui.frame(), "9 above")
+        assert.notInclude(ui.frame(), "below")
+
+        for (let n = 24; n >= 1; n -= 1) {
+          ui.keys.pressArrow("up")
+          await ui.waitFor(`> Item ${String(n).padStart(2, "0")}`)
+        }
+
+        assert.include(ui.frame(), "9 below")
+      },
+      { width: 121, height: 19 },
+    ))
+
+  it("keeps the sidebar cursor in view at 121x19 moving past 15 Vaults to Audit, and opens it", () =>
+    withUi(
+      async (box) => {
+        await box.seed()
+
+        for (let n = 2; n <= 15; n += 1) {
+          const created = await box.run(
+            ["vault", "create", `Vault ${String(n).padStart(2, "0")}`, "--passphrase-stdin"],
+            {
+              input: `${seedPassphrase}\n`,
+            },
+          )
+
+          assert.strictEqual(created.code, 0, created.stderr)
+        }
+      },
+      async (ui) => {
+        await unlock(ui)
+        assert.include(await ui.waitFor("> Personal"), "1 below")
+
+        for (let n = 0; n < 16; n += 1) ui.keys.pressArrow("down")
+        const atAudit = await ui.waitFor("> Audit")
+        assert.include(atAudit, "1 above")
+        assert.include(atAudit, "  Tokens")
+
+        ui.keys.pressEnter()
+        assert.include(await ui.waitFor("vault.create"), "Audit Log")
+      },
+      { width: 121, height: 19 },
+    ))
+
   it("keeps the panes, a modal and the hint bar inside the frame at 80x12 and 60x10", () =>
     withUi(
       seeded,

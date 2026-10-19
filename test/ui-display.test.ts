@@ -9,6 +9,7 @@ import { Event } from "../src/ui/Event.js"
 import { Key } from "../src/ui/Key.js"
 import { Reducer } from "../src/ui/Reducer.js"
 import { State, type Vault } from "../src/ui/State.js"
+import { View } from "../src/ui/View.js"
 
 // The state after typing `text` at the Locked prompt, one key per code point.
 const typed = (text: string): State =>
@@ -38,22 +39,70 @@ const item: ItemMeta = {
   fields: [{ label: "credential", concealed: true }],
 }
 
-// Open on Vaults Personal (one Item, answered) and Work.
-const opened = (): State => {
+// Open on Vaults Personal (with `items` Items and `retired` Retired titles, answered), Work and `more` others.
+const openedWith = (items: number, retired = 0, more = 0): State => {
   const checking = press(typed("right"), Key.named("return"))
+  const others = Array.from({ length: more }, (_, n) => vault(`Vault ${n}`, 0))
 
   const open = Reducer.reduce(
     checking,
     Event.Unlocked({
       attempt: 1,
       passphrase: Redacted.make("right"),
-      vaults: [vault("Personal", 1), vault("Work", 0)],
+      vaults: [vault("Personal", items), vault("Work", 0), ...others],
       clipboard: false,
     }),
   ).state
 
-  return Reducer.reduce(open, Event.ItemsLoaded({ list: { vault: "Personal", items: [item], retired: [] } })).state
+  const list = {
+    vault: "Personal",
+    items: Array.from({ length: items }, (_, n) => (n === 0 ? item : { ...item, title: `Item ${n}` })),
+    retired: Array.from({ length: retired }, (_, n) => `retired ${n}`),
+  }
+
+  return Reducer.reduce(open, Event.ItemsLoaded({ list })).state
 }
+
+// Open on Vaults Personal (one Item, answered) and Work.
+const opened = (): State => openedWith(1)
+
+// The displays drawn as `keys` are pressed from `state` at `width`x`height`, each from the one before, as `Ui.run`
+// draws them; with the cursor's row each time.
+const walk = (from: State, width: number, height: number, keys: ReadonlyArray<Key>) => {
+  let state = sized(from, width, height)
+  let display = Display.of(state)
+  const steps: Array<{ readonly state: State; readonly display: Display }> = []
+
+  for (const key of keys) {
+    state = Reducer.reduce(state, Event.Key({ key })).state
+    display = Display.of(state, display)
+    steps.push({ state, display })
+  }
+
+  return steps
+}
+
+// The Open display's fields, or a test failure.
+const openOf = (display: Display) =>
+  Display.$match(display, {
+    Open: (open) => open,
+    Locked: () => assert.fail("expected the Open layout, got Locked"),
+    TooSmall: () => assert.fail("expected the Open layout, got TooSmall"),
+  })
+
+// The Token table columns drawn at `width`.
+const columnsAt = (width: number) => openOf(Display.of(sized(tokensOpened(), width, 24))).tokenColumns
+
+// The cursor's entry in the sidebar and in the Item rows (Items, then Retired titles), if any.
+const cursors = (state: State) => {
+  if (!State.$is("Open")(state)) throw new Error("expected an Open state")
+  const { view } = state
+  const row = View.$is("ItemList")(view) ? View.cursorRow(view) : undefined
+
+  return { sidebar: state.cursor, row }
+}
+
+const moves = fc.array(fc.constantFrom(Key.named("up"), Key.named("down")), { maxLength: 80 })
 
 const detailOpened = () => press(opened(), Key.named("tab"), Key.named("return"))
 
@@ -163,6 +212,65 @@ describe("Display", () => {
       hintsOf(sized(press(opened(), Key.named("tab")), 80, 24)),
       "Up/Down move  Enter open  c create  n rename  d delete  / filter  ? help  q quit",
     )
+  })
+
+  it("keeps the cursor's row inside the drawn window of the Item rows and the sidebar, at any height from 10", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 40 }),
+        fc.integer({ min: 0, max: 5 }),
+        fc.integer({ min: 0, max: 30 }),
+        fc.integer({ min: 10, max: 40 }),
+        moves,
+        moves,
+        (items, retired, more, height, inSidebar, inRows) => {
+          const sidebarRows = height - 3
+          const sidebarSteps = walk(openedWith(items, retired, more), 100, height, inSidebar)
+
+          for (const { state, display } of sidebarSteps) {
+            const { sidebar } = openOf(display).windows
+
+            assert.isAtMost(sidebar.top, cursors(state).sidebar)
+            assert.isAbove(sidebar.end, cursors(state).sidebar)
+            assert.isAtMost(sidebar.end - sidebar.top, sidebarRows)
+          }
+
+          for (const { state, display } of walk(openedWith(items, retired), 100, height, [
+            Key.named("tab"),
+            ...inRows,
+          ])) {
+            const { row } = cursors(state)
+            const { rows } = openOf(display).windows
+
+            if (row === undefined) continue
+            assert.isAtMost(rows.top, row)
+            assert.isAbove(rows.end, row)
+          }
+        },
+      ),
+    )
+  })
+
+  it("says how many rows are hidden above and below the window", () => {
+    const steps = walk(openedWith(25), 121, 19, [
+      Key.named("tab"),
+      ...Array.from({ length: 20 }, () => Key.named("down")),
+    ])
+
+    const last = openOf(steps.at(-1)?.display ?? Display.of(State.initial))
+
+    // 16 rows in the pane: Items 5 to 20 drawn, with the cursor on Item 20.
+    assert.deepStrictEqual(last.windows.rows, { top: 5, end: 21, line: 5, count: 25 })
+    assert.strictEqual(last.paneHidden, "5 above, 4 below")
+    assert.strictEqual(last.sidebarHidden, "")
+  })
+
+  it("drops whole Token table columns as the pane narrows: Expires, then Created, then State; Label always", () => {
+    assert.deepStrictEqual(columnsAt(121), ["state", "created", "expires", "grants"])
+    assert.deepStrictEqual(columnsAt(90), ["state", "created", "expires", "grants"])
+    assert.deepStrictEqual(columnsAt(80), ["state", "created", "grants"])
+    assert.deepStrictEqual(columnsAt(70), ["state", "grants"])
+    assert.deepStrictEqual(columnsAt(60), ["grants"])
   })
 
   it("draws one mask cell per character typed, multi-byte characters included", () => {
