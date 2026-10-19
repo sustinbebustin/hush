@@ -127,30 +127,45 @@ For agents, with a Token:
 | `hush env run <file> -- <command...>`                        | run a command with every value of a template                                |
 | `hush env resolve <file> --output <file>`                    | write the values to a new 0600 file, only for a tool that needs one         |
 | `hush create <kind> --title <title> --vault <vault> --stdin` | create an Item from piped input and verify it; never overwrites             |
-| `hush read <ref>`                                            | print one value: the only command that does                                 |
+| `hush read <ref>`                                            | print one value: the only agent command that does                           |
 | `hush token status`                                          | the current Token's Label, Grants and expiry                                |
 
 `run` and `env run` mask concealed values of 8 bytes or more in the child's piped output, best effort. `read` and `env resolve` are never masked.
 
 For the Owner, with the Passphrase:
 
-| Command                     | What it does                                                   |
-| --------------------------- | -------------------------------------------------------------- |
-| `hush init`                 | initialise a new Server                                        |
-| `hush vault`                | create, list and delete Vaults                                 |
-| `hush item`                 | edit, rename, delete and release existing Items                |
-| `hush token issue`          | issue a Token with fixed Grants                                |
-| `hush token list`           | every Token with its Grants and state                          |
-| `hush token revoke <label>` | stop a Token at once                                           |
-| `hush audit`                | read the Audit Log, newest first                               |
-| `hush backup <file>`        | download a checked snapshot of the database                    |
-| `hush passphrase change`    | change the Passphrase; Vaults, Tokens and values are untouched |
+| Command                                                            | What it does                                                                      |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `hush init`                                                        | initialise a new Server                                                           |
+| `hush vault`                                                       | create, list and delete Vaults                                                    |
+| `hush item list <vault>`                                           | a Vault's Items and Retired titles, never a value, no Token                       |
+| `hush item`                                                        | create, list, edit, rename, delete, release and reveal Items                      |
+| `hush item create <kind> --title <title> --vault <vault> --prompt` | create an Item without a Token, verified before commit; never overwrites          |
+| `hush item reveal <ref>`                                           | print one value on stdout; the Audit Log records its Reference                    |
+| `hush token issue`                                                 | issue a Token with fixed Grants                                                   |
+| `hush token list`                                                  | every Token with its Grants and state                                             |
+| `hush token revoke <label>`                                        | stop a Token at once                                                              |
+| `hush audit`                                                       | read the Audit Log, newest first                                                  |
+| `hush backup <file>`                                               | download a checked snapshot of the database                                       |
+| `hush passphrase change`                                           | change the Passphrase; Vaults, Tokens and values are untouched                    |
+| `hush ui`                                                          | the same operations in a full-screen terminal UI; see [Terminal UI](#terminal-ui) |
 
 Every Passphrase command reads it from a hidden prompt, or with `--passphrase-stdin` from a pipe.
 
 On the Server host, as root or the owner of `hush.db`, with no Passphrase: `hush server` runs the Server, `hush server revoke <label>` revokes a Token, and `hush server backup <file>` writes a snapshot.
 
 Needing no credential: `hush status` (the Server's state and versions), `hush doctor` (checks the setup; safe to paste into an issue), `hush config get|set`, and `hush token save|forget` for the local token file.
+
+### Terminal UI
+
+`hush ui` is the Owner's full-screen view of a Server, for a terminal of at least 80x24 ([ADR-0009](docs/adr/0009-terminal-ui-not-web-ui.md)). It starts **Locked**, at the same hidden Passphrase prompt as the CLI. The right Passphrase makes it **Open**: a sidebar of Vaults with their Item counts, then Tokens and Audit, and a main pane showing the selection.
+
+- A Vault: its Items and Retired titles; an Item's detail shows its Kind, times, Fields and References. `r` Reveals the Field under the cursor until any key or 10 s, `e` edits it, `c` creates an Item, `n` renames, `d` deletes, `x` releases a Retired title.
+- Tokens: every Token with its Grants and state; `i` issues one (shown once, `c` copies it), `d` revokes.
+- Audit: the Audit Log, newest first; `/` filters by Vault, Label and since, PgUp and PgDn scroll and load older pages.
+- In the sidebar, `c` creates a Vault and `d` deletes one. Every destructive step asks for `y`.
+
+The bottom line lists the main keys of the current view, and `?` lists them all. `q` quits outside a prompt or form, Ctrl-C quits anywhere, and Ctrl-Z locks before suspending. Each Owner action is one Server request, plus one list refresh after a change; it never retries. While Open, the UI holds the Passphrase in its memory and sends it with every request ([ADR-0010](docs/adr/0010-ui-holds-the-passphrase-in-memory.md)). It drops it and Locks after ten minutes without a key, on Ctrl-Z, and when the Server refuses it (changed elsewhere, or the backoff is on), saying why at the prompt; and it drops it when it exits (on quit, or when the terminal closes). Errors read exactly as the CLI prints them. A smaller terminal shows a one-line notice until it is resized.
 
 ## Configuration
 

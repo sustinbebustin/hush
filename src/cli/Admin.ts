@@ -11,6 +11,7 @@ import {
   type TokenRevoked,
 } from "../shared/Api.js"
 import { type InvalidName, parseName } from "../shared/ApiError.js"
+import { Duration } from "../shared/Duration.js"
 import { Name } from "../shared/Name.js"
 import { Passphrase } from "../shared/Passphrase.js"
 import { Token } from "../shared/Token.js"
@@ -128,12 +129,14 @@ export const passphraseCommand = <P, E1, R1, S, ES, A, E2, R2>(spec: {
     return yield* spec.send(prepared, secrets)
   })
 
-// A Passphrase write sent but not answered: it may or may not have happened. A refused connection
-// never carried the request, so it stays `ServerUnreachable`.
-export const unverifiedOnTransport = <A, E, R>(effect: Effect.Effect<A, E | ServerUnreachable, R>) =>
+// A write sent once whose answer is lost or not understood: either way it may or may not have changed anything, so
+// both read as "do not retry" (invariant 3). A refused connection never carried the request, so it stays
+// `ServerUnreachable`.
+export const sentOnce = <A, E, R>(write: Effect.Effect<A, E | ServerUnreachable | UnexpectedResponse, R>) =>
   Effect.catchIf(
-    effect,
-    (error): error is ServerUnreachable => error instanceof ServerUnreachable && error.reason !== "refused",
+    write,
+    (error): error is ServerUnreachable | UnexpectedResponse =>
+      error instanceof UnexpectedResponse || (error instanceof ServerUnreachable && error.reason !== "refused"),
     () => Effect.fail(new ChangeUnverified()),
   )
 
@@ -149,7 +152,7 @@ export const vaultCreate = (input: {
     secrets: passphraseOnly,
     prepare: parse("vault", input.vault),
     send: (vault, passphrase) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) => client.admin.vaultsCreate({ payload: { passphrase, vault } })),
       ),
   })
@@ -177,7 +180,7 @@ export const vaultDelete = (input: {
     secrets: passphraseOnly,
     prepare: parse("vault", input.vault),
     send: (vault, passphrase) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) => client.admin.vaultsDelete({ payload: { passphrase, vault } })),
       ),
   })
@@ -220,7 +223,7 @@ export const tokenRevoke = (input: {
     prepare: parse("label", input.label),
     send: (label, passphrase) =>
       Effect.gen(function* () {
-        const revoked = yield* unverifiedOnTransport(
+        const revoked = yield* sentOnce(
           Client.request(Api, input.target, (client) => client.admin.tokensRevoke({ payload: { passphrase, label } })),
         )
 
@@ -332,7 +335,7 @@ export const passphraseChange = (input: { readonly target: Target; readonly sour
     secrets: withNewPassphrase(sequences.change),
     prepare: Effect.void,
     send: (_, secrets) =>
-      unverifiedOnTransport(
+      sentOnce(
         Client.request(Api, input.target, (client) =>
           client.admin.passphraseChange({
             payload: { passphrase: secrets.first, newPassphrase: secrets.passphrase },
@@ -429,11 +432,13 @@ const sendInit = (input: {
 
     const secretsOnly = { initCode: Redacted.make(initCode), passphrase: secrets.passphrase }
 
-    const receipt = yield* Client.request(Api, target, (client) =>
-      client.admin.init({
-        payload:
-          first === undefined ? secretsOnly : { ...secretsOnly, first: { vault: first.vault, label: first.label } },
-      }),
+    const receipt = yield* sentOnce(
+      Client.request(Api, target, (client) =>
+        client.admin.init({
+          payload:
+            first === undefined ? secretsOnly : { ...secretsOnly, first: { vault: first.vault, label: first.label } },
+        }),
+      ),
     )
 
     if (first === undefined) return { state: receipt.state }
@@ -454,22 +459,9 @@ const sendInit = (input: {
     })
   })
 
-const ttlUnits = { s: 1, m: 60, h: 3_600, d: 86_400, w: 604_800 } as const
-
-const isTtlUnit = (unit: string): unit is keyof typeof ttlUnits => Object.hasOwn(ttlUnits, unit)
-
-// A duration such as `90d` (`^[1-9]\d*[smhdw]$`) in seconds; undefined for anything else.
-const durationSeconds = (text: string): number | undefined => {
-  const [, count, unit] = /^([1-9]\d*)([smhdw])$/.exec(text) ?? []
-
-  if (count === undefined || unit === undefined || !isTtlUnit(unit)) return undefined
-
-  return Number(count) * ttlUnits[unit]
-}
-
 // `--ttl`: a duration of at most 3650 days, in seconds.
 export const parseTtl = (ttl: string): Result.Result<number, IssueFlagsInvalid> => {
-  const seconds = durationSeconds(ttl)
+  const seconds = Duration.seconds(ttl)
 
   return seconds === undefined || seconds > maxTtlSeconds
     ? Result.fail(new IssueFlagsInvalid({ problem: { reason: "ttl", ttl } }))
@@ -494,7 +486,7 @@ const isoTime = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|
 // `--since`: a duration back from `nowMs`, or an ISO 8601 time, as the instant the Server compares.
 // A duration reaching back before 1970 means from the start of the log.
 export const parseSince = (since: string, nowMs: number): Result.Result<string, AuditFlagsInvalid> => {
-  const seconds = durationSeconds(since)
+  const seconds = Duration.seconds(since)
   const ms = seconds === undefined ? (isoTime.test(since) ? Date.parse(since) : Number.NaN) : nowMs - seconds * 1000
 
   return Number.isNaN(ms)
@@ -683,7 +675,7 @@ export const tokenIssue = (input: TokenIssueInput) => {
           if (replacement.keepGrants) payload.keepGrants = true
         }
 
-        const issued = yield* unverifiedOnTransport(
+        const issued = yield* sentOnce(
           Client.request(Api, input.target, (client) => client.admin.tokensIssue({ payload })),
         )
 

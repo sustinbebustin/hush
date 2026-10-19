@@ -56,10 +56,13 @@ const AdminLive = HttpApiBuilder.group(Api, "admin", (handlers) =>
     .handle("tokensIssue", withPeer(Tokens.issue))
     .handle("tokensList", withPeer(Tokens.list))
     .handle("tokensRevoke", withPeer(Tokens.revoke))
+    .handle("itemsList", withPeer(ItemAdmin.list))
     .handle("itemsEdit", withPeer(ItemAdmin.edit))
     .handle("itemsRename", withPeer(ItemAdmin.rename))
     .handle("itemsDelete", withPeer(ItemAdmin.remove))
     .handle("itemsRelease", withPeer(ItemAdmin.releaseTitle))
+    .handle("itemsReveal", withPeer(ItemAdmin.reveal))
+    .handle("itemsCreate", withPeer(ItemAdmin.create))
     .handle("audit", withPeer(AuditLog.read)),
 )
 

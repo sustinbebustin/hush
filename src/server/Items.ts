@@ -266,8 +266,31 @@ export const list = (token: AuthenticatedToken, request: ListRequest, peer: stri
 
 const listed = (grants: ReadonlyArray<Grant>) =>
   Effect.gen(function* () {
+    const listedVaults = yield* itemsOf(grants)
+
+    const response: ItemList = {
+      vaults: listedVaults.map(({ vault: grant, items }) => ({
+        vault: grant.vault,
+        access: grant.access,
+        items,
+      })),
+    }
+
+    return response
+  })
+
+// A Vault to list by id, named as the listing shows it.
+export interface ListedVault {
+  readonly vaultId: number
+  readonly vault: Name
+}
+
+// Each Vault paired with its Items' metadata by title key, in the order of `vaults`. Names only: nothing is
+// unwrapped.
+export const itemsOf = <V extends ListedVault>(vaults: ReadonlyArray<V>) =>
+  Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
-    const vaultIds = grants.map(({ vaultId }) => vaultId)
+    const vaultIds = vaults.map(({ vaultId }) => vaultId)
 
     const items =
       vaultIds.length === 0
@@ -289,24 +312,20 @@ const listed = (grants: ReadonlyArray<Grant>) =>
             )}`,
           )
 
-    const vaults = yield* Effect.forEach(grants, (grant) =>
+    return yield* Effect.forEach(vaults, (vault) =>
       Effect.map(
         Effect.forEach(
-          items.filter(({ vault_id }) => vault_id === grant.vaultId),
+          items.filter(({ vault_id }) => vault_id === vault.vaultId),
           (item) =>
             itemMeta(
-              grant.vault,
+              vault.vault,
               item,
               fields.filter(({ item_id }) => item_id === item.id).map(({ label }) => label),
             ),
         ),
-        (metas) => ({ vault: grant.vault, access: grant.access, items: metas }),
+        (metas) => ({ vault, items: metas }),
       ),
     )
-
-    const response: ItemList = { vaults }
-
-    return response
   })
 
 // An Item's metadata with its Fields in Kind order. A Kind outside the Kinds, a missing primary Field or a label
@@ -361,67 +380,90 @@ const createChecked = (token: AuthenticatedToken, request: CreateRequest) =>
 
     if (!Access.allowsCreate(grant.access))
       return yield* new CreateNotAllowed({ vault: grant.vault, label: token.label })
-    const allowed = Kind.fields(request.kind).map(({ label }) => label)
+    const fields = yield* createdFields(request.kind, request.fields)
 
-    const fields = yield* Effect.forEach(request.fields, ({ label, value }) =>
+    return yield* insert(token, grant, title, request.kind, fields)
+  })
+
+// A new Field: its Kind's spec and the value to seal.
+export interface NewField {
+  readonly spec: FieldSpec
+  readonly value: Redacted.Redacted<string>
+}
+
+// The Fields a create asks for, each a label of the Kind with a valid value, the primary one among them; in Kind
+// order, so ids, the receipt and the audit detail follow display order. Shared by a Token's create and the Owner's.
+export const createdFields = (kind: Kind, requested: CreateRequest["fields"]) =>
+  Effect.gen(function* () {
+    const allowed = Kind.fields(kind).map(({ label }) => label)
+
+    const fields = yield* Effect.forEach(requested, ({ label, value }) =>
       Effect.gen(function* () {
         const name = Name.parse(label)
-        const spec = Result.isSuccess(name) ? Kind.spec(request.kind, Name.key(name.success)) : undefined
+        const spec = Result.isSuccess(name) ? Kind.spec(kind, Name.key(name.success)) : undefined
 
-        if (spec === undefined) return yield* new UnknownField({ kind: request.kind, field: label, allowed })
+        if (spec === undefined) return yield* new UnknownField({ kind, field: label, allowed })
         const problem = Value.problem(Redacted.value(value))
 
         if (problem !== undefined) return yield* new InvalidValue({ field: spec.label, reason: problem })
+        const field: NewField = { spec, value }
 
-        return { spec, value }
+        return field
       }),
     )
 
-    const primary = Kind.primary(request.kind)
-
     if (!fields.some(({ spec }) => spec.role === "primary"))
-      return yield* new FieldRequired({ kind: request.kind, field: primary.label })
-    // Kind order, so ids, the receipt and the audit detail follow display order.
-    const ordered = Kind.fields(request.kind).flatMap((spec) => fields.filter((field) => field.spec === spec))
+      return yield* new FieldRequired({ kind, field: Kind.primary(kind).label })
 
-    return yield* insert(token, grant, title, request.kind, ordered)
+    return Kind.fields(kind).flatMap((spec) => fields.filter((field) => field.spec === spec))
   })
 
 // A `retired_titles` row as create and release read it.
 export const RetiredRow = Schema.Struct({ title_key: Schema.String })
 
+// `TitleRetired` for a title a rename or delete freed and the Owner has not released.
+export const refuseRetired = (vault: { readonly id: number; readonly name: Name }, title: Name) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+
+    const retired = yield* rows(
+      RetiredRow,
+      sql`SELECT title_key FROM retired_titles WHERE vault_id = ${vault.id} AND title_key = ${Name.key(title)}`,
+    )
+
+    if (retired.length > 0) return yield* new TitleRetired({ vault: vault.name, item: title })
+  })
+
+// The new Item's row with an id from `Database.nextId`, returned; the unique index decides `ItemExists`.
+export const insertItem = (vault: { readonly id: number; readonly name: Name }, title: Name, kind: Kind, at: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    const itemId = yield* Database.nextId("items")
+    yield* sql`
+      INSERT INTO items (id, vault_id, title, title_key, kind, created_at, updated_at)
+      VALUES (${itemId}, ${vault.id}, ${title}, ${Name.key(title)}, ${kind}, ${at}, ${at})`.pipe(
+      Effect.catchReason("SqlError", "UniqueViolation", () =>
+        Effect.fail(new ItemExists({ vault: vault.name, item: title })),
+      ),
+      Effect.catchTag("SqlError", Effect.die),
+    )
+
+    return itemId
+  })
+
 // Inside `Tokens.audited`'s transaction: re-check the Token, so no Item commits after a Revoke; refuse a Retired
 // title; take ids from `Database.nextIds`; insert the Item (the unique index decides `ItemExists`), then seal and
 // insert each Field with its own ids in the AAD.
-const insert = (
-  token: AuthenticatedToken,
-  grant: Grant,
-  title: Name,
-  kind: Kind,
-  fields: ReadonlyArray<{ readonly spec: FieldSpec; readonly value: Redacted.Redacted<string> }>,
-) =>
+const insert = (token: AuthenticatedToken, grant: Grant, title: Name, kind: Kind, fields: ReadonlyArray<NewField>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const wraps = yield* Tokens.activeWraps(token, [grant.vaultId])
     const wrap = wraps.get(grant.vaultId) ?? (yield* Effect.die(new Error("create: the granted Vault has no wrap")))
-
-    const retired = yield* rows(
-      RetiredRow,
-      sql`SELECT title_key FROM retired_titles WHERE vault_id = ${grant.vaultId} AND title_key = ${Name.key(title)}`,
-    )
-
-    if (retired.length > 0) return yield* new TitleRetired({ vault: grant.vault, item: title })
+    const vault = { id: grant.vaultId, name: grant.vault }
+    yield* refuseRetired(vault, title)
     const at = yield* Audit.now
-    const itemId = yield* Database.nextId("items")
+    const itemId = yield* insertItem(vault, title, kind, at)
     const fieldIds = yield* Database.nextIds("fields", fields.length)
-    yield* sql`
-      INSERT INTO items (id, vault_id, title, title_key, kind, created_at, updated_at)
-      VALUES (${itemId}, ${grant.vaultId}, ${title}, ${Name.key(title)}, ${kind}, ${at}, ${at})`.pipe(
-      Effect.catchReason("SqlError", "UniqueViolation", () =>
-        Effect.fail(new ItemExists({ vault: grant.vault, item: title })),
-      ),
-      Effect.catchTag("SqlError", Effect.die),
-    )
     const key = yield* vaultKey(token, grant, wrap)
 
     for (const [index, { spec, value }] of fields.entries()) {

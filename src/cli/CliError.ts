@@ -26,7 +26,7 @@ export class CreationUnverified extends Schema.TaggedError<CreationUnverified>()
   ref: Schema.String,
 }) {}
 
-// The connection failed after a Passphrase write was sent, so it may or may not have happened.
+// A Passphrase write was sent but its answer was lost or could not be decoded, so it may or may not have happened.
 export class ChangeUnverified extends Schema.TaggedError<ChangeUnverified>()("ChangeUnverified", {}) {}
 
 // A transport failure before any response. `route` is the way the request took, with a proxy as `host:port` only
@@ -251,6 +251,11 @@ export class NoTerminal extends Schema.TaggedError<NoTerminal>()("NoTerminal", {
   ]),
 }) {}
 
+// `hush ui` started with stdin or stdout piped or redirected, as an agent's shell runs it.
+export class UiNeedsTerminal extends Schema.TaggedError<UiNeedsTerminal>()("UiNeedsTerminal", {
+  stream: Schema.Literals(["stdin", "stdout", "stdin and stdout"]),
+}) {}
+
 // Ctrl-C, or Ctrl-D on an empty line, at a hidden prompt; the terminal mode is restored.
 export class PromptCancelled extends Schema.TaggedError<PromptCancelled>()("PromptCancelled", {}) {}
 
@@ -283,6 +288,7 @@ export type CliError =
   | StdinIsTerminal
   | InitCodeEmpty
   | NoTerminal
+  | UiNeedsTerminal
   | PromptCancelled
   | PassphraseMismatch
   | ClipboardUnsupported
@@ -529,7 +535,7 @@ export const render = (cliError: CliError, token?: TokenContext): string =>
     CreationUnverified: (error) =>
       `Creation is unverified. Do not retry creation; inspect the destination by title with ${findCommand(error.title, error.vault)} first. Item reference: ${error.ref}.`,
     ChangeUnverified: () =>
-      "The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.",
+      "The request was sent but its answer was lost or could not be read, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.",
     InvalidValue: (error) => `The ${error.noun} ${invalidInputText[error.reason]}; nothing was ${error.outcome}.`,
     InputEmpty: (error) => `The ${error.noun} is empty; nothing was ${error.outcome}.`,
     InputSourceRequired: inputSourceText,
@@ -590,6 +596,8 @@ export const render = (cliError: CliError, token?: TokenContext): string =>
       error.prompt.for === "passphrase"
         ? `hush ${error.prompt.command} needs a human with the Passphrase at a terminal; nothing was changed. Run it from an interactive terminal (or pipe secrets with \`--passphrase-stdin\`). Agents cannot run it.`
         : `\`--prompt\` needs a terminal and there is none; nothing was ${error.prompt.outcome}. Pipe the value with \`--stdin\` instead.`,
+    UiNeedsTerminal: (error) =>
+      `\`hush ui\` needs an interactive terminal, but ${error.stream} ${error.stream === "stdin and stdout" ? "are" : "is"} not one; nothing was started. Run it yourself in a terminal, without pipes or redirection; agents cannot run it. Scripts use \`hush vault list\` and \`hush item list <vault>\` with \`--passphrase-stdin\`.`,
     PromptCancelled: () => "Cancelled at the prompt; nothing was changed.",
     PassphraseMismatch: () => "The two new Passphrases differ; nothing was changed.",
     ClipboardUnsupported: (error) =>

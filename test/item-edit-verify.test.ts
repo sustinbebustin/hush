@@ -149,3 +149,67 @@ describe("item edit verification before commit", () => {
     ),
   )
 })
+
+// `item create` seals through the same `setField`, so the same doubles must roll the whole Item back.
+const createRequest = {
+  passphrase: Redacted.make(passphrase),
+  vault: "Work",
+  title: "Twilio",
+  kind: "api-credential",
+  fields: [
+    { label: "credential", value: Redacted.make("new value") },
+    { label: "notes", value: Redacted.make("a note") },
+  ],
+} as const
+
+describe("item create verification before commit", () => {
+  for (const [name, sealer] of [
+    ["a new seal that does not open", flipsABit],
+    ["a new seal that opens to another value", sealsAnotherValue],
+  ] as const)
+    it.effect(`rolls back ${name} with IntegrityCheckFailed, audited error, creating no Item`, () =>
+      withStore(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          yield* seed
+
+          const before = {
+            fields: yield* sql`SELECT * FROM fields`,
+            items: yield* sql`SELECT * FROM items`,
+          }
+
+          const failed = yield* Effect.flip(ItemAdmin.create(createRequest, null, sealer))
+          assert.strictEqual(failed._tag, "IntegrityCheckFailed")
+          assert.deepStrictEqual(Predicate.isTagged(failed, "IntegrityCheckFailed") ? failed.damaged : undefined, {
+            what: "field",
+            reference: "hush://Work/Twilio/credential",
+          })
+          assert.deepStrictEqual(
+            { fields: yield* sql`SELECT * FROM fields`, items: yield* sql`SELECT * FROM items` },
+            before,
+          )
+          assert.deepStrictEqual(yield* sql`SELECT action, outcome, error FROM audit`, [
+            { action: "item.create", outcome: "error", error: "IntegrityCheckFailed" },
+          ])
+        }),
+      ),
+    )
+
+  it.effect("commits with the real sealer, every Field verified", () =>
+    withStore(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* seed
+        const receipt = yield* ItemAdmin.create(createRequest, null)
+        assert.strictEqual(receipt.verified, true)
+        assert.deepStrictEqual(yield* sql`SELECT label FROM fields WHERE item_id = 2 ORDER BY id`, [
+          { label: "credential" },
+          { label: "notes" },
+        ])
+        assert.deepStrictEqual(yield* sql`SELECT action, outcome, error FROM audit`, [
+          { action: "item.create", outcome: "ok", error: null },
+        ])
+      }),
+    ),
+  )
+})

@@ -10,6 +10,7 @@ import { auditLimit } from "../shared/Api.js"
 import { type ApiError, isApiError } from "../shared/ApiError.js"
 import { Kind, type PlainLabel } from "../shared/Kind.js"
 import { Version } from "../shared/Version.js"
+import { Ui } from "../ui/Ui.js"
 import { Admin } from "./Admin.js"
 import { decodeTrailingArguments, normalizeTrailingArguments } from "./arguments.js"
 import { Backup } from "./Backup.js"
@@ -159,14 +160,80 @@ const vault = Command.make("vault").pipe(
   ]),
 )
 
+// effect/cli needs each flag by name, so the record below lists `Kind.plainLabels` one by one.
+const plainFlag = (label: PlainLabel) =>
+  Flag.String(label).pipe(Flag.optional, Flag.withDescription(`The plain \`${label}\` Field, where the Kind has it`))
+
+// The flags of `hush create` and `hush item create`: the Kind, the names, one private source, the plain Fields.
+const createFlags = {
+  kind: Argument.Literals("kind", Kind.all).pipe(
+    Argument.withDescription("api-credential (credential), login (password) or database (password)"),
+  ),
+  title: Flag.String("title").pipe(Flag.withDescription("The new Item's title")),
+  vault: Flag.String("vault").pipe(Flag.withDescription("The Vault to create it in")),
+  stdin: booleanFlag("stdin", "Read the secret value from piped stdin"),
+  prompt: booleanFlag("prompt", "Read the secret value from a hidden prompt"),
+  clipboard: booleanFlag("clipboard", "Read the secret value from the clipboard (macOS)"),
+  username: plainFlag("username"),
+  host: plainFlag("host"),
+  port: plainFlag("port"),
+  database: plainFlag("database"),
+  notes: plainFlag("notes"),
+}
+
+type CreateFlags = Command.Command.Config.Infer<typeof createFlags>
+
+// What both create commands send, from their shared flags.
+const createInput = (flags: CreateFlags) => ({
+  kind: flags.kind,
+  title: flags.title,
+  vault: flags.vault,
+  sources: { stdin: flags.stdin, prompt: flags.prompt, clipboard: flags.clipboard },
+  plain: Kind.plainLabels.flatMap((label) =>
+    Option.match(flags[label], {
+      onNone: () => [],
+      onSome: (value) => [{ label, value }],
+    }),
+  ),
+})
+
+const referenceArgument = Argument.String("reference").pipe(
+  Argument.withDescription("The Field's Reference, `hush://Vault/Item/field`"),
+)
+
 const itemArguments = {
   vault: Argument.String("vault").pipe(Argument.withDescription("The Item's Vault")),
   title: Argument.String("title").pipe(Argument.withDescription("The Item's title")),
 }
 
 const item = Command.make("item").pipe(
-  Command.withDescription("Change existing Items (the Owner only)"),
+  Command.withDescription("Create, list, change and reveal Items with the Passphrase (the Owner only)"),
   Command.withSubcommands([
+    Command.make("create", { ...createFlags, ...passphraseLineFlags }, (flags) =>
+      withTarget((target) =>
+        ItemAdmin.itemCreate({ target, source: secretSource(flags.passphraseStdin), ...createInput(flags) }).pipe(
+          Effect.flatMap(printJson),
+        ),
+      ),
+    ).pipe(
+      Command.withDescription(
+        "Create an Item with the Passphrase, verified before commit; an agent with a Token uses `hush create`",
+      ),
+    ),
+    Command.make(
+      "list",
+      { vault: Argument.String("vault").pipe(Argument.withDescription("The Vault to list")), ...passphraseLineFlags },
+      (flags) =>
+        withTarget((target) =>
+          ItemAdmin.itemList({ target, source: secretSource(flags.passphraseStdin), vault: flags.vault }).pipe(
+            Effect.flatMap(printJson),
+          ),
+        ),
+    ).pipe(
+      Command.withDescription(
+        "List a Vault's Items with their Fields (never a value) and its Retired titles, without a Token",
+      ),
+    ),
     Command.make(
       "edit",
       {
@@ -244,7 +311,23 @@ const item = Command.make("item").pipe(
         }).pipe(Effect.flatMap(printJson)),
       ),
     ).pipe(Command.withDescription("Let Tokens create a title that a rename or delete retired")),
+    Command.make("reveal", { reference: referenceArgument, ...passphraseLineFlags }, ({ reference, passphraseStdin }) =>
+      withTarget((target) =>
+        ItemAdmin.itemReveal({ target, source: secretSource(passphraseStdin), reference }).pipe(
+          // Byte-exact, with nothing appended, as `read` writes it.
+          Effect.flatMap((value) => Effect.promise(() => Bun.write(Bun.stdout, Redacted.value(value)))),
+        ),
+      ),
+    ).pipe(
+      Command.withDescription("Reveal one Field's value on stdout under the Passphrase; audited by its Reference"),
+    ),
   ]),
+)
+
+const ui = Command.make("ui", {}, () => withTarget(Ui.launch)).pipe(
+  Command.withDescription(
+    "Open the full-screen terminal UI to browse Vaults and Items with the Passphrase (the Owner only, at a terminal)",
+  ),
 )
 
 const passphrase = Command.make("passphrase").pipe(
@@ -266,51 +349,14 @@ const passphrase = Command.make("passphrase").pipe(
   ]),
 )
 
-// effect/cli needs each flag by name, so the record below lists `Kind.plainLabels` one by one.
-const plainFlag = (label: PlainLabel) =>
-  Flag.String(label).pipe(Flag.optional, Flag.withDescription(`The plain \`${label}\` Field, where the Kind has it`))
+const create = Command.make("create", createFlags, (flags) =>
+  withTarget(
+    (target) => Create.run(target, createInput(flags), LaunchEnv.snapshot).pipe(Effect.flatMap(printJson)),
+    "--create",
+  ),
+).pipe(Command.withDescription("Create an Item from private input with the Token and verify it"))
 
-const create = Command.make(
-  "create",
-  {
-    kind: Argument.Literals("kind", Kind.all).pipe(
-      Argument.withDescription("api-credential (credential), login (password) or database (password)"),
-    ),
-    title: Flag.String("title").pipe(Flag.withDescription("The new Item's title")),
-    vault: Flag.String("vault").pipe(Flag.withDescription("The Vault to create it in")),
-    stdin: booleanFlag("stdin", "Read the secret value from piped stdin"),
-    prompt: booleanFlag("prompt", "Read the secret value from a hidden prompt"),
-    clipboard: booleanFlag("clipboard", "Read the secret value from the clipboard (macOS)"),
-    username: plainFlag("username"),
-    host: plainFlag("host"),
-    port: plainFlag("port"),
-    database: plainFlag("database"),
-    notes: plainFlag("notes"),
-  },
-  (flags) =>
-    withTarget(
-      (target) =>
-        Create.run(
-          target,
-          {
-            kind: flags.kind,
-            title: flags.title,
-            vault: flags.vault,
-            sources: { stdin: flags.stdin, prompt: flags.prompt, clipboard: flags.clipboard },
-            plain: Kind.plainLabels.flatMap((label) =>
-              Option.match(flags[label], {
-                onNone: () => [],
-                onSome: (value) => [{ label, value }],
-              }),
-            ),
-          },
-          LaunchEnv.snapshot,
-        ).pipe(Effect.flatMap(printJson)),
-      "--create",
-    ),
-).pipe(Command.withDescription("Create an Item from private input and verify it"))
-
-const read = Command.make("read", { reference: Argument.String("reference") }, ({ reference }) =>
+const read = Command.make("read", { reference: referenceArgument }, ({ reference }) =>
   withTarget(
     (target) =>
       Read.run(target, reference, LaunchEnv.snapshot).pipe(
@@ -725,6 +771,7 @@ const root = Command.make("hush").pipe(
     init,
     vault,
     item,
+    ui,
     passphrase,
     token,
     config,

@@ -237,10 +237,13 @@ export const AuditAction = Schema.Literals([
   "vault.create",
   "vault.list",
   "vault.delete",
+  "item.list",
   "item.edit",
   "item.rename",
   "item.delete",
   "item.release",
+  "item.reveal",
+  "item.create",
   "token.issue",
   "token.list",
   "token.revoke",
@@ -338,6 +341,67 @@ export type AuditPage = typeof AuditPage.Type
 
 export const FieldMeta = Schema.Struct({ label: Schema.String, concealed: Schema.Boolean })
 
+// Each label at most once, by name identity; the CLI never sends a label twice, so a request that does is
+// malformed (an empty 400), not a domain error. A label that is not a Name is left to the handler (`UnknownField`).
+const distinctLabels = Schema.makeFilter((fields: ReadonlyArray<{ readonly label: string }>) => {
+  const keys = fields.map(({ label }) =>
+    Result.match(Name.parse(label), { onSuccess: Name.key, onFailure: () => label }),
+  )
+
+  return new Set(keys).size === keys.length
+})
+
+// A Token's `items/create`; under the Passphrase, the body of `admin/items/create`.
+export const CreateRequest = Schema.Struct({
+  vault: Schema.String,
+  title: Schema.String,
+  kind: KindWire,
+  fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Value })).check(distinctLabels),
+})
+
+export type CreateRequest = typeof CreateRequest.Type
+
+// Stored display names, Fields in Kind order.
+export const CreateReceipt = Schema.Struct({
+  vault: Schema.String,
+  title: Schema.String,
+  kind: KindWire,
+  fields: Schema.Array(FieldMeta),
+  createdAt: Schema.String,
+})
+
+export type CreateReceipt = typeof CreateReceipt.Type
+
+export const ItemCreateRequest = Schema.Struct({ passphrase: Passphrase, ...CreateRequest.fields })
+
+export type ItemCreateRequest = typeof ItemCreateRequest.Type
+
+// `verified`: every new seal was opened and compared before commit.
+export const ItemCreateReceipt = Schema.Struct({ ...CreateReceipt.fields, verified: Schema.Literal(true) })
+
+export type ItemCreateReceipt = typeof ItemCreateReceipt.Type
+
+// An Item's metadata: stored display names, Fields in Kind order, never a value.
+export const ItemMeta = Schema.Struct({
+  title: Schema.String,
+  kind: KindWire,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+  fields: Schema.Array(FieldMeta),
+})
+
+export type ItemMeta = typeof ItemMeta.Type
+
+// One Vault as the Owner sees it: its Items by title, and its Retired titles. A Retired title keeps only its key
+// (NFC, lowercased), so `retired` lists keys, sorted.
+export const VaultItems = Schema.Struct({
+  vault: Schema.String,
+  items: Schema.Array(ItemMeta),
+  retired: Schema.Array(Schema.String),
+})
+
+export type VaultItems = typeof VaultItems.Type
+
 // One change per edit: `set` replaces a Field's value or adds an absent plain Field; `remove` drops a
 // present plain Field.
 export const ItemChange = Schema.Union([
@@ -407,6 +471,16 @@ export const ItemReleased = Schema.Struct({
 })
 
 export type ItemReleased = typeof ItemReleased.Type
+
+// `reference` is parsed by the handler, so a bad one is `InvalidReference`, not an empty 400.
+export const ItemRevealRequest = Schema.Struct({ passphrase: Passphrase, reference: Schema.String })
+
+export type ItemRevealRequest = typeof ItemRevealRequest.Type
+
+// The one Field's value, the only Passphrase receipt that carries one.
+export const ItemRevealed = Schema.Struct({ value: Value })
+
+export type ItemRevealed = typeof ItemRevealed.Type
 
 // Every error a Passphrase endpoint shares: the guard and gate, a wrong Passphrase, the backoff, the Audit Log.
 const passphraseEndpointErrors = [
@@ -478,6 +552,12 @@ export class Admin extends HttpApiGroup.make("admin")
       success: TokenRevoked,
       error: [...passphraseEndpointErrors, InvalidName, TokenNotFound],
     }),
+    // The Owner's view of one Vault without a Token (ADR-0010): metadata and Retired titles, never a value.
+    HttpApiEndpoint.post("itemsList", "/v1/admin/items/list", {
+      payload: VaultRequest,
+      success: VaultItems,
+      error: [...passphraseEndpointErrors, InvalidName, VaultNotFound, IntegrityCheckFailed],
+    }),
     HttpApiEndpoint.post("itemsEdit", "/v1/admin/items/edit", {
       payload: ItemEditRequest,
       success: ItemEditReceipt,
@@ -507,6 +587,34 @@ export class Admin extends HttpApiGroup.make("admin")
       payload: ItemReleaseRequest,
       success: ItemReleased,
       error: [...passphraseEndpointErrors, InvalidName, VaultNotFound, TitleNotRetired],
+    }),
+    // Reveal: one Field opened under the Passphrase, never with a Token.
+    HttpApiEndpoint.post("itemsReveal", "/v1/admin/items/reveal", {
+      payload: ItemRevealRequest,
+      success: ItemRevealed,
+      error: [
+        ...passphraseEndpointErrors,
+        InvalidReference,
+        VaultNotFound,
+        ItemNotFound,
+        FieldNotFound,
+        IntegrityCheckFailed,
+      ],
+    }),
+    // A Retired title is refused as for a Token: only `items/release` frees it.
+    HttpApiEndpoint.post("itemsCreate", "/v1/admin/items/create", {
+      payload: ItemCreateRequest,
+      success: ItemCreateReceipt,
+      error: [
+        ...passphraseEndpointErrors,
+        InvalidName,
+        VaultNotFound,
+        ItemExists,
+        TitleRetired,
+        UnknownField,
+        FieldRequired,
+        IntegrityCheckFailed,
+      ],
     }),
     // The Passphrase only: no Token of any Access reads the log.
     HttpApiEndpoint.post("audit", "/v1/admin/audit", {
@@ -550,51 +658,10 @@ export const ResolveResponse = Schema.Struct({ values: Schema.Array(ResolvedValu
 
 export type ResolveResponse = typeof ResolveResponse.Type
 
-// Each label at most once, by name identity; the CLI never sends a label twice, so a request that does is
-// malformed (an empty 400), not a domain error. A label that is not a Name is left to the handler (`UnknownField`).
-const distinctLabels = Schema.makeFilter((fields: ReadonlyArray<{ readonly label: string }>) => {
-  const keys = fields.map(({ label }) =>
-    Result.match(Name.parse(label), { onSuccess: Name.key, onFailure: () => label }),
-  )
-
-  return new Set(keys).size === keys.length
-})
-
-export const CreateRequest = Schema.Struct({
-  vault: Schema.String,
-  title: Schema.String,
-  kind: KindWire,
-  fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Value })).check(distinctLabels),
-})
-
-export type CreateRequest = typeof CreateRequest.Type
-
-// Stored display names, Fields in Kind order.
-export const CreateReceipt = Schema.Struct({
-  vault: Schema.String,
-  title: Schema.String,
-  kind: KindWire,
-  fields: Schema.Array(FieldMeta),
-  createdAt: Schema.String,
-})
-
-export type CreateReceipt = typeof CreateReceipt.Type
-
 // Absent `vaults`: every granted Vault. Each named Vault must be granted.
 export const ListRequest = Schema.Struct({ vaults: Schema.optionalKey(Schema.Array(Schema.String)) })
 
 export type ListRequest = typeof ListRequest.Type
-
-// An Item's metadata: stored display names, Fields in Kind order, never a value.
-export const ItemMeta = Schema.Struct({
-  title: Schema.String,
-  kind: KindWire,
-  createdAt: Schema.String,
-  updatedAt: Schema.String,
-  fields: Schema.Array(FieldMeta),
-})
-
-export type ItemMeta = typeof ItemMeta.Type
 
 // Every Vault listed, empty ones included, with the Token's Access to it.
 export const ItemList = Schema.Struct({

@@ -95,3 +95,21 @@ _Avoid_: setup code, bootstrap token, PIN
 **Ready**:
 The state of an initialised Server, which serves every authorised request from the moment it starts, with no human step after a restart.
 _Avoid_: unlocked, unsealed, running
+
+### UI
+
+**UI**:
+The full-screen terminal program the Owner runs to manage one Server; it is part of the CLI and talks only to the Server.
+_Avoid_: dashboard, console, admin panel, TUI
+
+**Open**:
+The state of a UI that holds the Passphrase in memory and serves every operation without asking for it again.
+_Avoid_: unlocked, logged in, session
+
+**Locked**:
+The state of a UI that holds no Passphrase and shows only the Passphrase prompt; a UI starts Locked and returns to it when idle, suspended or quit.
+_Avoid_: logged out, timed out
+
+**Reveal**:
+The explicit act of showing the Owner one concealed Field's value, recorded in the Audit Log by its Reference.
+_Avoid_: show, decrypt, unmask

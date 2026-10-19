@@ -5,9 +5,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 // Origin-form requests (`/v1/...`, the proxy as `HUSH_SERVER`) go to the Server; absolute-form requests
 // (`http://host:port/v1/...`, the proxy as `HTTP_PROXY`) go to the URL they name. Modes inject the faults of the
 // unverified-write paths: `drop-response` forwards, then closes the connection before any response;
-// `corrupt-response` alters every value in a `secrets/resolve` answer and one byte of a backup, keeping its headers.
+// `corrupt-response` alters every value in a `secrets/resolve` answer and one byte of a backup, keeping its headers;
+// `hold-response` forwards, then holds the answer until the mode changes, for a request still in flight;
+// `garble-response` forwards, then answers with the same status and a body no client can decode, holding
+// `garbledMarker`, so a test can check no response body reaches the user.
 
-export type ProxyMode = "pass" | "drop-response" | "corrupt-response"
+export type ProxyMode = "pass" | "drop-response" | "corrupt-response" | "hold-response" | "garble-response"
+
+export const garbledMarker = "garbled-body-marker"
 
 export interface Proxy {
   readonly url: string
@@ -68,9 +73,18 @@ const corrupted = (path: string, ok: boolean, bytes: Buffer): string | Buffer =>
   return bytes
 }
 
+// What the proxy sends in `mode` for an answer to `path`.
+const sentIn = (mode: ProxyMode, path: string, ok: boolean, bytes: Buffer): string | Buffer => {
+  if (mode === "corrupt-response") return corrupted(path, ok, bytes)
+
+  return mode === "garble-response" ? `<html>${garbledMarker}</html>` : bytes
+}
+
 export const start = async (upstream: string): Promise<Proxy> => {
   const lines: Array<string> = []
   let current: ProxyMode = "pass"
+  // Answers `hold-response` holds, each released by the next mode change.
+  const held: Array<() => void> = []
 
   const forward = async (request: IncomingMessage, response: ServerResponse) => {
     const target = request.url ?? "/"
@@ -85,8 +99,10 @@ export const start = async (upstream: string): Promise<Proxy> => {
     const answer = await fetch(url, { method: request.method, headers, body, proxy: false })
     const bytes = Buffer.from(await answer.arrayBuffer())
 
+    if (current === "hold-response") await new Promise<void>((release) => held.push(release))
+
     if (current === "drop-response") return request.socket.destroy()
-    const sent = current === "corrupt-response" ? corrupted(url.pathname, answer.ok, bytes) : bytes
+    const sent = sentIn(current, url.pathname, answer.ok, bytes)
 
     const forwarded = Object.fromEntries([
       ["content-type", answer.headers.get("content-type") ?? "application/json"],
@@ -111,6 +127,8 @@ export const start = async (upstream: string): Promise<Proxy> => {
     log: () => [...lines],
     mode: (next) => {
       current = next
+
+      for (const release of held.splice(0)) release()
     },
     close: () => new Promise((resolve) => server.close(() => resolve())),
   }

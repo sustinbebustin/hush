@@ -54,9 +54,11 @@ const storedMaster: Effect.Effect<Keys.StoredMaster, never, SqlClient.SqlClient>
   }
 }).pipe(Effect.orDie)
 
-// What a Passphrase request's audit row names: Vaults and detail, never a value or the Passphrase.
+// What a Passphrase request's audit row names: Vaults, References (a Reveal's) and detail, never a value or the
+// Passphrase.
 export interface Scope {
   readonly vaults: ReadonlyArray<string>
+  readonly references?: ReadonlyArray<string>
   readonly detail?: Audit.Detail
 }
 
@@ -113,7 +115,7 @@ export const audited = <U, A, E extends ApiError = never, R = never>(request: {
         actor: { type: "passphrase" },
         action: request.action,
         vaults: scope.vaults,
-        references: [],
+        references: scope.references ?? [],
         detail: scope.detail,
         result,
         peer: request.peer,

@@ -55,7 +55,13 @@ export interface Tty {
   readonly keys: ReadonlyArray<Keystrokes>
   // Runs `stty -a` on the pty after the CLI exits, so the output shows the terminal mode it left.
   readonly sttyAfter?: boolean
+  // Runs the CLI as a job under job control (`set -m`): each time it stops, the shell prints `jobStopped`, then
+  // continues it with `fg`, as the Owner would after Ctrl-Z.
+  readonly jobControl?: boolean
 }
+
+// What a `jobControl` run prints each time the CLI stops, before its `fg`.
+export const jobStopped = "[sandbox: job stopped]"
 
 export type RunOptions = {
   readonly env?: Record<string, string>
@@ -164,7 +170,14 @@ const shellQuote = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`
 
 // `command` under `script -qec`, which gives it a pty as its controlling terminal and exits with its status.
 const underScript = (command: ReadonlyArray<string>, tty: Tty): readonly [string, ...Array<string>] => {
-  const line = command.map(shellQuote).join(" ")
+  const quoted = command.map(shellQuote).join(" ")
+
+  // 147 is 128 + SIGSTOP: the status `sh` reports for a stopped job.
+  const line =
+    tty.jobControl === true
+      ? `set -m; ${quoted}; code=$?; while [ $code -eq 147 ]; do echo ${shellQuote(jobStopped)}; fg; code=$?; done; (exit $code)`
+      : quoted
+
   const script = tty.sttyAfter === true ? `${line}; code=$?; ${shellQuote(hostTool("stty"))} -a; exit $code` : line
 
   return [hostTool("script"), "-qec", script, "/dev/null"]

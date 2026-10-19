@@ -15,7 +15,8 @@ metadata:
 - Batch: many queries in one `hush find`, many References in one template for `hush env run`. Each command is one Server request.
 - Run the command you need directly. The command itself is the capability check, so skip `hush status`, `hush doctor` and every other preflight.
 - A write runs once. After a write that failed or said unverified, run `hush find` to see whether it happened; never retry it.
-- The Passphrase and the Init code are the human's alone: never ask for, type or pipe either. Human-only commands are `hush init`, `hush passphrase`, `hush vault`, `hush item`, `hush token issue`, `hush token list`, `hush token revoke`, `hush audit`, `hush backup` and `hush server`; when one is needed, give the human the exact command.
+- The Passphrase and the Init code are the human's alone: never ask for, type or pipe either. Human-only commands are `hush init`, `hush passphrase`, `hush vault`, `hush item` (`hush item list` and `hush item create` included; yours are `hush inventory` and `hush create`), `hush token issue`, `hush token list`, `hush token revoke`, `hush audit`, `hush backup`, `hush server` and `hush ui` (the human's full-screen terminal UI); when one is needed, give the human the exact command.
+- `hush item reveal` is human-only and prints a value on stdout. Never run it, suggest it in place of a Reference, or read its output; to use a value, pass its Reference.
 - Values enter hush through `--stdin` (piped) or `--clipboard` (macOS) only; `--prompt` is for humans at a terminal. Never put a value in an argument, a command substitution or a temporary file.
 
 ## Find credentials
@@ -89,7 +90,7 @@ Read the whole message: it says what was not changed and the next step, and ever
 - `TokenEnvInvalid`, `TokenFileInvalid`, `TokenFileInsecure`: the credential setup is broken. Show the human the message; hush tries no other Token.
 - `CreationMayHaveSucceeded`, `CreationUnverified`: never retry. Run the `hush find` from the message first and report what it shows.
 - `InvalidName`, `InvalidReference`, `InvalidAssignment`, `EnvFileInvalid`, `UnknownField`, `InputEmpty`: fix your input and run the command again.
-- `NoTerminal`: you ran a human-only command. Give it to the human instead.
+- `NoTerminal`, `UiNeedsTerminal`: you ran a human-only command. Give it to the human instead.
 - `IntegrityCheckFailed`, `AuditUnavailable`, `UnexpectedResponse`: tell the human; the Server needs attention.
 
 ## Item conventions

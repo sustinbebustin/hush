@@ -3,7 +3,8 @@
 # as `ghcr.io/sustinbebustin/hush:<package.json version>`, inspects its config, runs it under the shipped
 # deploy/compose.yaml (host networking, read-only rootfs), then from the host CLI runs Init (the code read with
 # `docker exec`), create, resolve and `hush backup`. It also checks that core dumps are off in the container and
-# that `hush init --vault` inside it fails before any prompt with the message naming the fix.
+# that `hush init --vault` and `hush ui` inside it fail before any prompt with the message naming the fix, and that
+# the image's binary can load OpenTUI's native library on its libc (a throwaway `docker run` on a host pty).
 # Usage, from the repository root on Linux: `sh scripts/smoke-docker.sh <host hush binary>`.
 # It needs the container name `hush`, the volume `hush-data` and 127.0.0.1:7787 free, and removes both at the end.
 set -eu
@@ -22,7 +23,11 @@ fail() {
   exit 1
 }
 
-unset HUSH_SERVER HUSH_TOKEN
+# The container listens on the host's loopback. Pin the CLI to it so neither the free-port probe nor any later step
+# reads the Owner's config file and talks to their real Server instead.
+unset HUSH_TOKEN
+HUSH_SERVER="http://127.0.0.1:7787"
+export HUSH_SERVER
 if docker container inspect hush >/dev/null 2>&1; then fail "a container named hush exists; remove it first"; fi
 if docker volume inspect hush-data >/dev/null 2>&1; then fail "the volume hush-data exists; this test would delete it"; fi
 if "$hush" status >/dev/null 2>&1; then fail "a Server already answers on 127.0.0.1:7787; stop it first"; fi
@@ -69,6 +74,15 @@ fi
 grep -qF 'nothing was issued and no prompt was shown. Run this command from a CLI machine, or add `--print`' \
   "$root/inside.err" || fail "unexpected message from hush init inside the container: $(cat "$root/inside.err")"
 
+# The UI is a CLI command run from a CLI machine, never a Server-side one: inside the container, with no terminal,
+# it must refuse with the tagged message and exit 1 before touching the terminal or the native library.
+if docker exec hush hush ui >"$root/ui-inside.out" 2>"$root/ui-inside.err" </dev/null; then
+  fail "hush ui inside the container succeeded"
+fi
+grep -qF '`hush ui` needs an interactive terminal' "$root/ui-inside.err" ||
+  fail "unexpected message from hush ui inside the container: $(cat "$root/ui-inside.err")"
+test ! -s "$root/ui-inside.out" || fail "hush ui inside the container wrote to stdout: $(cat "$root/ui-inside.out")"
+
 HOME="$root/home"
 export HOME
 mkdir -p "$HOME"
@@ -79,5 +93,21 @@ printf 'smoke-value\n' | "$hush" create api-credential --title Key --vault Smoke
 test "$("$hush" read hush://Smoke/Key/credential)" = smoke-value || fail "resolve did not return the created value"
 printf '%s\n' "$passphrase" | "$hush" backup "$root/backup.db" --passphrase-stdin >/dev/null
 test "$(head -c 15 "$root/backup.db")" = "SQLite format 3" || fail "the backup is not a SQLite database"
+
+# Native library check only, not a way to run the UI: a throwaway container from the same image draws the Locked
+# prompt on a host pty (util-linux `script`), which proves the binary loads OpenTUI's native library on the image's
+# libc. Bun extracts that library to /tmp and maps it from there, so this one container's /tmp allows exec. Ctrl-C,
+# typed once the prompt is up, quits it with exit 0. The match is one word: the renderer redraws only the cells that
+# changed.
+{
+  tries=0
+  until grep -q 'Passphrase:' "$root/ui.out" 2>/dev/null || [ "$tries" -gt 300 ]; do
+    tries=$((tries + 1))
+    sleep 0.1
+  done
+  printf '\003'
+} | timeout 40 script -qec "docker run --rm -it --read-only --tmpfs /tmp:exec --entrypoint hush $image ui" /dev/null \
+  >"$root/ui.out" || fail "hush ui in the image did not exit 0 on Ctrl-C: $(cat "$root/ui.out")"
+grep -q 'hush Passphrase:' "$root/ui.out" || fail "hush ui in the image drew no Locked prompt: $(cat "$root/ui.out")"
 
 echo "smoke-docker: ok"
