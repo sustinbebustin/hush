@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises"
 import { join } from "node:path"
 
 import { passphraseSentinel, scan, type Sentinel, valueSentinel } from "./leaks.js"
+import { garbledMarker } from "./proxy.js"
 import { onPty, sandbox, type Sandbox } from "./sandbox.js"
 
 // Runs `test`, then asserts no sentinel, and no Init code seen during the test, reached anything observable.
@@ -285,6 +286,33 @@ describe("hush init --passphrase-stdin", () => {
       )
       assert.deepStrictEqual(result.calls, [])
       await assertUninitialised(box, code)
+    }))
+})
+
+describe("an Init whose answer cannot be decoded", () => {
+  it("reports ChangeUnverified, never the body, and initialises exactly once", () =>
+    withSandbox(async (box, seen) => {
+      const code = await currentCode(box)
+      seen(code)
+      box.proxy.mode("garble-response")
+
+      const result = await box.run(["init", "--passphrase-stdin"], {
+        input: `${code}\n${passphrase}\n`,
+        env: { HUSH_SERVER: box.proxy.url },
+      })
+
+      box.proxy.mode("pass")
+      assert.strictEqual(result.code, 1)
+      assert.strictEqual(result.stdout, "")
+      assert.strictEqual(
+        result.stderr,
+        "hush: The connection failed after the request was sent, so the change may or may not have happened. Do not retry blindly; check with `hush vault list`, `hush token list` or `hush inventory`.\n",
+      )
+      assert.notInclude(result.stderr, garbledMarker)
+      assert.deepStrictEqual(box.proxy.log(), ["POST /v1/admin/init HTTP/1.1"])
+      assert.deepStrictEqual(await metaRows(box), [{ id: 1 }])
+      const listed = await box.run(["vault", "list", "--passphrase-stdin"], { input: `${passphrase}\n` })
+      assert.strictEqual(listed.code, 0, listed.stderr)
     }))
 })
 

@@ -435,11 +435,13 @@ const sendInit = (input: {
 
     const secretsOnly = { initCode: Redacted.make(initCode), passphrase: secrets.passphrase }
 
-    const receipt = yield* Client.request(Api, target, (client) =>
-      client.admin.init({
-        payload:
-          first === undefined ? secretsOnly : { ...secretsOnly, first: { vault: first.vault, label: first.label } },
-      }),
+    const receipt = yield* sentOnce(
+      Client.request(Api, target, (client) =>
+        client.admin.init({
+          payload:
+            first === undefined ? secretsOnly : { ...secretsOnly, first: { vault: first.vault, label: first.label } },
+        }),
+      ),
     )
 
     if (first === undefined) return { state: receipt.state }
